@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Firebase Login Debug</title>
+    <meta charset="UTF-8">
+</head>
+<body>
+    <h1>Firebase Login Debug Page</h1>
+    <p>หน้านี้ใช้สำหรับทดสอบการเชื่อมต่อ Firebase โดยตรง</p>
+    <button id="loginButton" style="font-size: 18px; padding: 10px 20px;">
+        Test Login with Google
+    </button>
+
+    <script type="module">
+        // 💡 สำคัญมาก: นำเข้า Firebase SDK จาก CDN
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-app.js";
+        import { getAuth, GoogleAuthProvider, signInWithPopup } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-auth.js";
+
+        // ==========================================================
+        // 💡 ขั้นตอนที่ 2: วาง firebaseConfig ของคุณที่นี่
+        // คัดลอกมาจากไฟล์ .env.local ของคุณ (ไม่ต้องมี VITE_ ข้างหน้า)
+        // ==========================================================
+        const firebaseConfig = {
+            apiKey: "AIzaSyCbLOLR4KqlWaGOfvZesdVVgFzlyDluPkI",
+            authDomain: "sccc-inseesafety-prod.firebaseapp.com",
+            projectId: "sccc-inseesafety-prod",
+            storageBucket: "sccc-inseesafety-prod.firebasestorage.app",
+            messagingSenderId: "874085997493",
+            appId: "1:874085997493:web:5156272fd22b224b5097fc"
+
+        };
+        // ==========================================================
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const provider = new GoogleAuthProvider();
+
+        // Function to handle login
+        async function login() {
+            console.log("Attempting to sign in with Google...");
+            try {
+                const result = await signInWithPopup(auth, provider);
+                const user = result.user;
+                console.log("✅ SUCCESS! Logged in as:", user.displayName);
+                console.log("Email:", user.email);
+                alert("Login สำเร็จ! ชื่อผู้ใช้: " + user.displayName);
+            } catch (error) {
+                console.error("❌ FAILED! An error occurred:", error);
+                alert("Login ล้มเหลว! ดู Error ใน Console (F12)");
+            }
+        }
+
+        // Add event listener to the button
+        document.getElementById('loginButton').addEventListener('click', login);
+    </script>
+</body>
+</html>

@@ -1,0 +1,81 @@
+/*# Global styles และ Tailwind directives */
+/* @type postcss */
+/* ========= Custom Fonts & Variables ========= */
+/*@import "tailwindcss";*/
+@import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600&family=Inter:wght@400;600&display=swap');
+/* prettier-ignore */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+
+:root {
+  --font-sans: 'Inter', 'Sarabun', sans-serif;
+
+  /* Light Theme */
+  --bg-light: #f9fdf7;
+  --text-light: #2e4a34;
+  --primary-light: #6b8b5e;
+  --accent-light: #e9f5e1;
+
+  /* Dark Theme */
+  --bg-dark: #1f2a23;
+  --text-dark: #f0fdf4;
+  --primary-dark: #a8d5a0;
+  --accent-dark: #2d3a30;
+}
+
+/* ========= Base Tailwind Overrides ========= */
+body {
+  @apply font-sans text-[15px] leading-relaxed bg-[var(--bg-light)] text-[var(--text-light)] transition-colors duration-300;
+  font-family: var(--font-sans);
+}
+
+/* Dark Mode Styling */
+.dark body {
+  @apply bg-[var(--bg-dark)] text-[var(--text-dark)];
+}
+
+/* ========= Typography ========= */
+h1, h2, h3, h4 {
+  @apply font-semibold text-[var(--primary-light)] dark:text-[var(--primary-dark)];
+}
+a {
+  @apply transition-colors duration-200 hover:underline hover:text-[var(--primary-light)] dark:hover:text-[var(--primary-dark)];
+}
+
+/* ========= Components (Optional) ========= */
+.btn {
+  @apply px-4 py-2 rounded-md font-semibold bg-[var(--primary-light)] text-white hover:bg-green-700 transition;
+}
+.dark .btn {
+  @apply bg-[var(--primary-dark)] hover:bg-green-500;
+}
+
+.shadow-card {
+  @apply shadow-md rounded-lg p-4 bg-white dark:bg-[var(--accent-dark)] transition-all duration-300;
+}
+
+/* ========= Animation ========= */
+.fade-in {
+  @apply opacity-0 animate-fade-in;
+}
+
+@keyframes fade-in {
+  to {
+    opacity: 1;
+  }
+}
+
+/* ========= Responsive Design ========= */
+@media (max-width: 640px) {
+  body {
+    @apply text-sm;
+  }
+  .btn {
+    @apply px-3 py-1.5 text-sm;
+  }
+  .shadow-card {
+    @apply p-3;
+  }
+}

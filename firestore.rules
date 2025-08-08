@@ -1,0 +1,42 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ========== PUBLIC READ ACCESS ==========
+    // อนุญาตให้ทุกคนอ่านข้อมูลพนักงาน (สำหรับ Profile Page)
+    match /employees/{document} {
+      allow read: if true; // ทุกคนอ่านได้
+      allow write: if request.auth != null; // เขียนได้เฉพาะผู้ที่ login
+    }
+    
+    // อนุญาตให้ทุกคนอ่านข้อมูลการอบรม (สำหรับ Profile Page)
+    match /trainings/{document} {
+      allow read: if true; // ทุกคนอ่านได้
+      allow write: if request.auth != null; // เขียนได้เฉพาะผู้ที่ login
+    }
+    
+    // ========== PROTECTED COLLECTIONS ==========
+    // ข้อมูลผู้ใช้ระบบ - ต้อง login
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // ข้อมูล Internal Users - ต้อง login และเป็น admin
+    match /internalUsers/{document} {
+      allow read, write: if request.auth != null && 
+        (request.auth.token.role == 'admin' || request.auth.token.role == 'superadmin');
+    }
+    
+    // ข้อมูล Notifications - เฉพาะเจ้าของ
+    match /notifications/{document} {
+      allow read, write: if request.auth != null && 
+        request.auth.uid == resource.data.userId;
+    }
+    
+    // ========== FALLBACK RULE ==========
+    // ข้อมูลอื่นๆ ต้อง login
+    match /{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}
