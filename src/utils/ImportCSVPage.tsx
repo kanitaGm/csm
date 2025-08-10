@@ -9,7 +9,7 @@ import {
   FaTimes, FaUser, FaSpinner, FaSearch, FaFilter, FaEdit, FaSave, 
   FaFileExport, FaEye, FaEyeSlash, FaCheckSquare, FaSquare, FaUndo
 } from 'react-icons/fa';
-import { useCSVProcessor } from './CSVProcessor';
+//import { useCSVProcessor } from './CSVProcessor';
 import { getAllTemplates, getTemplateByCollection, type CSVTemplateConfig } from './CSVTemplates';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -34,12 +34,23 @@ interface EditableCell {
 }
 
 type FilterType = 'all' | 'valid' | 'errors' | 'duplicates';
-type DataRow = Record<string, string> & { originalIndex: number };
+
+// สำหรับข้อมูลที่แสดงในตาราง (เพิ่ม originalIndex เป็น string เพื่อให้ consistent กับ Record<string, string>)
+type DataRow = Record<string, string> & { originalIndex: string };
 
 export default function ImportCSVPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const csvProcessor = useCSVProcessor();
+  
+  // ใช้ CSVProcessor แบบง่าย โดยให้เรามี state ของเราเอง
+  const [currentStep, setCurrentStep] = useState(1);
+  const [headers, setHeaders] = useState<string[]>([]);
+  const [previewData, setPreviewData] = useState<Record<string, string>[]>([]);
+  const [mappedData, setMappedData] = useState<Record<string, unknown>[]>([]);
+  const [processingErrors, setProcessingErrors] = useState<{ message: string }[]>([]);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [dataRowOffset] = useState(3); // ข้อมูลเริ่มจากแถวที่ 3
+
   const templates = getAllTemplates();
 
   // Template Selection - Fixed to work with templates array
@@ -80,13 +91,46 @@ export default function ImportCSVPage() {
 
   // Get current data with edits applied - Fixed to work with string values
   const getCurrentData = useCallback((): Record<string, string>[] => {
-    return csvProcessor.state.previewData.map((row, index) => {
+    return previewData.map((row, index) => {
       const edits = editedData[index] || {};
       return { ...row, ...edits };
     });
-  }, [csvProcessor.state.previewData, editedData]);
+  }, [previewData, editedData]);
 
-  // Enhanced duplicate checking - memoized to prevent unnecessary re-creation
+  // Simple CSV parsing function
+  const parseCSV = useCallback(async (file: File) => {
+    const text = await file.text();
+    const lines = text.split('\n').filter(line => line.trim());
+    
+    if (lines.length < 3) {
+      throw new Error('ไฟล์ต้องมีอย่างน้อย 3 แถว (header, description, data)');
+    }
+
+    // Parse headers from first row
+    const rawHeaders = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
+    const cleanHeaders = rawHeaders.filter(h => h && !/^_\d+$/.test(h));
+    
+    if (cleanHeaders.length === 0) {
+      throw new Error('ไม่พบหัวตารางในไฟล์');
+    }
+
+    // Parse data from row 3 onwards (skip description row)
+    const data: Record<string, string>[] = [];
+    for (let i = 2; i < lines.length; i++) {
+      const values = lines[i].split(',').map(v => v.trim().replace(/"/g, ''));
+      if (values.some(v => v)) { // Skip empty rows
+        const row: Record<string, string> = {};
+        cleanHeaders.forEach((header, idx) => {
+          row[header] = values[idx] || '';
+        });
+        data.push(row);
+      }
+    }
+
+    return { headers: cleanHeaders, data };
+  }, []);
+
+  // Enhanced duplicate checking
   const checkForDuplicates = useCallback(async () => {
     if (!selectedTemplate) return;
     
@@ -187,78 +231,106 @@ export default function ImportCSVPage() {
     }
   }, [getCurrentData, selectedTemplate]);
 
-  // Fixed useEffect with proper dependencies and duplicate prevention
-  useEffect(() => {
-    const shouldProcessMapping = 
-      csvProcessor.state.currentStep === 2 && 
-      csvProcessor.state.previewData.length > 0 &&
-      csvProcessor.state.mappedData.length === 0 && // Only process if not already processed
-      selectedTemplate;
+  // Process mapping (convert to mapped data)
+  const processMapping = useCallback((template: CSVTemplateConfig) => {
+    if (!template || previewData.length === 0) return;
 
-    if (shouldProcessMapping) {
-      console.log('Processing mapping...');
-      
-      // Process mapping first
-      if (user?.email) {
-        csvProcessor.processMapping(selectedTemplate, user.email);
+    const errors: { message: string }[] = [];
+    const mapped: Record<string, unknown>[] = [];
+
+    previewData.forEach((row, index) => {
+      try {
+        const mappedRow: Record<string, unknown> = {};
+        
+        // Apply field mapping
+        Object.entries(template.fieldMapping).forEach(([csvField, dbField]) => {
+          let value = row[csvField] || '';
+          
+          // Apply transformers if available
+          if (template.transformers?.[csvField]) {
+            value = template.transformers[csvField](value) as string;
+          }
+          
+          mappedRow[dbField] = value;
+        });
+
+        // Apply default values
+        Object.entries(template.defaultValues).forEach(([field, defaultValue]) => {
+          if (!mappedRow[field] || mappedRow[field] === '') {
+            mappedRow[field] = typeof defaultValue === 'function' 
+              ? defaultValue(user?.email) 
+              : defaultValue;
+          }
+        });
+
+        // Validate required fields
+        template.requiredFields.forEach(field => {
+          const value = mappedRow[field];
+          if (!value || (typeof value === 'string' && !value.trim())) {
+            errors.push({
+              message: `แถวที่ ${index + dataRowOffset}: ฟิลด์ ${field} ไม่สามารถว่างได้`
+            });
+          }
+        });
+
+        // Apply validation rules
+        Object.entries(template.validationRules).forEach(([field, validator]) => {
+          const value = mappedRow[field];
+          const validationError = validator(value);
+          if (validationError) {
+            errors.push({
+              message: `แถวที่ ${index + dataRowOffset}: ${validationError}`
+            });
+          }
+        });
+
+        mapped.push(mappedRow);
+      } catch (error) {
+        errors.push({
+          message: `แถวที่ ${error} ${index + dataRowOffset}: เกิดข้อผิดพลาดในการประมวลผล`
+        });
       }
-    }
-  }, [
-    csvProcessor.state.currentStep,
-    csvProcessor.state.previewData.length,
-    csvProcessor.state.mappedData.length,
-    csvProcessor,
-    selectedTemplate,
-    user?.email
-  ]);
+    });
 
-  // Separate useEffect for duplicate checking - only run after mapping is complete
+    setMappedData(mapped);
+    setProcessingErrors(errors);
+    setCurrentStep(2);
+  }, [previewData, dataRowOffset, user?.email]);
+
+  // useEffect for processing mapping when we have data and template
   useEffect(() => {
-    const shouldCheckDuplicates = 
-      csvProcessor.state.currentStep === 2 && 
-      csvProcessor.state.previewData.length > 0 &&
-      csvProcessor.state.mappedData.length > 0 && // Wait for mapping to complete
-      duplicateChecks.length === 0 && // Only check if not already checked
-      selectedTemplate;
+    if (currentStep === 2 && previewData.length > 0 && mappedData.length === 0 && selectedTemplate) {
+      processMapping(selectedTemplate);
+    }
+  }, [currentStep, previewData.length, mappedData.length, selectedTemplate, processMapping]);
 
-    if (shouldCheckDuplicates) {
-      console.log('Checking duplicates...');
-      
-      // Create a unique identifier for this data set
+  // useEffect for duplicate checking after mapping
+  useEffect(() => {
+    if (currentStep === 2 && mappedData.length > 0 && duplicateChecks.length === 0 && selectedTemplate) {
       const dataIdentifier = JSON.stringify({
-        step: csvProcessor.state.currentStep,
-        dataLength: csvProcessor.state.previewData.length,
-        headers: csvProcessor.state.headers,
+        step: currentStep,
+        dataLength: previewData.length,
+        headers: headers,
         collection: selectedTemplate.collection
       });
 
-      // Only process if this is new data
       if (processedDataRef.current !== dataIdentifier) {
         processedDataRef.current = dataIdentifier;
         checkForDuplicates();
       }
     }
-  }, [
-    csvProcessor.state.currentStep,
-    csvProcessor.state.previewData.length,
-    csvProcessor.state.mappedData.length,
-    csvProcessor.state.headers,
-    duplicateChecks.length,
-    selectedTemplate,
-    checkForDuplicates
-  ]);
+  }, [currentStep, mappedData.length, duplicateChecks.length, selectedTemplate, previewData.length, headers, checkForDuplicates]);
 
-  // Separate useEffect for when previewData actually changes (file upload)
+  // Reset when new data comes in
   useEffect(() => {
-    if (csvProcessor.state.previewData.length > 0) {
+    if (previewData.length > 0) {
       setDuplicateChecks([]);
       setEditedData({});
       setSelectedRows(new Set());
       setCurrentPage(1);
-      // Reset the processed data ref when new data comes in
       processedDataRef.current = '';
     }
-  }, [csvProcessor.state.previewData.length]);
+  }, [previewData.length]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -275,20 +347,29 @@ export default function ImportCSVPage() {
     }
     
     try {
+      setIsProcessing(true);
       setDuplicateChecks([]);
       setEditedData({});
       setSelectedRows(new Set());
       setImportComplete(false);
       setImportResults({ success: 0, failed: 0, skipped: 0, errors: [] });
-      await csvProcessor.handleFileUpload(file);
+      setProcessingErrors([]);
+      setMappedData([]);
+      
+      const { headers: parsedHeaders, data } = await parseCSV(file);
+      setHeaders(parsedHeaders);
+      setPreviewData(data);
+      setCurrentStep(2);
     } catch (error: unknown) {
       console.error('Error uploading file:', error);
       const errorMessage = error instanceof Error ? error.message : 'Error uploading file';
       alert(errorMessage);
+    } finally {
+      setIsProcessing(false);
     }
   };
 
-  // Cell editing functions - Fixed to work with string values
+  // Cell editing functions
   const handleCellEdit = (rowIndex: number, field: string, currentValue: string) => {
     setEditingCell({ rowIndex, field });
     setEditValue(currentValue);
@@ -312,12 +393,12 @@ export default function ImportCSVPage() {
     setEditValue('');
   };
 
-  // Filter and search logic - Fixed to work with string values
+  // Filter and search logic
   const filteredData = useMemo(() => {
     const currentData = getCurrentData();
     let dataWithIndex: DataRow[] = currentData.map((row, index) => ({ 
       ...row, 
-      originalIndex: index 
+      originalIndex: index.toString() // Convert to string for consistency
     }));
 
     if (searchTerm) {
@@ -331,25 +412,25 @@ export default function ImportCSVPage() {
     switch (filterType) {
       case 'errors':
         return dataWithIndex.filter(row => 
-          csvProcessor.state.errors.some(e => 
-            e.message.includes(`แถวที่ ${row.originalIndex + csvProcessor.state.dataRowOffset}`)
+          processingErrors.some(e => 
+            e.message.includes(`แถวที่ ${parseInt(row.originalIndex) + dataRowOffset}`)
           )
         );
       case 'duplicates':
         return dataWithIndex.filter(row => 
-          duplicateChecks.some(d => d.rowIndex === row.originalIndex)
+          duplicateChecks.some(d => d.rowIndex === parseInt(row.originalIndex))
         );
       case 'valid':
         return dataWithIndex.filter(row => 
-          !csvProcessor.state.errors.some(e => 
-            e.message.includes(`แถวที่ ${row.originalIndex + csvProcessor.state.dataRowOffset}`)
+          !processingErrors.some(e => 
+            e.message.includes(`แถวที่ ${parseInt(row.originalIndex) + dataRowOffset}`)
           ) &&
-          !duplicateChecks.some(d => d.rowIndex === row.originalIndex)
+          !duplicateChecks.some(d => d.rowIndex === parseInt(row.originalIndex))
         );
       default:
         return dataWithIndex;
     }
-  }, [getCurrentData, searchTerm, filterType, csvProcessor.state.errors, duplicateChecks, csvProcessor.state.dataRowOffset]);
+  }, [getCurrentData, searchTerm, filterType, processingErrors, duplicateChecks, dataRowOffset]);
 
   // Pagination logic
   const totalFilteredRecords = filteredData.length;
@@ -373,20 +454,20 @@ export default function ImportCSVPage() {
     if (selectedRows.size === totalFilteredRecords) {
       setSelectedRows(new Set());
     } else {
-      setSelectedRows(new Set(filteredData.map(row => row.originalIndex)));
+      setSelectedRows(new Set(filteredData.map(row => parseInt(row.originalIndex))));
     }
   };
 
-  // Import data - Fixed to work with mappedData
+  // Import data
   const handleImport = async () => {
     if (!selectedTemplate) return;
     
     const rowsToImport = selectedRows.size > 0 
-      ? csvProcessor.state.mappedData.filter((_, index) => selectedRows.has(index))
-      : csvProcessor.state.mappedData.filter((_, index) => 
+      ? mappedData.filter((_, index) => selectedRows.has(index))
+      : mappedData.filter((_, index) => 
           !duplicateChecks.some(d => d.rowIndex === index) && 
-          !csvProcessor.state.errors.some(e => 
-            e.message.includes(`แถวที่ ${index + csvProcessor.state.dataRowOffset}`)
+          !processingErrors.some(e => 
+            e.message.includes(`แถวที่ ${index + dataRowOffset}`)
           )
         );
 
@@ -400,7 +481,7 @@ export default function ImportCSVPage() {
     const results: ImportResults = { 
       success: 0, 
       failed: 0, 
-      skipped: csvProcessor.state.mappedData.length - rowsToImport.length, 
+      skipped: mappedData.length - rowsToImport.length, 
       errors: [] 
     };
 
@@ -421,9 +502,9 @@ export default function ImportCSVPage() {
           results.success++;
         } catch (error) {
           results.failed++;
-          const originalRowIndex = csvProcessor.state.mappedData.findIndex(p => p === recordData);
+          const originalRowIndex = mappedData.findIndex(p => p === recordData);
           results.errors.push(
-            `แถวที่ ${originalRowIndex + csvProcessor.state.dataRowOffset}: ${
+            `แถวที่ ${originalRowIndex + dataRowOffset}: ${
               error instanceof Error ? error.message : 'Import failed'
             }`
           );
@@ -433,7 +514,7 @@ export default function ImportCSVPage() {
       
       setImportResults(results);
       setImportComplete(true);
-      csvProcessor.goToStep(3);
+      setCurrentStep(3);
     } catch (error: unknown) {
       console.error('Import error:', error);
       const errorMessage = error instanceof Error ? error.message : 'An error occurred during import';
@@ -446,16 +527,28 @@ export default function ImportCSVPage() {
   // Utility functions
   const downloadTemplate = () => {
     if (selectedTemplate) {
-      csvProcessor.downloadTemplate(selectedTemplate);
+      const headers = Object.keys(selectedTemplate.fieldMapping).join(',');
+      const desc = Object.keys(selectedTemplate.fieldMapping)
+        .map((key) => selectedTemplate.fieldDescriptions?.[key] || '')
+        .join(',');
+      const csvContent = [headers, desc, ''].join('\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `${selectedTemplate.collection}_template.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
     }
   };
 
   const exportErrorReport = () => {
     const errorRows = filteredData.filter(row => {
-      const hasError = csvProcessor.state.errors.some(error =>
-        error.message.includes(`แถวที่ ${row.originalIndex + csvProcessor.state.dataRowOffset}`)
+      const hasError = processingErrors.some(error =>
+        error.message.includes(`แถวที่ ${parseInt(row.originalIndex) + dataRowOffset}`)
       );
-      const hasDuplicate = duplicateChecks.some(dup => dup.rowIndex === row.originalIndex);
+      const hasDuplicate = duplicateChecks.some(dup => dup.rowIndex === parseInt(row.originalIndex));
       return hasError || hasDuplicate;
     });
 
@@ -465,12 +558,12 @@ export default function ImportCSVPage() {
     }
 
     const csvContent = [
-      ['Row', ...csvProcessor.state.headers, 'Error Type', 'Error Details'].join(','),
+      ['Row', ...headers, 'Error Type', 'Error Details'].join(','),
       ...errorRows.map(row => {
-        const rowError = csvProcessor.state.errors.find(error =>
-          error.message.includes(`แถวที่ ${row.originalIndex + csvProcessor.state.dataRowOffset}`)
+        const rowError = processingErrors.find(error =>
+          error.message.includes(`แถวที่ ${parseInt(row.originalIndex) + dataRowOffset}`)
         );
-        const duplicate = duplicateChecks.find(dup => dup.rowIndex === row.originalIndex);
+        const duplicate = duplicateChecks.find(dup => dup.rowIndex === parseInt(row.originalIndex));
         
         const errorType = duplicate ? 'Duplicate' : 'Validation';
         const errorDetails = duplicate 
@@ -478,8 +571,8 @@ export default function ImportCSVPage() {
           : rowError?.message || '';
 
         return [
-          row.originalIndex + csvProcessor.state.dataRowOffset,
-          ...csvProcessor.state.headers.map(header => `"${row[header] ?? ''}"`),
+          parseInt(row.originalIndex) + dataRowOffset,
+          ...headers.map(header => `"${row[header] ?? ''}"`),
           errorType,
           `"${errorDetails}"`
         ].join(',');
@@ -496,7 +589,11 @@ export default function ImportCSVPage() {
   };
 
   const resetImport = () => {
-    csvProcessor.reset();
+    setCurrentStep(1);
+    setHeaders([]);
+    setPreviewData([]);
+    setMappedData([]);
+    setProcessingErrors([]);
     setImportComplete(false);
     setImportResults({ success: 0, failed: 0, skipped: 0, errors: [] });
     setImportProgress(0);
@@ -518,35 +615,34 @@ export default function ImportCSVPage() {
   };
 
   const hasValidationError = (rowIndex: number) => {
-    return csvProcessor.state.errors.some(error =>
-      error.message.includes(`แถวที่ ${rowIndex + csvProcessor.state.dataRowOffset}`)
+    return processingErrors.some(error =>
+      error.message.includes(`แถวที่ ${rowIndex + dataRowOffset}`)
     );
   };
 
-  // Statistics - Fixed calculation
-  const { state } = csvProcessor;
-  const totalRecords = state.previewData.length;
+  // Statistics
+  const totalRecords = previewData.length;
   
-  // Find unique rows with duplicates (don't count duplicates)
+  // Find unique rows with duplicates
   const uniqueDuplicateRows = new Set(duplicateChecks.map(d => d.rowIndex)).size;
   
-  // Find unique rows with validation errors (don't count duplicates)
+  // Find unique rows with validation errors
   const uniqueErrorRows = new Set(
-    state.errors
+    processingErrors
       .map(error => {
         const match = error.message.match(/แถวที่ (\d+):/);
-        return match ? parseInt(match[1]) - state.dataRowOffset : -1;
+        return match ? parseInt(match[1]) - dataRowOffset : -1;
       })
       .filter(rowIndex => rowIndex >= 0)
   ).size;
   
-  // Calculate valid rows = total - (rows with duplicates or errors)
+  // Calculate valid rows
   const rowsWithIssues = new Set([
     ...duplicateChecks.map(d => d.rowIndex),
-    ...state.errors
+    ...processingErrors
       .map(error => {
         const match = error.message.match(/แถวที่ (\d+):/);
-        return match ? parseInt(match[1]) - state.dataRowOffset : -1;
+        return match ? parseInt(match[1]) - dataRowOffset : -1;
       })
       .filter(rowIndex => rowIndex >= 0)
   ]);
@@ -566,9 +662,9 @@ export default function ImportCSVPage() {
             ].map((step, index) => (
               <div key={step.num} className="flex items-center">
                 <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-semibold transition-all ${
-                  state.currentStep >= step.num ? 'bg-blue-600 scale-110' : 'bg-gray-300'
+                  currentStep >= step.num ? 'bg-blue-600 scale-110' : 'bg-gray-300'
                 }`}>
-                  {state.currentStep > step.num ? <FaCheck /> : <step.icon />}
+                  {currentStep > step.num ? <FaCheck /> : <step.icon />}
                 </div>
                 <span className="ml-3 text-sm font-medium text-gray-700">
                   {step.label}
@@ -580,7 +676,7 @@ export default function ImportCSVPage() {
         </div>
 
         {/* Step 1: Template Selection & File Upload */}
-        {state.currentStep === 1 && (
+        {currentStep === 1 && (
           <div className="p-6 mb-8 bg-white rounded-lg shadow-md">
             <h2 className="mb-6 text-2xl font-semibold">Select Template & Upload CSV File</h2>
 
@@ -648,17 +744,17 @@ export default function ImportCSVPage() {
                   onChange={handleFileChange}
                   className="hidden"
                   id="csvFile"
-                  disabled={state.isProcessing}
+                  disabled={isProcessing}
                 />
                 <label
                   htmlFor="csvFile"
                   className={`inline-block px-6 py-3 rounded-lg cursor-pointer transition-all ${
-                    state.isProcessing
+                    isProcessing
                       ? 'bg-gray-400 text-white cursor-not-allowed'
                       : 'bg-blue-600 text-white hover:bg-blue-700 hover:scale-105'
                   }`}
                 >
-                  {state.isProcessing ? (
+                  {isProcessing ? (
                     <><FaSpinner className="inline mr-2 animate-spin" />Processing...</>
                   ) : (
                     'Select File'
@@ -681,7 +777,7 @@ export default function ImportCSVPage() {
         )}
 
         {/* Step 2: Preview and Validate */}
-        {state.currentStep === 2 && (
+        {currentStep === 2 && (
           <div className="p-6 mb-8 bg-white rounded-lg shadow-md">
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-2xl font-semibold">Preview & Validate Data</h2>
@@ -826,7 +922,7 @@ export default function ImportCSVPage() {
                     <div>• {uniqueDuplicateRows} row(s) with duplicates ({duplicateChecks.length} total duplicate issues)</div>
                   )}
                   {uniqueErrorRows > 0 && (
-                    <div>• {uniqueErrorRows} row(s) with validation errors ({state.errors.length} total errors)</div>
+                    <div>• {uniqueErrorRows} row(s) with validation errors ({processingErrors.length} total errors)</div>
                   )}
                 </div>
               </div>
@@ -866,7 +962,7 @@ export default function ImportCSVPage() {
                       <th className="px-3 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">
                         Row
                       </th>
-                      {state.headers.slice(0, 6).map((header, index) => (
+                      {headers.slice(0, 6).map((header, index) => (
                         <th key={index} className="px-3 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">
                           {header}
                         </th>
@@ -878,7 +974,7 @@ export default function ImportCSVPage() {
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
                     {currentPageData.map((row) => {
-                      const actualIndex = row.originalIndex;
+                      const actualIndex = parseInt(row.originalIndex);
                       const rowStatus = getRowStatus(actualIndex);
                       const hasError = hasValidationError(actualIndex);
                       const isSelected = selectedRows.has(actualIndex);
@@ -904,7 +1000,7 @@ export default function ImportCSVPage() {
                           <td className="px-3 py-3 text-sm font-medium">
                             <div className="flex items-center space-x-2">
                               <span className={`${rowStatus || hasError ? 'text-red-600' : 'text-gray-900'}`}>
-                                {actualIndex + csvProcessor.state.dataRowOffset}
+                                {actualIndex + dataRowOffset}
                               </span>
                               {(rowStatus || hasError) && (
                                 <FaExclamationTriangle 
@@ -914,7 +1010,7 @@ export default function ImportCSVPage() {
                               )}
                             </div>
                           </td>
-                          {state.headers.slice(0, 6).map((header, colIndex) => (
+                          {headers.slice(0, 6).map((header, colIndex) => (
                             <td key={colIndex} className="px-3 py-3 text-sm max-w-32">
                               {editingCell?.rowIndex === actualIndex && editingCell?.field === header ? (
                                 <div className="flex items-center space-x-1">
@@ -1053,7 +1149,7 @@ export default function ImportCSVPage() {
             {/* Action Buttons */}
             <div className="flex items-center justify-between">
               <button
-                onClick={() => csvProcessor.goToStep(1)}
+                onClick={() => setCurrentStep(1)}
                 className="flex items-center px-4 py-2 space-x-2 text-gray-700 transition-colors border border-gray-300 rounded-lg hover:bg-gray-50"
               >
                 <FaArrowLeft />
