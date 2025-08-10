@@ -1,4 +1,4 @@
-// src/components/utils/ImportCSVPage.tsx
+// src/utils/ImportCSVPage.tsx
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -10,22 +10,31 @@ import {
   FaFileExport, FaEye, FaEyeSlash, FaCheckSquare, FaSquare, FaUndo
 } from 'react-icons/fa';
 import { useCSVProcessor } from './CSVProcessor';
-import { getAllTemplates, getTemplateByCollection } from './CSVTemplates';
+import { getAllTemplates, getTemplateByCollection, type CSVTemplateConfig } from './CSVTemplates';
 import { useAuth } from '../contexts/AuthContext';
 
 // --- Type Definitions ---
 interface ImportResults {
-  success: number; failed: number; skipped: number; errors: string[];
+  success: number; 
+  failed: number; 
+  skipped: number; 
+  errors: string[];
 }
+
 interface DuplicateCheck {
-  rowIndex: number; fieldValue?: string; duplicateFields: string[];
+  rowIndex: number; 
+  fieldValue?: string; 
+  duplicateFields: string[];
   duplicateType: 'database' | 'csv';
 }
+
 interface EditableCell {
-  rowIndex: number; field: string;
+  rowIndex: number; 
+  field: string;
 }
+
 type FilterType = 'all' | 'valid' | 'errors' | 'duplicates';
-type DataRow = Record<string, unknown> & { originalIndex: number };
+type DataRow = Record<string, string> & { originalIndex: number };
 
 export default function ImportCSVPage() {
   const navigate = useNavigate();
@@ -33,15 +42,14 @@ export default function ImportCSVPage() {
   const csvProcessor = useCSVProcessor();
   const templates = getAllTemplates();
 
-  // Template Selection
-  //const [selectedCollection, setSelectedCollection] = useState<string>(templates[0]?.collection || '');  
-  const [selectedCollection, setSelectedCollection] =  useState<string>(() => Object.keys(templates)[0]); 
-  const selectedTemplate = useMemo(() => {
-    return getTemplateByCollection(selectedCollection) ?? templates[0];
-  }, [selectedCollection, templates]);
+  // Template Selection - Fixed to work with templates array
+  const [selectedCollection, setSelectedCollection] = useState<string>(() => 
+    templates.length > 0 ? templates[0].collection : ''
+  );
   
-
-
+  const selectedTemplate = useMemo(() => {
+    return getTemplateByCollection(selectedCollection) ?? (templates.length > 0 ? templates[0] : null);
+  }, [selectedCollection, templates]);
 
   // Core States
   const [isImporting, setIsImporting] = useState(false);
@@ -64,14 +72,14 @@ export default function ImportCSVPage() {
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
   const [editingCell, setEditingCell] = useState<EditableCell | null>(null);
   const [editValue, setEditValue] = useState('');
-  const [editedData, setEditedData] = useState<Record<number, Record<string, unknown>>>({});
+  const [editedData, setEditedData] = useState<Record<number, Record<string, string>>>({});
   const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
 
   // Use ref to track if we've already processed this data
   const processedDataRef = useRef<string>('');
 
-  // Get current data with edits applied
-  const getCurrentData = useCallback(() => {
+  // Get current data with edits applied - Fixed to work with string values
+  const getCurrentData = useCallback((): Record<string, string>[] => {
     return csvProcessor.state.previewData.map((row, index) => {
       const edits = editedData[index] || {};
       return { ...row, ...edits };
@@ -95,7 +103,7 @@ export default function ImportCSVPage() {
       const fieldValues: Record<string, string[]> = {};
       requiredFields.forEach(field => {
         fieldValues[field] = [...new Set(currentData
-          .map(row => String(row[field] || '').trim())
+          .map(row => (row[field] || '').trim())
           .filter(Boolean))];
       });
 
@@ -110,7 +118,7 @@ export default function ImportCSVPage() {
             const snapshot = await getDocs(q);
             snapshot.forEach(doc => {
               const data = doc.data();
-              const value = String(data[field] || '').trim();
+              const value = (data[field] || '').toString().trim();
               results.add(value);
             });
           }
@@ -128,7 +136,7 @@ export default function ImportCSVPage() {
 
       currentData.forEach((row, index) => {
         requiredFields.forEach(field => {
-          const value = String(row[field] || '').trim();
+          const value = (row[field] || '').trim();
           if (value) {
             if (csvFieldMaps[field].has(value)) {
               duplicates.push({ 
@@ -156,7 +164,7 @@ export default function ImportCSVPage() {
 
         currentData.forEach((row, index) => {
           requiredFields.forEach(field => {
-            const value = String(row[field] || '').trim();
+            const value = (row[field] || '').trim();
             if (value && existingFieldValues[field]?.has(value)) {
               duplicates.push({ 
                 rowIndex: index, 
@@ -280,10 +288,10 @@ export default function ImportCSVPage() {
     }
   };
 
-  // Cell editing functions
+  // Cell editing functions - Fixed to work with string values
   const handleCellEdit = (rowIndex: number, field: string, currentValue: string) => {
     setEditingCell({ rowIndex, field });
-    setEditValue(String(currentValue));
+    setEditValue(currentValue);
   };
 
   const handleSaveEdit = () => {
@@ -304,7 +312,7 @@ export default function ImportCSVPage() {
     setEditValue('');
   };
 
-  // Filter and search logic
+  // Filter and search logic - Fixed to work with string values
   const filteredData = useMemo(() => {
     const currentData = getCurrentData();
     let dataWithIndex: DataRow[] = currentData.map((row, index) => ({ 
@@ -315,7 +323,7 @@ export default function ImportCSVPage() {
     if (searchTerm) {
       dataWithIndex = dataWithIndex.filter(row =>
         Object.values(row).some(value => 
-          String(value).toLowerCase().includes(searchTerm.toLowerCase())
+          value.toString().toLowerCase().includes(searchTerm.toLowerCase())
         )
       );
     }
@@ -369,12 +377,13 @@ export default function ImportCSVPage() {
     }
   };
 
-  // Import data
+  // Import data - Fixed to work with mappedData
   const handleImport = async () => {
-    const currentData = getCurrentData();
+    if (!selectedTemplate) return;
+    
     const rowsToImport = selectedRows.size > 0 
-      ? currentData.filter((_, index) => selectedRows.has(index))
-      : currentData.filter((_, index) => 
+      ? csvProcessor.state.mappedData.filter((_, index) => selectedRows.has(index))
+      : csvProcessor.state.mappedData.filter((_, index) => 
           !duplicateChecks.some(d => d.rowIndex === index) && 
           !csvProcessor.state.errors.some(e => 
             e.message.includes(`แถวที่ ${index + csvProcessor.state.dataRowOffset}`)
@@ -391,7 +400,7 @@ export default function ImportCSVPage() {
     const results: ImportResults = { 
       success: 0, 
       failed: 0, 
-      skipped: currentData.length - rowsToImport.length, 
+      skipped: csvProcessor.state.mappedData.length - rowsToImport.length, 
       errors: [] 
     };
 
@@ -412,7 +421,7 @@ export default function ImportCSVPage() {
           results.success++;
         } catch (error) {
           results.failed++;
-          const originalRowIndex = currentData.findIndex(p => p === recordData);
+          const originalRowIndex = csvProcessor.state.mappedData.findIndex(p => p === recordData);
           results.errors.push(
             `แถวที่ ${originalRowIndex + csvProcessor.state.dataRowOffset}: ${
               error instanceof Error ? error.message : 'Import failed'
@@ -436,7 +445,9 @@ export default function ImportCSVPage() {
 
   // Utility functions
   const downloadTemplate = () => {
-    csvProcessor.downloadTemplate(selectedTemplate);
+    if (selectedTemplate) {
+      csvProcessor.downloadTemplate(selectedTemplate);
+    }
   };
 
   const exportErrorReport = () => {
@@ -464,11 +475,11 @@ export default function ImportCSVPage() {
         const errorType = duplicate ? 'Duplicate' : 'Validation';
         const errorDetails = duplicate 
           ? `${duplicate.duplicateFields.join(', ')} (${duplicate.duplicateType})`
-          : rowError || '';
+          : rowError?.message || '';
 
         return [
           row.originalIndex + csvProcessor.state.dataRowOffset,
-          ...csvProcessor.state.headers.map(header => `"${String(row[header] ?? '')}"`),
+          ...csvProcessor.state.headers.map(header => `"${row[header] ?? ''}"`),
           errorType,
           `"${errorDetails}"`
         ].join(',');
@@ -479,7 +490,7 @@ export default function ImportCSVPage() {
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `${selectedTemplate.collection}_import_errors_${new Date().toISOString().split('T')[0]}.csv`;
+    link.download = `${selectedTemplate?.collection || 'data'}_import_errors_${new Date().toISOString().split('T')[0]}.csv`;
     link.click();
     window.URL.revokeObjectURL(url);
   };
@@ -512,14 +523,14 @@ export default function ImportCSVPage() {
     );
   };
 
-  // Statistics - แก้ไขการคำนวณให้ถูกต้อง
+  // Statistics - Fixed calculation
   const { state } = csvProcessor;
   const totalRecords = state.previewData.length;
   
-  // หาจำนวน unique rows ที่มี duplicates (ไม่นับซ้ำ)
+  // Find unique rows with duplicates (don't count duplicates)
   const uniqueDuplicateRows = new Set(duplicateChecks.map(d => d.rowIndex)).size;
   
-  // หาจำนวน unique rows ที่มี validation errors (ไม่นับซ้ำ)
+  // Find unique rows with validation errors (don't count duplicates)
   const uniqueErrorRows = new Set(
     state.errors
       .map(error => {
@@ -529,7 +540,7 @@ export default function ImportCSVPage() {
       .filter(rowIndex => rowIndex >= 0)
   ).size;
   
-  // คำนวณ valid rows = total - (rows ที่มี duplicates หรือ errors)
+  // Calculate valid rows = total - (rows with duplicates or errors)
   const rowsWithIssues = new Set([
     ...duplicateChecks.map(d => d.rowIndex),
     ...state.errors
@@ -675,7 +686,7 @@ export default function ImportCSVPage() {
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-2xl font-semibold">Preview & Validate Data</h2>
               <div className="text-sm text-gray-600">
-                Collection: <span className="font-medium text-blue-600">{selectedTemplate.collection}</span>
+                Collection: <span className="font-medium text-blue-600">{selectedTemplate?.collection}</span>
               </div>
               {isCheckingDuplicates && (
                 <div className="flex items-center space-x-2 text-blue-600">
@@ -735,468 +746,468 @@ export default function ImportCSVPage() {
                   <option value="duplicates">Duplicates Only</option>
                 </select>
               </div>            
-            {/* Rows per page */}
-            <select
-              className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-              value={rowsPerPage}
-              onChange={(e) => setRowsPerPage(Number(e.target.value))}
-            >
-              <option value={10}>10 per page</option>
-              <option value={25}>25 per page</option>
-              <option value={50}>50 per page</option>
-              <option value={100}>100 per page</option>
-            </select>
-          </div>
-
-          {/* Action Buttons */}
-          <div className="flex flex-wrap gap-3 mb-6">
-            <button
-              onClick={handleSelectAll}
-              className="flex items-center px-3 py-2 space-x-2 transition-colors bg-gray-100 rounded-lg hover:bg-gray-200"
-            >
-              {selectedRows.size === totalFilteredRecords ? <FaCheckSquare /> : <FaSquare />}
-              <span className="text-sm">
-                {selectedRows.size === totalFilteredRecords ? 'Deselect All' : 'Select All'}
-              </span>
-            </button>
-
-            <button
-              onClick={exportErrorReport}
-              className="flex items-center px-3 py-2 space-x-2 text-orange-700 transition-colors bg-orange-100 rounded-lg hover:bg-orange-200"
-              disabled={uniqueDuplicateRows === 0 && uniqueErrorRows === 0}
-            >
-              <FaFileExport />
-              <span className="text-sm">Export Error Report</span>
-            </button>
-
-            <button
-              onClick={() => setShowAdvancedOptions(!showAdvancedOptions)}
-              className="flex items-center px-3 py-2 space-x-2 text-purple-700 transition-colors bg-purple-100 rounded-lg hover:bg-purple-200"
-            >
-              {showAdvancedOptions ? <FaEyeSlash /> : <FaEye />}
-              <span className="text-sm">Advanced Options</span>
-            </button>
-          </div>
-
-          {/* Advanced Options */}
-          {showAdvancedOptions && (
-            <div className="p-4 mb-6 border border-gray-200 rounded-lg bg-gray-50">
-              <h4 className="mb-3 font-medium text-gray-800">Advanced Import Options</h4>
-              <div className="grid gap-4 md:grid-cols-2">
-                <label className="flex items-center space-x-2">
-                  <input type="checkbox" className="rounded" />
-                  <span className="text-sm">Skip duplicate records automatically</span>
-                </label>
-                <label className="flex items-center space-x-2">
-                  <input type="checkbox" className="rounded" />
-                  <span className="text-sm">Create backup before import</span>
-                </label>
-                <label className="flex items-center space-x-2">
-                  <input type="checkbox" className="rounded" />
-                  <span className="text-sm">Send email notification on completion</span>
-                </label>
-                <label className="flex items-center space-x-2">
-                  <input type="checkbox" className="rounded" />
-                  <span className="text-sm">Update existing records if found</span>
-                </label>
-              </div>
-            </div>
-          )}
-
-          {/* Issues Summary */}
-          {(uniqueDuplicateRows > 0 || uniqueErrorRows > 0) && (
-            <div className="p-4 mb-6 border border-red-200 rounded-lg bg-red-50">
-              <h4 className="mb-3 text-sm font-medium text-red-800">
-                <FaExclamationTriangle className="inline mr-2" />
-                Issues Found:
-              </h4>
-              <div className="space-y-2 text-sm text-red-700">
-                {uniqueDuplicateRows > 0 && (
-                  <div>• {uniqueDuplicateRows} row(s) with duplicates ({duplicateChecks.length} total duplicate issues)</div>
-                )}
-                {uniqueErrorRows > 0 && (
-                  <div>• {uniqueErrorRows} row(s) with validation errors ({state.errors.length} total errors)</div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Preview Table */}
-          <div className="mb-6 overflow-x-auto">
-            {/* Table Header Info */}
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center space-x-4">
-                <div className="text-sm text-gray-600">
-                  Showing {startIndex + 1} to {Math.min(endIndex, totalFilteredRecords)} of {totalFilteredRecords} filtered records
-                </div>
-                {selectedRows.size > 0 && (
-                  <div className="text-sm font-medium text-blue-600">
-                    {selectedRows.size} row(s) selected
-                  </div>
-                )}
-              </div>
-              <div className="text-sm text-gray-600">
-                Page {currentPage} of {totalPages}
-              </div>
+              {/* Rows per page */}
+              <select
+                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                value={rowsPerPage}
+                onChange={(e) => setRowsPerPage(Number(e.target.value))}
+              >
+                <option value={10}>10 per page</option>
+                <option value={25}>25 per page</option>
+                <option value={50}>50 per page</option>
+                <option value={100}>100 per page</option>
+              </select>
             </div>
 
-            <div className="overflow-hidden border border-gray-200 rounded-lg">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-3 py-3 text-left">
-                      <input
-                        type="checkbox"
-                        checked={selectedRows.size === totalFilteredRecords && totalFilteredRecords > 0}
-                        onChange={handleSelectAll}
-                        className="rounded"
-                      />
-                    </th>
-                    <th className="px-3 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">
-                      Row
-                    </th>
-                    {state.headers.slice(0, 6).map((header, index) => (
-                      <th key={index} className="px-3 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">
-                        {header}
-                      </th>
-                    ))}
-                    <th className="px-3 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">
-                      Status
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {currentPageData.map((row) => {
-                    const actualIndex = row.originalIndex;
-                    const rowStatus = getRowStatus(actualIndex);
-                    const hasError = hasValidationError(actualIndex);
-                    const isSelected = selectedRows.has(actualIndex);
-                    
-                    return (
-                      <tr 
-                        key={actualIndex} 
-                        className={`transition-colors ${
-                          rowStatus ? 'bg-red-50 hover:bg-red-100' : 
-                          hasError ? 'bg-yellow-50 hover:bg-yellow-100' :
-                          isSelected ? 'bg-blue-50 hover:bg-blue-100' :
-                          'hover:bg-gray-50'
-                        }`}
-                      >
-                        <td className="px-3 py-3">
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={() => handleRowSelect(actualIndex)}
-                            className="rounded"
-                          />
-                        </td>
-                        <td className="px-3 py-3 text-sm font-medium">
-                          <div className="flex items-center space-x-2">
-                            <span className={`${rowStatus || hasError ? 'text-red-600' : 'text-gray-900'}`}>
-                              {actualIndex + csvProcessor.state.dataRowOffset}
-                            </span>
-                            {(rowStatus || hasError) && (
-                              <FaExclamationTriangle 
-                                className="text-xs text-red-500" 
-                                title={rowStatus ? `Duplicate: ${rowStatus.duplicateFields.join(', ')}` : 'Validation Error'}
-                              />
-                            )}
-                          </div>
-                        </td>
-                        {state.headers.slice(0, 6).map((header, colIndex) => (
-                          <td key={colIndex} className="px-3 py-3 text-sm max-w-32">
-                            {editingCell?.rowIndex === actualIndex && editingCell?.field === header ? (
-                              <div className="flex items-center space-x-1">
-                                <input
-                                  type="text"
-                                  value={editValue}
-                                  onChange={(e) => setEditValue(e.target.value)}
-                                  className="w-full px-2 py-1 text-xs border border-blue-300 rounded focus:ring-1 focus:ring-blue-500"
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') handleSaveEdit();
-                                    if (e.key === 'Escape') handleCancelEdit();
-                                  }}
-                                  autoFocus
-                                />
-                                <button
-                                  onClick={handleSaveEdit}
-                                  className="text-green-600 hover:text-green-800"
-                                >
-                                  <FaSave className="text-xs" />
-                                </button>
-                                <button
-                                  onClick={handleCancelEdit}
-                                  className="text-gray-600 hover:text-gray-800"
-                                >
-                                  <FaUndo className="text-xs" />
-                                </button>
-                              </div>
-                            ) : (
-                              <div className="flex items-center space-x-1 group">
-                                <span className={`truncate ${rowStatus || hasError ? 'text-red-700' : 'text-gray-900'}`}>
-                                  {String(row[header] ?? '')}
-                                </span>
-                                <button
-                                  onClick={() => handleCellEdit(actualIndex, header, String(row[header] ?? ''))}
-                                  className="text-blue-600 transition-opacity opacity-0 group-hover:opacity-100 hover:text-blue-800"
-                                >
-                                  <FaEdit className="text-xs" />
-                                </button>
-                              </div>
-                            )}
-                          </td>
-                        ))}
-                        <td className="px-3 py-3 text-sm">
-                          {rowStatus ? (
-                            <span className="inline-flex items-center px-2 py-1 text-xs font-medium text-red-800 bg-red-100 rounded-full">
-                              <FaTimes className="mr-1" />
-                              Duplicate
-                            </span>
-                          ) : hasError ? (
-                            <span className="inline-flex items-center px-2 py-1 text-xs font-medium text-yellow-800 bg-yellow-100 rounded-full">
-                              <FaExclamationTriangle className="mr-1" />
-                              Error
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center px-2 py-1 text-xs font-medium text-green-800 bg-green-100 rounded-full">
-                              <FaCheck className="mr-1" />
-                              Valid
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+            {/* Action Buttons */}
+            <div className="flex flex-wrap gap-3 mb-6">
+              <button
+                onClick={handleSelectAll}
+                className="flex items-center px-3 py-2 space-x-2 transition-colors bg-gray-100 rounded-lg hover:bg-gray-200"
+              >
+                {selectedRows.size === totalFilteredRecords ? <FaCheckSquare /> : <FaSquare />}
+                <span className="text-sm">
+                  {selectedRows.size === totalFilteredRecords ? 'Deselect All' : 'Select All'}
+                </span>
+              </button>
+
+              <button
+                onClick={exportErrorReport}
+                className="flex items-center px-3 py-2 space-x-2 text-orange-700 transition-colors bg-orange-100 rounded-lg hover:bg-orange-200"
+                disabled={uniqueDuplicateRows === 0 && uniqueErrorRows === 0}
+              >
+                <FaFileExport />
+                <span className="text-sm">Export Error Report</span>
+              </button>
+
+              <button
+                onClick={() => setShowAdvancedOptions(!showAdvancedOptions)}
+                className="flex items-center px-3 py-2 space-x-2 text-purple-700 transition-colors bg-purple-100 rounded-lg hover:bg-purple-200"
+              >
+                {showAdvancedOptions ? <FaEyeSlash /> : <FaEye />}
+                <span className="text-sm">Advanced Options</span>
+              </button>
             </div>
 
-            {/* Pagination */}
-            {totalPages > 1 && (
-              <div className="flex items-center justify-between mt-6">
-                <div className="flex items-center space-x-2">
-                  <button
-                    onClick={() => setCurrentPage(1)}
-                    disabled={currentPage === 1}
-                    className="px-3 py-2 text-sm transition-colors border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    First
-                  </button>
-                  <button
-                    onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
-                    disabled={currentPage === 1}
-                    className="px-3 py-2 text-sm transition-colors border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Previous
-                  </button>
-                </div>
-
-                <div className="flex items-center space-x-1">
-                  {Array.from({ length: Math.min(7, totalPages) }, (_, i) => {
-                    let pageNum;
-                    if (totalPages <= 7) {
-                      pageNum = i + 1;
-                    } else {
-                      const start = Math.max(1, currentPage - 3);
-                      const end = Math.min(totalPages, start + 6);
-                      pageNum = start + i;
-                      if (pageNum > end) return null;
-                    }
-                    
-                    return (
-                      <button
-                        key={pageNum}
-                        onClick={() => setCurrentPage(pageNum)}
-                        className={`px-3 py-2 text-sm border rounded-lg transition-colors ${
-                          currentPage === pageNum
-                            ? 'bg-blue-600 text-white border-blue-600'
-                            : 'border-gray-300 hover:bg-gray-50'
-                        }`}
-                      >
-                        {pageNum}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                <div className="flex items-center space-x-2">
-                  <button
-                    onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
-                    disabled={currentPage === totalPages}
-                    className="px-3 py-2 text-sm transition-colors border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Next
-                  </button>
-                  <button
-                    onClick={() => setCurrentPage(totalPages)}
-                    disabled={currentPage === totalPages}
-                    className="px-3 py-2 text-sm transition-colors border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Last
-                  </button>
+            {/* Advanced Options */}
+            {showAdvancedOptions && (
+              <div className="p-4 mb-6 border border-gray-200 rounded-lg bg-gray-50">
+                <h4 className="mb-3 font-medium text-gray-800">Advanced Import Options</h4>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <label className="flex items-center space-x-2">
+                    <input type="checkbox" className="rounded" />
+                    <span className="text-sm">Skip duplicate records automatically</span>
+                  </label>
+                  <label className="flex items-center space-x-2">
+                    <input type="checkbox" className="rounded" />
+                    <span className="text-sm">Create backup before import</span>
+                  </label>
+                  <label className="flex items-center space-x-2">
+                    <input type="checkbox" className="rounded" />
+                    <span className="text-sm">Send email notification on completion</span>
+                  </label>
+                  <label className="flex items-center space-x-2">
+                    <input type="checkbox" className="rounded" />
+                    <span className="text-sm">Update existing records if found</span>
+                  </label>
                 </div>
               </div>
             )}
-          </div>
 
-          {/* Action Buttons */}
-          <div className="flex items-center justify-between">
-            <button
-              onClick={() => csvProcessor.goToStep(1)}
-              className="flex items-center px-4 py-2 space-x-2 text-gray-700 transition-colors border border-gray-300 rounded-lg hover:bg-gray-50"
-            >
-              <FaArrowLeft />
-              <span>Back</span>
-            </button>
-            
-            <div className="flex items-center space-x-4">
-              <div className="text-sm text-gray-600">
-                {selectedRows.size > 0 
-                  ? `Ready to import ${selectedRows.size} selected record(s)`
-                  : `Ready to import ${validRowsCount} valid record(s)`
-                }
+            {/* Issues Summary */}
+            {(uniqueDuplicateRows > 0 || uniqueErrorRows > 0) && (
+              <div className="p-4 mb-6 border border-red-200 rounded-lg bg-red-50">
+                <h4 className="mb-3 text-sm font-medium text-red-800">
+                  <FaExclamationTriangle className="inline mr-2" />
+                  Issues Found:
+                </h4>
+                <div className="space-y-2 text-sm text-red-700">
+                  {uniqueDuplicateRows > 0 && (
+                    <div>• {uniqueDuplicateRows} row(s) with duplicates ({duplicateChecks.length} total duplicate issues)</div>
+                  )}
+                  {uniqueErrorRows > 0 && (
+                    <div>• {uniqueErrorRows} row(s) with validation errors ({state.errors.length} total errors)</div>
+                  )}
+                </div>
               </div>
+            )}
+
+            {/* Preview Table */}
+            <div className="mb-6 overflow-x-auto">
+              {/* Table Header Info */}
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center space-x-4">
+                  <div className="text-sm text-gray-600">
+                    Showing {startIndex + 1} to {Math.min(endIndex, totalFilteredRecords)} of {totalFilteredRecords} filtered records
+                  </div>
+                  {selectedRows.size > 0 && (
+                    <div className="text-sm font-medium text-blue-600">
+                      {selectedRows.size} row(s) selected
+                    </div>
+                  )}
+                </div>
+                <div className="text-sm text-gray-600">
+                  Page {currentPage} of {totalPages}
+                </div>
+              </div>
+
+              <div className="overflow-hidden border border-gray-200 rounded-lg">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-3 py-3 text-left">
+                        <input
+                          type="checkbox"
+                          checked={selectedRows.size === totalFilteredRecords && totalFilteredRecords > 0}
+                          onChange={handleSelectAll}
+                          className="rounded"
+                        />
+                      </th>
+                      <th className="px-3 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">
+                        Row
+                      </th>
+                      {state.headers.slice(0, 6).map((header, index) => (
+                        <th key={index} className="px-3 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">
+                          {header}
+                        </th>
+                      ))}
+                      <th className="px-3 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">
+                        Status
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {currentPageData.map((row) => {
+                      const actualIndex = row.originalIndex;
+                      const rowStatus = getRowStatus(actualIndex);
+                      const hasError = hasValidationError(actualIndex);
+                      const isSelected = selectedRows.has(actualIndex);
+                      
+                      return (
+                        <tr 
+                          key={actualIndex} 
+                          className={`transition-colors ${
+                            rowStatus ? 'bg-red-50 hover:bg-red-100' : 
+                            hasError ? 'bg-yellow-50 hover:bg-yellow-100' :
+                            isSelected ? 'bg-blue-50 hover:bg-blue-100' :
+                            'hover:bg-gray-50'
+                          }`}
+                        >
+                          <td className="px-3 py-3">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => handleRowSelect(actualIndex)}
+                              className="rounded"
+                            />
+                          </td>
+                          <td className="px-3 py-3 text-sm font-medium">
+                            <div className="flex items-center space-x-2">
+                              <span className={`${rowStatus || hasError ? 'text-red-600' : 'text-gray-900'}`}>
+                                {actualIndex + csvProcessor.state.dataRowOffset}
+                              </span>
+                              {(rowStatus || hasError) && (
+                                <FaExclamationTriangle 
+                                  className="text-xs text-red-500" 
+                                  title={rowStatus ? `Duplicate: ${rowStatus.duplicateFields.join(', ')}` : 'Validation Error'}
+                                />
+                              )}
+                            </div>
+                          </td>
+                          {state.headers.slice(0, 6).map((header, colIndex) => (
+                            <td key={colIndex} className="px-3 py-3 text-sm max-w-32">
+                              {editingCell?.rowIndex === actualIndex && editingCell?.field === header ? (
+                                <div className="flex items-center space-x-1">
+                                  <input
+                                    type="text"
+                                    value={editValue}
+                                    onChange={(e) => setEditValue(e.target.value)}
+                                    className="w-full px-2 py-1 text-xs border border-blue-300 rounded focus:ring-1 focus:ring-blue-500"
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') handleSaveEdit();
+                                      if (e.key === 'Escape') handleCancelEdit();
+                                    }}
+                                    autoFocus
+                                  />
+                                  <button
+                                    onClick={handleSaveEdit}
+                                    className="text-green-600 hover:text-green-800"
+                                  >
+                                    <FaSave className="text-xs" />
+                                  </button>
+                                  <button
+                                    onClick={handleCancelEdit}
+                                    className="text-gray-600 hover:text-gray-800"
+                                  >
+                                    <FaUndo className="text-xs" />
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center space-x-1 group">
+                                  <span className={`truncate ${rowStatus || hasError ? 'text-red-700' : 'text-gray-900'}`}>
+                                    {row[header] ?? ''}
+                                  </span>
+                                  <button
+                                    onClick={() => handleCellEdit(actualIndex, header, row[header] ?? '')}
+                                    className="text-blue-600 transition-opacity opacity-0 group-hover:opacity-100 hover:text-blue-800"
+                                  >
+                                    <FaEdit className="text-xs" />
+                                  </button>
+                                </div>
+                              )}
+                            </td>
+                          ))}
+                          <td className="px-3 py-3 text-sm">
+                            {rowStatus ? (
+                              <span className="inline-flex items-center px-2 py-1 text-xs font-medium text-red-800 bg-red-100 rounded-full">
+                                <FaTimes className="mr-1" />
+                                Duplicate
+                              </span>
+                            ) : hasError ? (
+                              <span className="inline-flex items-center px-2 py-1 text-xs font-medium text-yellow-800 bg-yellow-100 rounded-full">
+                                <FaExclamationTriangle className="mr-1" />
+                                Error
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center px-2 py-1 text-xs font-medium text-green-800 bg-green-100 rounded-full">
+                                <FaCheck className="mr-1" />
+                                Valid
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Pagination */}
+              {totalPages > 1 && (
+                <div className="flex items-center justify-between mt-6">
+                  <div className="flex items-center space-x-2">
+                    <button
+                      onClick={() => setCurrentPage(1)}
+                      disabled={currentPage === 1}
+                      className="px-3 py-2 text-sm transition-colors border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      First
+                    </button>
+                    <button
+                      onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                      disabled={currentPage === 1}
+                      className="px-3 py-2 text-sm transition-colors border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Previous
+                    </button>
+                  </div>
+
+                  <div className="flex items-center space-x-1">
+                    {Array.from({ length: Math.min(7, totalPages) }, (_, i) => {
+                      let pageNum;
+                      if (totalPages <= 7) {
+                        pageNum = i + 1;
+                      } else {
+                        const start = Math.max(1, currentPage - 3);
+                        const end = Math.min(totalPages, start + 6);
+                        pageNum = start + i;
+                        if (pageNum > end) return null;
+                      }
+                      
+                      return (
+                        <button
+                          key={pageNum}
+                          onClick={() => setCurrentPage(pageNum)}
+                          className={`px-3 py-2 text-sm border rounded-lg transition-colors ${
+                            currentPage === pageNum
+                              ? 'bg-blue-600 text-white border-blue-600'
+                              : 'border-gray-300 hover:bg-gray-50'
+                          }`}
+                        >
+                          {pageNum}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    <button
+                      onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                      disabled={currentPage === totalPages}
+                      className="px-3 py-2 text-sm transition-colors border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Next
+                    </button>
+                    <button
+                      onClick={() => setCurrentPage(totalPages)}
+                      disabled={currentPage === totalPages}
+                      className="px-3 py-2 text-sm transition-colors border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Last
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex items-center justify-between">
               <button
-                onClick={handleImport}
-                disabled={isImporting || isCheckingDuplicates || (validRowsCount === 0 && selectedRows.size === 0)}
-                className={`flex items-center space-x-2 px-6 py-2 rounded-lg font-medium transition-all ${
-                  isImporting || isCheckingDuplicates || (validRowsCount === 0 && selectedRows.size === 0)
-                    ? 'bg-gray-400 text-white cursor-not-allowed'
-                    : 'bg-green-600 text-white hover:bg-green-700 hover:scale-105'
-                }`}
+                onClick={() => csvProcessor.goToStep(1)}
+                className="flex items-center px-4 py-2 space-x-2 text-gray-700 transition-colors border border-gray-300 rounded-lg hover:bg-gray-50"
               >
-                {isImporting ? (
-                  <>
-                    <FaSpinner className="animate-spin" />
-                    <span>Importing... ({importProgress}%)</span>
-                  </>
-                ) : isCheckingDuplicates ? (
-                  <>
-                    <FaSpinner className="animate-spin" />
-                    <span>Validating...</span>
-                  </>
-                ) : (
-                  <>
-                    <FaCheck />
-                    <span>
-                      Import {selectedRows.size > 0 ? selectedRows.size : validRowsCount} Records
-                    </span>
-                  </>
-                )}
+                <FaArrowLeft />
+                <span>Back</span>
+              </button>
+              
+              <div className="flex items-center space-x-4">
+                <div className="text-sm text-gray-600">
+                  {selectedRows.size > 0 
+                    ? `Ready to import ${selectedRows.size} selected record(s)`
+                    : `Ready to import ${validRowsCount} valid record(s)`
+                  }
+                </div>
+                <button
+                  onClick={handleImport}
+                  disabled={isImporting || isCheckingDuplicates || (validRowsCount === 0 && selectedRows.size === 0)}
+                  className={`flex items-center space-x-2 px-6 py-2 rounded-lg font-medium transition-all ${
+                    isImporting || isCheckingDuplicates || (validRowsCount === 0 && selectedRows.size === 0)
+                      ? 'bg-gray-400 text-white cursor-not-allowed'
+                      : 'bg-green-600 text-white hover:bg-green-700 hover:scale-105'
+                  }`}
+                >
+                  {isImporting ? (
+                    <>
+                      <FaSpinner className="animate-spin" />
+                      <span>Importing... ({importProgress}%)</span>
+                    </>
+                  ) : isCheckingDuplicates ? (
+                    <>
+                      <FaSpinner className="animate-spin" />
+                      <span>Validating...</span>
+                    </>
+                  ) : (
+                    <>
+                      <FaCheck />
+                      <span>
+                        Import {selectedRows.size > 0 ? selectedRows.size : validRowsCount} Records
+                      </span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Import Progress */}
+        {isImporting && (
+          <div className="p-6 mb-8 bg-white rounded-lg shadow-md">
+            <h3 className="mb-4 text-lg font-semibold">Import Progress</h3>
+            <div className="space-y-4">
+              <div className="w-full h-3 bg-gray-200 rounded-full">
+                <div 
+                  className="h-3 transition-all duration-500 ease-out rounded-full bg-gradient-to-r from-blue-500 to-green-500"
+                  style={{ width: `${importProgress}%` }}
+                ></div>
+              </div>
+              <div className="flex justify-between text-sm text-gray-600">
+                <span>{importProgress}% Complete</span>
+                <span>Importing to {selectedTemplate?.collection}...</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Step 3: Import Results */}
+        {importComplete && (
+          <div className="p-6 bg-white rounded-lg shadow-md">
+            <h3 className="mb-6 text-2xl font-semibold">Import Results</h3>
+            
+            <div className="grid grid-cols-1 gap-6 mb-8 md:grid-cols-3">
+              <div className="p-6 border border-green-200 rounded-lg bg-gradient-to-r from-green-50 to-green-100">
+                <div className="flex items-center space-x-3">
+                  <div className="p-2 bg-green-500 rounded-full">
+                    <FaCheck className="text-white" />
+                  </div>
+                  <div>
+                    <div className="text-3xl font-bold text-green-700">{importResults.success}</div>
+                    <div className="text-sm text-green-600">Successfully Imported</div>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="p-6 border border-red-200 rounded-lg bg-gradient-to-r from-red-50 to-red-100">
+                <div className="flex items-center space-x-3">
+                  <div className="p-2 bg-red-500 rounded-full">
+                    <FaTimes className="text-white" />
+                  </div>
+                  <div>
+                    <div className="text-3xl font-bold text-red-700">{importResults.failed}</div>
+                    <div className="text-sm text-red-600">Failed to Import</div>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="p-6 border border-yellow-200 rounded-lg bg-gradient-to-r from-yellow-50 to-yellow-100">
+                <div className="flex items-center space-x-3">
+                  <div className="p-2 bg-yellow-500 rounded-full">
+                    <FaExclamationTriangle className="text-white" />
+                  </div>
+                  <div>
+                    <div className="text-3xl font-bold text-yellow-700">{importResults.skipped}</div>
+                    <div className="text-sm text-yellow-600">Skipped Records</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Import Summary */}
+            <div className="p-4 mb-6 border border-blue-200 rounded-lg bg-blue-50">
+              <h4 className="mb-2 font-medium text-blue-800">Import Summary</h4>
+              <div className="text-sm text-blue-700">
+                <p>• Total processed: {importResults.success + importResults.failed + importResults.skipped} records</p>
+                <p>• Success rate: {Math.round((importResults.success / (importResults.success + importResults.failed)) * 100) || 0}%</p>
+                <p>• Imported to collection: <span className="font-medium">{selectedTemplate?.collection}</span></p>
+                <p>• Completed at: {new Date().toLocaleString()}</p>
+                <p>• Imported by: {user?.email || 'Guest'}</p>
+              </div>
+            </div>
+
+            {/* Import Errors */}
+            {importResults.errors.length > 0 && (
+              <div className="p-4 mb-6 border border-red-200 rounded-lg bg-red-50">
+                <h4 className="mb-3 text-sm font-medium text-red-800">Import Errors ({importResults.errors.length}):</h4>
+                <div className="space-y-2 overflow-y-auto max-h-60">
+                  {importResults.errors.map((error, index) => (
+                    <div key={index} className="flex items-start p-2 space-x-2 text-sm text-red-700 bg-red-100 rounded">
+                      <FaTimes className="text-red-500 mt-0.5 flex-shrink-0" />
+                      <span>{error}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Action Buttons */}
+            <div className="flex justify-center space-x-4">
+              <button
+                onClick={resetImport}
+                className="flex items-center px-6 py-3 space-x-2 text-gray-700 transition-colors border border-gray-300 rounded-lg hover:bg-gray-50"
+              >
+                <FaFileUpload />
+                <span>Import More Data</span>
+              </button>
+              <button
+                onClick={() => navigate(-1)}
+                className="flex items-center px-6 py-3 space-x-2 text-white transition-colors bg-blue-600 rounded-lg hover:bg-blue-700"
+              >
+                <FaUser />
+                <span>Back to Previous Page</span>
               </button>
             </div>
           </div>
-        </div>
-      )}
-
-      {/* Import Progress */}
-      {isImporting && (
-        <div className="p-6 mb-8 bg-white rounded-lg shadow-md">
-          <h3 className="mb-4 text-lg font-semibold">Import Progress</h3>
-          <div className="space-y-4">
-            <div className="w-full h-3 bg-gray-200 rounded-full">
-              <div 
-                className="h-3 transition-all duration-500 ease-out rounded-full bg-gradient-to-r from-blue-500 to-green-500"
-                style={{ width: `${importProgress}%` }}
-              ></div>
-            </div>
-            <div className="flex justify-between text-sm text-gray-600">
-              <span>{importProgress}% Complete</span>
-              <span>Importing to {selectedTemplate.collection}...</span>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Step 3: Import Results */}
-      {importComplete && (
-        <div className="p-6 bg-white rounded-lg shadow-md">
-          <h3 className="mb-6 text-2xl font-semibold">Import Results</h3>
-          
-          <div className="grid grid-cols-1 gap-6 mb-8 md:grid-cols-3">
-            <div className="p-6 border border-green-200 rounded-lg bg-gradient-to-r from-green-50 to-green-100">
-              <div className="flex items-center space-x-3">
-                <div className="p-2 bg-green-500 rounded-full">
-                  <FaCheck className="text-white" />
-                </div>
-                <div>
-                  <div className="text-3xl font-bold text-green-700">{importResults.success}</div>
-                  <div className="text-sm text-green-600">Successfully Imported</div>
-                </div>
-              </div>
-            </div>
-            
-            <div className="p-6 border border-red-200 rounded-lg bg-gradient-to-r from-red-50 to-red-100">
-              <div className="flex items-center space-x-3">
-                <div className="p-2 bg-red-500 rounded-full">
-                  <FaTimes className="text-white" />
-                </div>
-                <div>
-                  <div className="text-3xl font-bold text-red-700">{importResults.failed}</div>
-                  <div className="text-sm text-red-600">Failed to Import</div>
-                </div>
-              </div>
-            </div>
-            
-            <div className="p-6 border border-yellow-200 rounded-lg bg-gradient-to-r from-yellow-50 to-yellow-100">
-              <div className="flex items-center space-x-3">
-                <div className="p-2 bg-yellow-500 rounded-full">
-                  <FaExclamationTriangle className="text-white" />
-                </div>
-                <div>
-                  <div className="text-3xl font-bold text-yellow-700">{importResults.skipped}</div>
-                  <div className="text-sm text-yellow-600">Skipped Records</div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Import Summary */}
-          <div className="p-4 mb-6 border border-blue-200 rounded-lg bg-blue-50">
-            <h4 className="mb-2 font-medium text-blue-800">Import Summary</h4>
-            <div className="text-sm text-blue-700">
-              <p>• Total processed: {importResults.success + importResults.failed + importResults.skipped} records</p>
-              <p>• Success rate: {Math.round((importResults.success / (importResults.success + importResults.failed)) * 100) || 0}%</p>
-              <p>• Imported to collection: <span className="font-medium">{selectedTemplate.collection}</span></p>
-              <p>• Completed at: {new Date().toLocaleString()}</p>
-              <p>• Imported by: {user?.email || 'Guest'}</p>
-            </div>
-          </div>
-
-          {/* Import Errors */}
-          {importResults.errors.length > 0 && (
-            <div className="p-4 mb-6 border border-red-200 rounded-lg bg-red-50">
-              <h4 className="mb-3 text-sm font-medium text-red-800">Import Errors ({importResults.errors.length}):</h4>
-              <div className="space-y-2 overflow-y-auto max-h-60">
-                {importResults.errors.map((error, index) => (
-                  <div key={index} className="flex items-start p-2 space-x-2 text-sm text-red-700 bg-red-100 rounded">
-                    <FaTimes className="text-red-500 mt-0.5 flex-shrink-0" />
-                    <span>{error}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Action Buttons */}
-          <div className="flex justify-center space-x-4">
-            <button
-              onClick={resetImport}
-              className="flex items-center px-6 py-3 space-x-2 text-gray-700 transition-colors border border-gray-300 rounded-lg hover:bg-gray-50"
-            >
-              <FaFileUpload />
-              <span>Import More Data</span>
-            </button>
-            <button
-              onClick={() => navigate(-1)}
-              className="flex items-center px-6 py-3 space-x-2 text-white transition-colors bg-blue-600 rounded-lg hover:bg-blue-700"
-            >
-              <FaUser />
-              <span>Back to Previous Page</span>
-            </button>
-          </div>
-        </div>
-      )}
+        )}
       </div>
     </div>
   );
