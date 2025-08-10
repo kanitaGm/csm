@@ -1,207 +1,403 @@
-// 📁 scr/components/utils/CSVProcessor.ts
-
-import { useState, useCallback } from 'react';
+// src/utils/CSVProcessor.ts - Optimized Version (Strict TypeScript)
+import { useState, useCallback, useMemo } from 'react';
 import Papa from 'papaparse';
-import type { CSVTemplateConfig } from './CSVTemplates';
 
-export interface CSVProcessorState {
-  currentStep: number;
+type CSVCellValue = string | number | boolean | null | undefined;
+
+interface CSVRow extends Record<string, CSVCellValue> {
+  originalIndex?: number;
+}
+
+interface CSVProcessorState {
+  originalData: CSVRow[];
+  previewData: CSVRow[];
   headers: string[];
-  previewData: Record<string, string>[];
-  mappedData: Record<string, unknown>[];
-  errors: { message: string }[];
-  dataRowOffset: number;
+  errors: { row: number; message: string }[];
   isProcessing: boolean;
+  totalRows: number;
+  validRows: number;
 }
 
-export interface CSVProcessorHook {
-  state: CSVProcessorState;
-  handleFileUpload: (file: File) => Promise<void>;
-  processMapping: (template: CSVTemplateConfig, submittedBy?: string) => Promise<void>;
-  downloadTemplate: (template: CSVTemplateConfig) => void;
-  reset: () => void;
-  goToStep: (step: number) => void;
+interface ValidationRule {
+  field: string;
+  required?: boolean;
+  validator?: (value: unknown) => string | null;
+  transformer?: (value: unknown) => unknown;
 }
 
-export function useCSVProcessor(): CSVProcessorHook {
+interface DuplicateResult {
+  csvDuplicates: Array<{
+    row: number;
+    field: string;
+    value: string;
+    duplicateRows: number[];
+  }>;
+  dbDuplicates: Array<{
+    row: number;
+    field: string;
+    value: string;
+    existingId: string;
+  }>;
+}
+
+export const useSimpleCSVProcessor = () => {
   const [state, setState] = useState<CSVProcessorState>({
-    currentStep: 1,
-    headers: [],
+    originalData: [],
     previewData: [],
-    mappedData: [],
+    headers: [],
     errors: [],
-    dataRowOffset: 3,
     isProcessing: false,
+    totalRows: 0,
+    validRows: 0
   });
 
-  const log = (message: string) => console.log(`[CSVProcessor] ${message}`);
+  //  Simple file parsing
+  const parseFile = useCallback(async (
+    file: File, 
+    maxPreviewRows: number = 100
+  ): Promise<void> => {
+    setState(prev => ({ ...prev, isProcessing: true, errors: [] }));
 
-  const handleFileUpload = useCallback(async (file: File) => {
-    setState((prev) => ({ ...prev, isProcessing: true }));
-    const text = await file.text();
-    const parsed = Papa.parse<string[]>(text, {
-      header: false,
-      skipEmptyLines: true,
-    });
-
-    const rows = parsed.data as string[][];
-    if (!rows || rows.length < 2) {
-      setState((prev) => ({
-        ...prev,
-        isProcessing: false,
-        errors: [{ message: 'ไฟล์ต้องมีอย่างน้อย 2 แถว (header และข้อมูล)' }],
-      }));
-      return;
-    }
-
-    const rawHeaders = (rows[0] || []).map((h) => h?.trim());
-    const headers = rawHeaders.filter((h) => h && !/^_\d+$/.test(h));
-
-    if (headers.length === 0) {
-      setState((prev) => ({
-        ...prev,
-        isProcessing: false,
-        errors: [{ message: 'ไม่พบหัวตารางในไฟล์ หรือหัวตารางว่างทั้งหมด' }],
-      }));
-      return;
-    }
-
-    const duplicates = headers.filter((item, index) => headers.indexOf(item) !== index);
-    if (duplicates.length > 0) {
-      console.warn('⚠️ Duplicate headers found:', duplicates);
-      alert(`หัวตารางซ้ำ: ${duplicates.join(', ')}`);
-    }
-    if (new Set(headers).size !== headers.length) {
-      setState((prev) => ({
-        ...prev,
-        isProcessing: false,
-        errors: [{ message: 'ไม่สามารถนำเข้าไฟล์ได้ เนื่องจากหัวตารางมีการซ้ำ' }],
-      }));
-      return;
-    }
-
-    const previewData = rows.slice(2).flatMap((row: string[]) => {
-      const cleaned = headers.map((_ey, idx) => row[idx] || '');
-      if (cleaned.every(val => !val.trim())) return [];
-      const obj: Record<string, string> = {};
-      headers.forEach((key, idx) => {
-        obj[key] = cleaned[idx];
+    try {
+      const parseResult = await new Promise<Papa.ParseResult<CSVRow>>((resolve, reject) => {
+        Papa.parse(file, {
+          header: true,
+          skipEmptyLines: true,
+          dynamicTyping: true,
+          encoding: 'UTF-8',
+          delimitersToGuess: [',', '\t', '|', ';'],
+          complete: resolve,
+          error: reject
+        });
       });
-      return [obj];
-    });
 
-    log(`Uploaded file with ${previewData.length} rows and headers: ${headers.join(', ')}`);
-    setState((prev) => ({
-      ...prev,
-      headers,
-      previewData,
-      mappedData: [], // Reset mapped data
-      errors: [], // Reset errors
-      currentStep: 2,
-      isProcessing: false,
-    }));
+      if (parseResult.errors.length > 0) {
+        console.warn('CSV parsing warnings:', parseResult.errors);
+      }
+
+      const { data, meta } = parseResult;
+      const headers = meta.fields || Object.keys(data[0] || {});
+      
+      // Clean headers (remove BOM, trim whitespace)
+      const cleanHeaders = headers.map(header => 
+        header.replace(/^\uFEFF/, '').trim()
+      );
+
+      // Create preview data (limited rows for UI)
+      const previewData = data.slice(0, maxPreviewRows).map((row, index) => ({
+        ...row,
+        originalIndex: index
+      }));
+
+      setState(prev => ({
+        ...prev,
+        originalData: data,
+        previewData,
+        headers: cleanHeaders,
+        totalRows: data.length,
+        validRows: data.length,
+        isProcessing: false
+      }));
+
+    } catch (error) {
+      console.error('Error parsing CSV:', error);
+      setState(prev => ({
+        ...prev,
+        isProcessing: false,
+        errors: [{ row: 0, message: `Failed to parse CSV: ${error instanceof Error ? error.message : 'Unknown error'}` }]
+      }));
+    }
   }, []);
 
-  const processMapping = useCallback(async (template: CSVTemplateConfig, submittedBy = 'CSV Import') => {
-    const { requiredFields, dateFields } = template;
-    const mappedData: Record<string, unknown>[] = [];
-    const errors: { message: string }[] = [];
+  //  Simple validation
+  const validateData = useCallback(async (
+    validationRules: ValidationRule[]
+  ): Promise<void> => {
+    setState(prev => ({ ...prev, isProcessing: true }));
 
-    const seenKeys = new Set<string>();
+    try {
+      const allErrors: { row: number; message: string }[] = [];
+      let validRowCount = 0;
 
-    for (let i = 0; i < state.previewData.length; i++) {
-      const row = state.previewData[i];
-      const record: Record<string, unknown> = {};
+      // Process data in chunks to avoid blocking UI
+      const chunkSize = 100;
+      const chunks = [];
+      for (let i = 0; i < state.originalData.length; i += chunkSize) {
+        chunks.push(state.originalData.slice(i, i + chunkSize));
+      }
 
-      for (const field of state.headers) {
-        if (row[field] !== undefined) {
-          record[field] = typeof row[field] === 'string' ? row[field].trim() : String(row[field] || '').trim();
+      for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+        const chunk = chunks[chunkIndex];
+        
+        chunk.forEach((row, rowIndex) => {
+          const globalRowIndex = chunkIndex * chunkSize + rowIndex;
+          let hasError = false;
+
+          validationRules.forEach(rule => {
+            const value = row[rule.field];
+            
+            // Transform value
+            const transformedValue = rule.transformer ? rule.transformer(value) : value;
+            
+            // Required validation
+            if (rule.required && (!transformedValue || transformedValue.toString().trim() === '')) {
+              allErrors.push({
+                row: globalRowIndex,
+                message: `${rule.field} is required`
+              });
+              hasError = true;
+            }
+            
+            // Custom validation
+            if (rule.validator && transformedValue) {
+              const validationError = rule.validator(transformedValue);
+              if (validationError) {
+                allErrors.push({
+                  row: globalRowIndex,
+                  message: `${rule.field}: ${validationError}`
+                });
+                hasError = true;
+              }
+            }
+          });
+
+          if (!hasError) validRowCount++;
+        });
+
+        // Yield control to prevent UI blocking
+        if (chunkIndex % 10 === 0) {
+          await new Promise(resolve => setTimeout(resolve, 1));
         }
       }
 
-      for (const req of requiredFields) {
-        if (!record[req]) {
-          errors.push({ message: `แถวที่ ${i + state.dataRowOffset}: ขาดฟิลด์จำเป็น '${req}'` });
-        }
+      setState(prev => ({
+        ...prev,
+        errors: allErrors,
+        validRows: validRowCount,
+        isProcessing: false
+      }));
+
+    } catch (error) {
+      console.error('Error validating data:', error);
+      setState(prev => ({
+        ...prev,
+        isProcessing: false,
+        errors: [{ row: 0, message: `Validation failed: ${error instanceof Error ? error.message : 'Unknown error'}` }]
+      }));
+    }
+  }, [state.originalData]);
+
+  //  Process data in chunks
+  const processDataInChunks = useCallback(async <T>(
+    processor: (chunk: CSVRow[], chunkIndex: number) => Promise<T[]>,
+    options: { chunkSize?: number; onProgress?: (progress: number) => void } = {}
+  ): Promise<T[]> => {
+    const { chunkSize = 100, onProgress } = options;
+    const results: T[] = [];
+
+    // Split data into chunks
+    const chunks = [];
+    for (let i = 0; i < state.originalData.length; i += chunkSize) {
+      chunks.push(state.originalData.slice(i, i + chunkSize));
+    }
+
+    for (let i = 0; i < chunks.length; i++) {
+      const chunkResults = await processor(chunks[i], i);
+      results.push(...chunkResults);
+
+      // Report progress
+      if (onProgress) {
+        const progress = Math.round(((i + 1) / chunks.length) * 100);
+        onProgress(progress);
       }
 
-      for (const dateField of dateFields) {
-        const rawValue = record[dateField];
-        if (rawValue) {
-          const date = new Date(String(rawValue));
-          if (isNaN(date.getTime())) {
-            errors.push({ message: `แถวที่ ${i + state.dataRowOffset}: วันที่ไม่ถูกต้องในช่อง '${dateField}'` });
-          } else {
-            record[`${dateField}Parsed`] = date;
+      // Yield control periodically
+      if (i % 5 === 0) {
+        await new Promise(resolve => setTimeout(resolve, 1));
+      }
+    }
+
+    return results;
+  }, [state.originalData]);
+
+  //  Simple duplicate detection
+  const findDuplicates = useCallback(async (
+    fields: string[],
+    checkAgainstDatabase?: (values: string[]) => Promise<Array<{ value: string; id: string }>>
+  ): Promise<DuplicateResult> => {
+    const csvDuplicates: Array<{
+      row: number;
+      field: string;
+      value: string;
+      duplicateRows: number[];
+    }> = [];
+    const dbDuplicates: Array<{
+      row: number;
+      field: string;
+      value: string;
+      existingId: string;
+    }> = [];
+
+    // Track values seen in CSV
+    const csvValueTracker = new Map<string, Map<string, number[]>>();
+    
+    // Initialize trackers for each field
+    fields.forEach(field => {
+      csvValueTracker.set(field, new Map());
+    });
+
+    // Find CSV duplicates
+    state.originalData.forEach((row, index) => {
+      fields.forEach(field => {
+        const value = row[field];
+        if (value && value.toString().trim()) {
+          const normalizedValue = value.toString().toLowerCase().trim();
+          const fieldTracker = csvValueTracker.get(field);
+          
+          if (fieldTracker) {
+            if (!fieldTracker.has(normalizedValue)) {
+              fieldTracker.set(normalizedValue, []);
+            }
+            const rowList = fieldTracker.get(normalizedValue);
+            if (rowList) {
+              rowList.push(index);
+            }
           }
         }
-      }
+      });
+    });
 
-      const key = requiredFields.map((f) => String(record[f] || '').toLowerCase()).join('|');
-      if (seenKeys.has(key)) {
-        errors.push({ message: `แถวที่ ${i + state.dataRowOffset}: ซ้ำกันในไฟล์ CSV` });
-      } else {
-        seenKeys.add(key);
-        record['importedBy'] = submittedBy;
-        mappedData.push(record);
+    // Identify duplicates
+    csvValueTracker.forEach((fieldTracker, field) => {
+      fieldTracker.forEach((rows, value) => {
+        if (rows.length > 1) {
+          rows.forEach((row, index) => {
+            if (index > 0) {
+              csvDuplicates.push({
+                row,
+                field,
+                value,
+                duplicateRows: rows
+              });
+            }
+          });
+        }
+      });
+    });
+
+    // Check against database if function provided
+    if (checkAgainstDatabase) {
+      const uniqueValues = new Map<string, Set<string>>();
+      
+      fields.forEach(field => {
+        uniqueValues.set(field, new Set());
+        state.originalData.forEach(row => {
+          const value = row[field];
+          if (value && value.toString().trim()) {
+            const fieldSet = uniqueValues.get(field);
+            if (fieldSet) {
+              fieldSet.add(value.toString().toLowerCase().trim());
+            }
+          }
+        });
+      });
+
+      // Check in batches
+      for (const [field, values] of uniqueValues) {
+        const valueArray = Array.from(values);
+        const existingRecords = await checkAgainstDatabase(valueArray);
+        
+        existingRecords.forEach(record => {
+          state.originalData.forEach((row, index) => {
+            const rowValue = row[field];
+            if (rowValue && rowValue.toString().toLowerCase().trim() === record.value.toLowerCase()) {
+              dbDuplicates.push({
+                row: index,
+                field,
+                value: record.value,
+                existingId: record.id
+              });
+            }
+          });
+        });
       }
     }
 
-    // 🔄 Firestore Dupes - REMOVED - will be handled in ImportEmployeePage
-    // const checkFirestoreDuplicates = async () => { ... }
-    // await checkFirestoreDuplicates();
+    return { csvDuplicates, dbDuplicates };
+  }, [state.originalData]);
 
-    log(`Processed ${mappedData.length} rows. Errors: ${errors.length}`);
+  const exportToCSV = useCallback((
+    data: CSVRow[],
+    filename: string,
+    headers?: string[]
+  ): void => {
+    try {
+      const csvContent = Papa.unparse({
+        fields: headers || state.headers,
+        data: data
+      });
 
-    setState((prev) => ({
-      ...prev,
-      mappedData,
-      errors,
-      // DON'T CHANGE STEP HERE - let ImportEmployeePage handle it
-      // currentStep: 3, // REMOVED THIS LINE
-    }));
-  }, [state.headers, state.previewData, state.dataRowOffset]);
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement('a');
+      
+      if (link.download !== undefined) {
+        const url = URL.createObjectURL(blob);
+        link.setAttribute('href', url);
+        link.setAttribute('download', filename);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        // Clean up object URL
+        setTimeout(() => URL.revokeObjectURL(url), 100);
+      }
+    } catch (error) {
+      console.error('Error exporting CSV:', error);
+    }
+  }, [state.headers]);
 
-  const downloadTemplate = useCallback((template: CSVTemplateConfig) => {
-    const headers = Object.keys(template.fieldMapping).join(',');
-    const desc = Object.keys(template.fieldMapping)
-      .map((key) => template.fieldDescriptions?.[key] || '')
-      .join(',');
-    const csvContent = [headers, desc, ''].join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', `${template.collection}_template.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    log(`Downloaded template for ${template.collection}`);
-  }, []);
-
-  const reset = useCallback(() => {
-    log('Reset processor state');
+  //  Reset state
+  const reset = useCallback((): void => {
     setState({
-      currentStep: 1,
-      headers: [],
+      originalData: [],
       previewData: [],
-      mappedData: [],
+      headers: [],
       errors: [],
-      dataRowOffset: 3,
       isProcessing: false,
+      totalRows: 0,
+      validRows: 0
     });
   }, []);
 
-  const goToStep = useCallback((step: number) => {
-    setState((prev) => ({ ...prev, currentStep: step }));
-  }, []);
+  //  Computed stats
+  const computedStats = useMemo(() => ({
+    errorCount: state.errors.length,
+    errorRate: state.totalRows > 0 ? (state.errors.length / state.totalRows) * 100 : 0,
+    successRate: state.totalRows > 0 ? (state.validRows / state.totalRows) * 100 : 0,
+    hasData: state.totalRows > 0,
+    hasErrors: state.errors.length > 0
+  }), [state.errors.length, state.totalRows, state.validRows]);
 
   return {
     state,
-    handleFileUpload,
-    processMapping,
-    downloadTemplate,
+    parseFile,
+    validateData,
+    processDataInChunks,
+    findDuplicates,
+    exportToCSV,
     reset,
-    goToStep,
+    stats: computedStats
   };
-}
+};
+
+//  Export legacy hook for backward compatibility
+export const useCSVProcessor = () => {
+  const processor = useSimpleCSVProcessor();
+  
+  return {
+    ...processor,
+    processCSV: processor.parseFile,
+    validateCSV: processor.validateData
+  };
+};

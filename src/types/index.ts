@@ -9,6 +9,7 @@ export * from './props';
 
 // Profile and Auth types  
 export * from './user';
+export * from './employees';
 
 // project types  
 export * from './csm';

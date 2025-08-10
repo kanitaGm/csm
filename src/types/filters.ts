@@ -1,5 +1,6 @@
 // src/types/filters.ts - Filter & Search Types
 import type { SortBy, SortOrder, FormStatus } from './index';
+import type { EmployeeType, EmployeeStatus } from './employees';
 
 // =================== FILTER STATES ===================
 export interface FilterState {
@@ -37,6 +38,9 @@ export interface SearchOptions {
   query: string;
   fields: string[];
   filters: FilterOptions;
+  term: string;
+  exact?: boolean;
+  caseSensitive?: boolean;  
 }
 
 export interface FilterOptions {
@@ -50,6 +54,11 @@ export interface FilterOptions {
   plant?: string;
   employeeType?: string;
   status?: string;
+  companies: string[];
+  departments: string[];
+  levels: string[];
+  employeeTypes: EmployeeType[];
+  statuses: EmployeeStatus[];  
 }
 
 // =================== VALIDATION TYPES ===================
@@ -63,6 +72,7 @@ export interface FormValidationResult {
   isValid: boolean;
   fieldResults: Record<string, FieldValidationResult>;
   generalErrors: string[];
+  errors: Record<string, string>;
   score?: {
     accessibility: number;
     usability: number;

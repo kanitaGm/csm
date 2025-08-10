@@ -69,6 +69,18 @@ export interface ApiResponse<T = unknown> {
   timestamp: string;
 }
 
+export interface PaginatedApiResponse<T> extends ApiResponse<T[]> {
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+    hasNext: boolean;
+    hasPrev: boolean;
+  };
+}
+
+
 export interface LoginRequest {
   email: string;
   password: string;

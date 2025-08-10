@@ -21,15 +21,6 @@ const firebaseConfig = {
   region: 'asia-southeast1',
 };
 
-//  Debug: แสดงค่า config
-/*
-console.log('🔧 Firebase Config:', {
-  apiKey: firebaseConfig.apiKey ? 'SET' : 'MISSING',
-  authDomain: firebaseConfig.authDomain,
-  projectId: firebaseConfig.projectId,
-});
-*/
-
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 

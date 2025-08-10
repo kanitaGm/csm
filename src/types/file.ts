@@ -26,3 +26,9 @@ export interface CSVImportResult {
   errors: CSVImportError[];
   duplicates: number;
 }
+// CSV Import related types
+export type CSVCellValue = string | number | boolean | null | undefined;
+// CSV Import related types
+export interface CSVImportRow extends Record<string, CSVCellValue> {
+  originalIndex?: number;
+}

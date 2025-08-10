@@ -1,119 +1,312 @@
-// src/components/utils/fileUtils.js
+// src/utils/fileUtils.ts - Simple Version
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
-import type { Options } from 'browser-image-compression'; 
 import imageCompression from 'browser-image-compression'; 
 import { storage } from '../config/firebase';
 import { sanitizeEmpId } from '../utils/employeeUtils';
 
+interface CompressionResult {
+  compressedFile: File;
+  previewURL: string;
+  compressionRatio: number;
+  originalSize: number;
+  compressedSize: number;
+}
 
-/** * อัปโหลดรูปภาพพนักงานไปยัง Firebase Storage */
-export const uploadEmployeePhoto = async (photoFile: File | null, empId: string): Promise<string | null> => {
-  if (!photoFile) return null;
-  if (!empId) throw new Error("Employee ID is required for photo upload.");
-  try {
-    const empIdForPath = sanitizeEmpId(empId);
-    const newFilename = `${empIdForPath}_profile_${Date.now()}.webp`;
-    const storageRef = ref(storage, `employees/${empIdForPath}/photo/${newFilename}`);
-    const uploadTask = await uploadBytesResumable(storageRef, photoFile);
-    return await getDownloadURL(uploadTask.ref);
-  } catch (error) {
-    console.error("Error during photo upload:", error);
-    throw new Error("Failed to upload employee photo.");
-  }
-};
- 
-/** * บีบอัดรูปภาพและสร้าง URL สำหรับ Preview ****  ใช้ imageCompression library  
- * @param file - ไฟล์รูปภาพที่ต้องการบีบอัด
- * @param onProgress - (Optional) ฟังก์ชัน callback สำหรับรายงานความคืบหน้า
+interface UploadProgress {
+  bytesTransferred: number;
+  totalBytes: number;
+  progress: number;
+}
+
+/**
+ *  Simple image compression without Web Workers
  */
 export const compressAndCreatePreview = async (
-  file: File,  onProgress?: (progress: number) => void): Promise<{ compressedFile: File, previewURL: string }> => {
-  const options: Options = {
-    maxSizeMB: 0.2, // ขนาดไฟล์สุดท้ายไม่เกิน 200KB
-    maxWidthOrHeight: 600,  // ด้านที่ยาวที่สุดไม่เกิน 600px
-    initialQuality: 0.8, // เริ่มบีบอัดที่คุณภาพ 80%
-    fileType: 'image/webp',  // แปลงไฟล์เป็น WebP เสมอ
-    // --- การตั้งค่าขั้นสูง ---
-    useWebWorker: true,  // ใช้ Web Worker เพื่อไม่ให้หน้าเว็บค้าง    
-    //maxIteration: 10,          // พยายามบีบอัดซ้ำ 10 ครั้ง
-    exifOrientation : -1,     // แก้ปัญหารูปตะแคงอัตโนมัติ ค่า -1 หมายถึง "แก้ไขการหมุนภาพอัตโนมัติตามข้อมูล EXIF"
-    onProgress: onProgress,     //ใช้ onProgress ที่รับเข้ามา
+  file: File,
+  onProgress?: (progress: number) => void
+): Promise<CompressionResult> => {
+  // Validate file type
+  if (!file.type.startsWith('image/')) {
+    throw new Error('File must be an image');
+  }
+
+  // Check file size limit (10MB)
+  const MAX_FILE_SIZE = 10 * 1024 * 1024;
+  if (file.size > MAX_FILE_SIZE) {
+    throw new Error('File size must be less than 10MB');
+  }
+
+  const options = {
+    maxSizeMB: 0.2, // 200KB max
+    maxWidthOrHeight: 600,
+    initialQuality: 0.8,
+    fileType: 'image/webp' as const,
+    useWebWorker: false, // Disable for compatibility
+    onProgress: onProgress ? (progress: number) => {
+      onProgress(Math.round(progress * 100));
+    } : undefined,
   };
-  
+
   try {
     const compressedFile = await imageCompression(file, options);
     const previewURL = URL.createObjectURL(compressedFile);
-    return { compressedFile, previewURL };
+    const compressionRatio = file.size > 0 
+      ? ((file.size - compressedFile.size) / file.size) * 100 
+      : 0;
+
+    return {
+      compressedFile,
+      previewURL,
+      compressionRatio,
+      originalSize: file.size,
+      compressedSize: compressedFile.size
+    };
+
   } catch (error) {
     console.error('Error during image compression:', error);
-    throw new Error('An error occurred while processing the image.');
+    throw new Error(`Image compression failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 };
 
+/**
+ *  Simple employee photo upload
+ */
+export const uploadEmployeePhoto = async (
+  photoFile: File | null,
+  empId: string,
+  onProgress?: (progress: UploadProgress) => void
+): Promise<string | null> => {
+  if (!photoFile) return null;
+  
+  if (!empId) {
+    throw new Error("Employee ID is required for photo upload");
+  }
 
-///////////// resizeImageFile  บีบอัดรูปภาพและสร้าง URL (เขียนเองโดยใช้ canvas) คืนค่าเป็นไฟล์แบบเดียวกับต้นฉบับ (type เดิม เช่น image/jpeg)
-export const resizeImageFile = (
-  file: File,
-  maxSize: number = 256): Promise<File> => {
-  return new Promise((resolve, reject) => {
-    const image = new Image();
-    const reader = new FileReader();
+  try {
+    // Validate file
+    if (!photoFile.type.startsWith('image/')) {
+      throw new Error('File must be an image');
+    }
 
-    reader.onload = (event: ProgressEvent<FileReader>) => {
-      const result = event.target?.result;
-      if (typeof result === 'string') {
-        image.src = result;
-      } else {
-        reject(new Error('Failed to read image file'));
-      }
-    };
-
-    image.onload = () => {
-      let width = image.width;
-      let height = image.height;
-
-      // คำนวณขนาดใหม่ (preserve aspect ratio)
-      if (width > height && width > maxSize) {
-        height = (height * maxSize) / width;
-        width = maxSize;
-      } else if (height > width && height > maxSize) {
-        width = (width * maxSize) / height;
-        height = maxSize;
-      } else if (width === height && width > maxSize) {
-        width = height = maxSize;
-      }
-
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        reject(new Error('Canvas rendering context not available'));
-        return;
-      }
-
-      ctx.drawImage(image, 0, 0, width, height);
-
-      canvas.toBlob(
-        (blob) => {
-          if (blob) {
-            const resizedFile = new File([blob], file.name, {
-              type: file.type,
-              lastModified: Date.now(),
+    // Compress image first
+    const compressionResult = await compressAndCreatePreview(photoFile);
+    
+    // Create storage path
+    const empIdForPath = sanitizeEmpId(empId);
+    const timestamp = Date.now();
+    const newFilename = `${empIdForPath}_profile_${timestamp}.webp`;
+    const storageRef = ref(storage, `employees/${empIdForPath}/photo/${newFilename}`);
+    
+    // Upload with progress tracking
+    const uploadTask = uploadBytesResumable(storageRef, compressionResult.compressedFile);
+    
+    return new Promise<string>((resolve, reject) => {
+      uploadTask.on(
+        'state_changed',
+        (snapshot) => {
+          if (onProgress) {
+            const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+            onProgress({
+              bytesTransferred: snapshot.bytesTransferred,
+              totalBytes: snapshot.totalBytes,
+              progress: Math.round(progress)
             });
-            resolve(resizedFile);
-          } else {
-            reject(new Error('Failed to convert canvas to blob'));
           }
         },
-        file.type,
-        0.8 // quality (0-1)
+        (error) => {
+          console.error("Upload error:", error);
+          reject(new Error(`Upload failed: ${error.message}`));
+        },
+        async () => {
+          try {
+            const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+            
+            // Clean up preview URL
+            URL.revokeObjectURL(compressionResult.previewURL);
+            
+            resolve(downloadURL);
+          } catch (error) {
+            reject(new Error(`Failed to get download URL: ${error instanceof Error ? error.message : 'Unknown error'}`));
+          }
+        }
       );
+    });
+
+  } catch (error) {
+    console.error("Error during photo upload:", error);
+    throw new Error(`Photo upload failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+};
+
+/**
+ *  Simple file validation
+ */
+export const validateFile = (
+  file: File,
+  options: {
+    maxSize?: number;
+    allowedTypes?: string[];
+  } = {}
+): { valid: boolean; error?: string } => {
+  const {
+    maxSize = 10 * 1024 * 1024, // 10MB default
+    allowedTypes = ['image/jpeg', 'image/png', 'image/webp']
+  } = options;
+
+  // Check file size
+  if (file.size > maxSize) {
+    return {
+      valid: false,
+      error: `File size (${Math.round(file.size / 1024 / 1024)}MB) exceeds maximum allowed size (${Math.round(maxSize / 1024 / 1024)}MB)`
+    };
+  }
+
+  // Check file type
+  if (!allowedTypes.includes(file.type)) {
+    return {
+      valid: false,
+      error: `File type ${file.type} is not allowed. Allowed types: ${allowedTypes.join(', ')}`
+    };
+  }
+
+  return { valid: true };
+};
+
+/**
+ *  Create simple thumbnail
+ */
+export const createThumbnail = async (
+  file: File,
+  size: number = 150
+): Promise<{ thumbnailFile: File; thumbnailURL: string }> => {
+  if (!file.type.startsWith('image/')) {
+    throw new Error('File must be an image');
+  }
+
+  try {
+    const options = {
+      maxSizeMB: 0.05, // 50KB for thumbnail
+      maxWidthOrHeight: size,
+      initialQuality: 0.7,
+      fileType: 'image/webp' as const,
+      useWebWorker: false
     };
 
-    reader.onerror = () => reject(reader.error);
+    const thumbnailFile = await imageCompression(file, options);
+    const thumbnailURL = URL.createObjectURL(thumbnailFile);
+
+    return { thumbnailFile, thumbnailURL };
+
+  } catch (error) {
+    console.error('Error creating thumbnail:', error);
+    throw new Error(`Thumbnail creation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+};
+
+/**
+ *  Memory cleanup utility
+ */
+export const cleanupObjectURLs = (urls: string[]): void => {
+  urls.forEach(url => {
+    try {
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.warn('Failed to revoke object URL:', url, error);
+    }
+  });
+};
+
+/**
+ *  Convert file to base64 (for small files)
+ */
+export const fileToBase64 = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    // Check file size limit (1MB for base64)
+    if (file.size > 1024 * 1024) {
+      reject(new Error('File too large for base64 conversion (max 1MB)'));
+      return;
+    }
+
+    const reader = new FileReader();
+    
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result === 'string') {
+        resolve(result);
+      } else {
+        reject(new Error('Failed to convert file to base64'));
+      }
+    };
+    
+    reader.onerror = () => {
+      reject(new Error('Error reading file'));
+    };
+    
     reader.readAsDataURL(file);
   });
 };
 
+/**
+ *  Download file from URL
+ */
+export const downloadFile = async (
+  url: string,
+  filename: string
+): Promise<void> => {
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = filename;
+    link.style.display = 'none';
+    
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    // Cleanup
+    setTimeout(() => {
+      URL.revokeObjectURL(objectUrl);
+    }, 100);
+    
+  } catch (error) {
+    console.error('Error downloading file:', error);
+    throw new Error(`Download failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+};
+
+/**
+ *  Get file metadata
+ */
+export const getFileMetadata = (file: File): {
+  name: string;
+  size: number;
+  type: string;
+  lastModified: number;
+  sizeFormatted: string;
+} => {
+  const formatSize = (bytes: number): string => {
+    if (bytes === 0) return '0 Bytes';
+    
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  return {
+    name: file.name,
+    size: file.size,
+    type: file.type,
+    lastModified: file.lastModified,
+    sizeFormatted: formatSize(file.size)
+  };
+};

@@ -1,58 +1,8 @@
 // src/types/user.ts  ** type for user access only
 import { Timestamp } from 'firebase/firestore';
+import type { EmployeeProfile } from './employees';
 
 export type Role = 'superadmin' | 'admin' | 'plantAdmin' | 'csmAdmin' | 'guest';
-
-//  BaseEmployeeData - เพิ่ม email field ที่จำเป็น
-export interface BaseEmployeeData {
-  id: string; // Firestore Document ID
-  empId: string;
-  email?: string; //  จำเป็นสำหรับการค้นหา
-  idCard?: string; // ประจำตัวประชาชน  
-  prefix?: string;  
-  firstName?: string;
-  lastName?: string;
-  fullName?: string;
-  displayName?: string; // local name  
-  position?: string;
-  profileImageUrl?: string | null; 
-  phoneNumber?: string;
-  address?: string;
-  dateOfBirth?: string | Date | null;   
-  startDate?: string | Date | null; 
-  cardExpiryDate?: string |Date | null; 
-  company?: string;
-  companyId?: string;
-  plantId?: string| null; 
-  employeeType?: 'employee' | 'contractor' | 'transporter' | 'driver' | 'pending';    
-  status: 'active' | 'inactive' | 'terminated' | 'pending' | 'blacklist';
-  createdAt: Timestamp | Date | string; 
-  updatedAt?: Timestamp | Date | string; 
-  department?: string;
-}
-
-//  EmployeeFormState - ปรับให้สอดคล้องกับ BaseEmployeeData
-export interface EmployeeFormState extends Partial<BaseEmployeeData> {
-  //email: string;
-  level?: string; 
-  nickname?: string;    
-  siteId?: string; 
-  zoneId?: string;
-  countryId?: string;
-  startDate?: string | Date;
-  lastUpdateBy?: string;
-  searchKeywords?: string[];
-}
-
-// EmployeeProfile - ปรับให้ realistic มากขึ้น
-export interface EmployeeProfile extends BaseEmployeeData {
-  id: string; // Firestore document ID
-  email: string; // ✅ ทำให้ required
-  searchKeywords: string[]; // **สำคัญมาก** สำหรับการค้นหา
-  createdAt: Timestamp | Date | string; // ✅ ทำให้ required
-  updatedAt: Timestamp | Date | string; // ✅ ทำให้ required
-  [key: string]: unknown; // ✅ เก็บไว้สำหรับ flexibility
-}
 
 // User
 export interface UserRole {
