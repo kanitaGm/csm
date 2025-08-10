@@ -1,0 +1,125 @@
+Stracture-----------------------
+app
+|-components
+    |-layout
+       |-Footer.tsx
+       |-index.ts
+       |-Header.tsx
+       |-MainLayout.tsx
+       |-Sidebar.tsx
+    |-modals
+       |-AdvancedSearchModal.tsx
+       |-index.ts
+       |-SearchModal.tsx
+    |-ui
+       |-AccessibleInput.tsx
+       |-index.ts
+       |-ProgressIndicator.tsx
+       |-AccessibleInput.tsx
+       |-SearchableSelect.tsx
+       |-SkeletonLoader.tsx
+       |-ToastContainer.tsx
+
+|-config
+    |-app.ts
+    |-firebase.ts
+    |-firestoreService.ts
+
+|-contexts
+    |-AuthContext.tsx
+    |-ErrorBoundary.tsx
+    |-ThemeContext.tsx
+
+|-features
+    |-csm
+       |-components
+           |-AssessmentSummary.tsx
+           |-QuestionForm.tsx
+       |-pages
+           |-AssessmentDetailPage.tsx
+           |-CSMEvaluatePage.tsx
+           |-CSMListPage.tsx
+    |-employees
+       |-components
+           |-ImportEmployeeForm.tsx
+           |-SingleEmployeeForm.tsx
+       |-AddEmployeePage.tsx
+       |-EditEmployeePage.tsx
+       |-EmployeeListPage.tsx
+       |-ProfilePage.tsx
+    |-forms
+       |-components
+           |-FieldEditor.tsx
+           |-FormComponents.tsx
+       |-DynamicFormEditPage.tsx
+       |-ListFormManagementPage.tsx
+
+|-hooks
+    |-formHooks.ts
+    |-index.ts
+    |-useAccessibility.ts
+    |-useApi.ts
+    |-useAuth.ts
+    |-useDebouncedAutoSave.ts
+    |-useFormValidation.ts
+    |-useKeyboardShortcuts.ts
+    |-useLocalStorage.ts
+    |-useOfflineSync.ts
+    |-useOptimizedScore.ts
+    |-usePagination.ts
+    |-useToast.ts
+
+|-pages
+    |-DashboardPage.tsx
+    |-Homepage.tsx
+    |-index.ts
+    |-LoginPage.tsx
+    |-NotFoundPage.tsx
+    |-ProfilePage.tsx
+    |-UnauthorizedPage.tsx
+
+|-routes
+    |-AppRoutes.tsx
+    |-index.ts
+    |-ProtectedRoute.tsx
+    |-routes.config.ts
+
+|-services
+    |-authService.ts
+    |-cacheService.ts
+    |-csmService.ts
+    |-employeeService.ts
+    |-errorReporting.ts
+    |-formService.ts
+    |-index.ts
+    |-trainingService.ts
+    |-useAuthNavigation.ts
+
+|-styles
+    |-index.css
+
+|-types
+    |-api.ts
+    |-csm.ts
+    |-file.ts
+    |-filters.ts
+    |-form.ts
+    |-index.ts
+    |-props.ts
+    |-training.ts
+    |-user.ts
+
+|-utils
+    |-circuitBreaker.ts
+    |-CSVImport.ts
+    |-CSVProcessor.ts
+    |-CSVTemplates.ts
+    |-dateUtils.ts
+    |-employeeUtils.ts
+    |-exportUtils.ts
+    |-fileUtils.ts
+    |-ImportCSVPage.tsx
+    |-MultiFileInput.tsx
+    |-retryUtils.ts
+    |-Sarabun-Regular-normal.ts
+    |-ScoreDropdown.tsx

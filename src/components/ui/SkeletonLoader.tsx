@@ -1,5 +1,4 @@
 // 📁 src/components/ui/SkeletonLoader.tsx
-// 📁 src/components/ui/SkeletonLoader.tsx (ไฟล์ใหม่)
 import React from 'react';
 
 interface SkeletonLoaderProps {
@@ -29,13 +28,13 @@ export const SkeletonLoader: React.FC<SkeletonLoaderProps> = ({
 };
 
 export const CardSkeleton: React.FC = () => (
-  <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
+  <div className="p-6 bg-white border border-gray-200 rounded-lg shadow-sm dark:bg-gray-800 dark:border-gray-700">
     <div className="animate-pulse">
       <div className="flex items-center gap-3 mb-4">
-        <div className="w-8 h-8 bg-gray-200 dark:bg-gray-700 rounded"></div>
+        <div className="w-8 h-8 bg-gray-200 rounded dark:bg-gray-700"></div>
         <div className="flex-1">
-          <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-3/4 mb-2"></div>
-          <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-1/2"></div>
+          <div className="w-3/4 h-4 mb-2 bg-gray-200 rounded dark:bg-gray-700"></div>
+          <div className="w-1/2 h-3 bg-gray-200 rounded dark:bg-gray-700"></div>
         </div>
       </div>
       <SkeletonLoader lines={4} />

@@ -1,5 +1,5 @@
 // src/services/employeeService.ts
-import { db } from './firebase'
+import { db } from '../config/firebase'
 import { collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore'
 
 export async function getAllEmployees() {
@@ -15,15 +15,15 @@ export async function getEmployeeByEmpId(empId: string) {
   return { ...snap.docs[0].data(), docId: snap.docs[0].id }
 }
 
-export async function addEmployee(data: any) {
+export async function addEmployee(data: unknown) {
   const col = collection(db, 'employees')
   return await addDoc(col, data)
 }
 
-export async function updateEmployee(empId: string, data: any) {
+export async function updateEmployee(empId: string, data: unknown) {
   const emp = await getEmployeeByEmpId(empId)
   if (!emp) throw new Error('ไม่พบข้อมูลพนักงาน')
-  await updateDoc(doc(db, 'employees', emp.docId), data)
+  await updateDoc(doc(db, 'employees', emp.docId), data || '')
 }
 
 export async function deleteEmployee(empId: string) {

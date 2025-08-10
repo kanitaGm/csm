@@ -9,9 +9,9 @@ import {
     signInWithEmailAndPassword,
     signInWithCustomToken,
 } from 'firebase/auth';
-import { auth } from '../services/firebase'; // สมมติว่า path ถูกต้อง
-import { FirestoreService } from './firestoreService'; // สมมติว่า path ถูกต้อง
-import type { AppUser } from '../types/types'; // สมมติว่า path ถูกต้อง
+import { auth } from '../config/firebase'; 
+import { FirestoreService } from '../config/firestoreService'; 
+import type { AppUser } from '../types/'; 
 
 export class AuthenticationService {
     static async createAppUser(firebaseUser: { uid: string; email: string | unknown; displayName: string | null; }, loginType: AppUser['loginType'] = 'firebase'): Promise<AppUser> {

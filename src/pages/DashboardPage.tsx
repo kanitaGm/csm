@@ -2,7 +2,7 @@
 
 //import React from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import type { EmployeeProfile } from '../types/types';
+import type { EmployeeProfile } from '../types';
 
 export const DashboardPage = () => {
     const { user } = useAuth();
@@ -11,9 +11,9 @@ export const DashboardPage = () => {
         <div className="min-h-screen bg-gray-50">
 
 
-            <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+            <main className="py-6 mx-auto max-w-7xl sm:px-6 lg:px-8">
                 <div className="px-4 py-6 sm:px-0">
-                    <div className="bg-white p-8 rounded-lg shadow-lg">
+                    <div className="p-8 bg-white rounded-lg shadow-lg">
                         <h2 className="text-2xl font-bold text-gray-800">ข้อมูลผู้ใช้</h2>
                         <div className="mt-4 space-y-2 text-gray-700">
                             <p><strong>UID:</strong> {user?.uid}</p>

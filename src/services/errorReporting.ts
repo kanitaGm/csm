@@ -4,7 +4,7 @@ import { CSMError } from '../features/errors/CSMError';
 export class ErrorReportingService {
   private errors: CSMError[] = [];
   
-  reportError(error: CSMError, context?: Record<string, any>): void {
+  reportError(error: CSMError, context?: Record<string, unknown>): void {
     console.error('CSM Error:', {
       message: error.message,
       code: error.code,
@@ -20,8 +20,8 @@ export class ErrorReportingService {
     }
   }
   
-  private notifyAdministrators(error: CSMError, _context?: Record<string, any>): void {
-    console.warn('Critical error reported:', error);
+  private notifyAdministrators(error: CSMError, _context?: Record<string, unknown>): void {
+    console.warn('Critical error reported:', error && _context);
   }
   
   getErrorStats(): { total: number; bySeverity: Record<string, number> } {

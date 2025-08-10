@@ -1,4 +1,26 @@
 {
+  "compilerOptions": {
+    "baseUrl": "src",
+    "paths": {      
+      "@components/*": ["components/*"],
+      "@layout/*": ["components/layout/*"],
+      "@modals/*": ["components/modals/*"],
+      "@ui/*": ["components/ui/*"],
+      "@features/*": ["features/*"],
+      "@admin/*": ["features/admin/*"],
+      "@csm/*": ["features/csm/*"],
+      "@error/*": ["features/error/*"],
+      "@pages/*": ["pages/*"],
+      "@hooks/*": ["hooks/*"],
+      "@utils/*": ["utils/*"],
+      "@config/*": ["config/*"],
+      "@contexts/*": ["contexts/*"],
+      "@routes/*": ["routes/*"],
+      "@styles/*": ["styles/*"],
+      "@types/*": ["types/*"],
+      "@/*": ["*"],
+    }
+  },
   "files": [],
   "references": [
     { "path": "./tsconfig.app.json" },

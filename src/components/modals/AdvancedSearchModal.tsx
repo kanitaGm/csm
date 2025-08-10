@@ -6,7 +6,7 @@ import { X } from 'lucide-react';
 interface AdvancedSearchModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onApplyFilters: (filters: any) => void;
+  onApplyFilters: (filters: unknown) => void;
 }
 
 export const AdvancedSearchModal: React.FC<AdvancedSearchModalProps> = ({ 
@@ -27,7 +27,7 @@ export const AdvancedSearchModal: React.FC<AdvancedSearchModalProps> = ({
   if (!isOpen) return null;
   
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-50">
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
@@ -49,7 +49,7 @@ export const AdvancedSearchModal: React.FC<AdvancedSearchModalProps> = ({
           
           <div className="space-y-6">
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              <label className="block mb-2 text-sm font-medium text-gray-700 dark:text-gray-300">
                 ค้นหาข้อความ
               </label>
               <input
@@ -57,13 +57,13 @@ export const AdvancedSearchModal: React.FC<AdvancedSearchModalProps> = ({
                 value={filters.search}
                 onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
                 placeholder="ชื่อบริษัท, รหัส, ผู้ประเมิน..."
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-gray-100"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg dark:border-gray-600 focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-gray-100"
               />
             </div>
             
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                <label className="block mb-2 text-sm font-medium text-gray-700 dark:text-gray-300">
                   วันที่เริ่มต้น
                 </label>
                 <input
@@ -73,11 +73,11 @@ export const AdvancedSearchModal: React.FC<AdvancedSearchModalProps> = ({
                     ...prev, 
                     dateRange: { ...prev.dateRange, from: e.target.value }
                   }))}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-gray-100"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                <label className="block mb-2 text-sm font-medium text-gray-700 dark:text-gray-300">
                   วันที่สิ้นสุด
                 </label>
                 <input
@@ -87,13 +87,13 @@ export const AdvancedSearchModal: React.FC<AdvancedSearchModalProps> = ({
                     ...prev, 
                     dateRange: { ...prev.dateRange, to: e.target.value }
                   }))}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-gray-100"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
                 />
               </div>
             </div>
             
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              <label className="block mb-2 text-sm font-medium text-gray-700 dark:text-gray-300">
                 ช่วงคะแนน: {filters.score.min} - {filters.score.max}
               </label>
               <div className="flex items-center gap-4">
@@ -123,7 +123,7 @@ export const AdvancedSearchModal: React.FC<AdvancedSearchModalProps> = ({
             </div>
           </div>
           
-          <div className="flex gap-3 justify-end mt-8 pt-6 border-t border-gray-200 dark:border-gray-700">
+          <div className="flex justify-end gap-3 pt-6 mt-8 border-t border-gray-200 dark:border-gray-700">
             <button
               onClick={() => setFilters({
                 search: '',
@@ -134,13 +134,13 @@ export const AdvancedSearchModal: React.FC<AdvancedSearchModalProps> = ({
                 assessor: '',
                 score: { min: 0, max: 100 }
               })}
-              className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
+              className="px-4 py-2 text-gray-700 border border-gray-300 rounded-lg dark:border-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
             >
               รีเซ็ต
             </button>
             <button
               onClick={onClose}
-              className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
+              className="px-4 py-2 text-gray-700 border border-gray-300 rounded-lg dark:border-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
             >
               ยกเลิก
             </button>
@@ -149,7 +149,7 @@ export const AdvancedSearchModal: React.FC<AdvancedSearchModalProps> = ({
                 onApplyFilters(filters);
                 onClose();
               }}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              className="px-4 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700"
             >
               ค้นหา
             </button>

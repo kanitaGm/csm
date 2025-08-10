@@ -4,35 +4,35 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from '../contexts/AuthContext';
 import { CSMErrorBoundary } from '../contexts/ErrorBoundary';
 // Layouts and Protected Routes
-import { ThemeProvider } from '../components/ui/ThemeContext';
+import { ThemeProvider } from '../contexts/ThemeContext';
 import ProtectedRoute from './ProtectedRoute';
 import MainLayout from '../components/layout/MainLayout'; 
 // import UnauthorizedPage from '../pages/UnauthorizedPage'; // ถูกรวมไปใน ProtectedRoute แล้ว
 import NotFoundPage from '../pages/NotFoundPage'; 
-import ProfilePage from '../pages/employees/ProfilePage'; 
+import ProfilePage from '../features/employees/ProfilePage'; 
 
 // Pages
 import LoginPage from '../pages/LoginPage';
 import { DashboardPage } from '../pages/DashboardPage';
 
 // Employees Pages
-import EmployeeListPage from '../pages/employees/EmployeeListPage'; 
-import AddEmployeePage from '../pages/employees/AddEmployeePage'; 
-import EditEmployeePage from '../pages/employees/EditEmployeePage'; 
+import EmployeeListPage from '../features/employees/EmployeeListPage'; 
+import AddEmployeePage from '../features/employees/AddEmployeePage'; 
+import EditEmployeePage from '../features/employees/EditEmployeePage'; 
 
 // CSM Pages
 import CSMListPage from '../features/csm/pages/CSMListPage';
 import CSMEvaluatePage from '../features/csm/pages/CSMEvaluatePage';
 import AssessmentDetailPage from '../features/csm/pages/AssessmentDetailPage';
 
-// Admin Pages
-import FormListPage from '../features/admin/forms/formsListPage';
-import CreateFormPage from '../features/admin/forms/CreateFormPage';
-import EditFormPage from '../features/admin/forms/FormEditorPage';
+
+// Admin Pages - Forms
+import FormListPage from '../features/forms/ListFormManagementPage';
+import EditFormPage from '../features/forms/DynamicFormEditPage';
 
 // Test/Util Pages
-import TestPage from '../pages/test/test'; 
-import ImportCSVPage from '../components/utils/ImportCSVPage'; 
+import TestPage from '../features/test/test'; 
+import ImportCSVPage from '../utils/ImportCSVPage'; 
 
 
 
@@ -46,10 +46,10 @@ const AppRoutes = () => {
           <Route path="/profile/:empId" element={<ProfilePage />} />
           <Route path="/test" element={<TestPage />} />
           <Route path="/ImportCSVPage" element={<ImportCSVPage />} />
-
-          <Route path="/admin/forms" element={<FormListPage />} />
-          <Route path="/admin/forms/c" element={<CreateFormPage />} />
+          
+          <Route path="/admin/forms" element={<ThemeProvider><FormListPage /> </ThemeProvider>} />
           <Route path="/admin/forms/e/:formId" element={<EditFormPage />} />
+         
           
           
           
@@ -73,10 +73,12 @@ const AppRoutes = () => {
                       </ThemeProvider>
                     }
                   />
-
+ 
 
                   <Route path="/csm/evaluate" element={<ThemeProvider><CSMEvaluatePage /> </ThemeProvider>} />
                   <Route path="/csm/assessment/:assessmentId" element={<ThemeProvider><AssessmentDetailPage /></ThemeProvider>} />
+
+                  
 
               
               

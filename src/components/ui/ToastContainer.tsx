@@ -2,7 +2,7 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CheckCircle, AlertTriangle, Info, X } from 'lucide-react';
-import type { Toast } from '../../components/hooks/useToast';
+import type { Toast } from '../../hooks/useToast';
 
 interface ToastContainerProps {
   toasts: Toast[];
@@ -11,7 +11,7 @@ interface ToastContainerProps {
 
 export const ToastContainer: React.FC<ToastContainerProps> = ({ toasts, onRemove }) => {
   return (
-    <div className="fixed top-4 right-4 z-50 space-y-2">
+    <div className="fixed z-50 space-y-2 top-4 right-4">
       <AnimatePresence>
         {toasts.map(toast => (
           <motion.div
@@ -40,14 +40,14 @@ export const ToastContainer: React.FC<ToastContainerProps> = ({ toasts, onRemove
                   <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
                     {toast.title}
                   </p>
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                  <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
                     {toast.message}
                   </p>
                   
                   {toast.action && (
                     <button
                       onClick={toast.action.onClick}
-                      className="text-sm text-blue-600 hover:text-blue-700 mt-2 font-medium"
+                      className="mt-2 text-sm font-medium text-blue-600 hover:text-blue-700"
                     >
                       {toast.action.label}
                     </button>

@@ -31,6 +31,22 @@ body {
   font-family: var(--font-sans);
 }
 
+/* Add to global CSS */
+/*
+@layer utilities {
+  .glass-morphism {
+    @apply backdrop-blur-md bg-white/10 border border-white/20;
+  }
+  
+  .card-hover {
+    @apply transition-all duration-300 hover:shadow-lg hover:-translate-y-1;
+  }
+  
+  .focus-ring {
+    @apply focus:ring-2 focus:ring-primary/50 focus:ring-offset-2;
+  }
+}*/
+
 /* Dark Mode Styling */
 .dark body {
   @apply bg-[var(--bg-dark)] text-[var(--text-dark)];

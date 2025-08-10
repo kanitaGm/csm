@@ -2,9 +2,9 @@
 
 // 📁 src/services/cacheService.ts 
 export class CacheService {
-  private cache = new Map<string, { data: any; timestamp: number; ttl: number }>();
+  private cache = new Map<string, { data: unknown; timestamp: number; ttl: number }>();
   
-  set(key: string, data: any, ttlMinutes: number = 5): void {
+  set(key: string, data: unknown, ttlMinutes: number = 5): void {
     this.cache.set(key, {
       data,
       timestamp: Date.now(),

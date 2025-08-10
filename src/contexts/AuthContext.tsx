@@ -5,9 +5,27 @@
 import React, { useState, useEffect, createContext, useContext, useCallback, useRef } from 'react';
 import { onAuthStateChanged, signOut} from 'firebase/auth';
 import type {User as FirebaseUser  } from 'firebase/auth';
-import { auth } from '../services/firebase';
+import { auth } from '../config/firebase';
 import { AuthenticationService } from '../services/authService';
-import type { AppUser, AuthContextType, EmployeeProfile } from '../types/types';
+import type { AppUser, AuthContextType, EmployeeProfile } from '../types';
+
+
+
+// Helper function สำหรับจัดการ error
+const getErrorMessage = (error: unknown): string => {
+    if (error instanceof Error) {
+        return error.message;
+    }
+    if (typeof error === 'string') {
+        return error;
+    }
+    if (error && typeof error === 'object' && 'message' in error) {
+        return String(error.message);
+    }
+    return 'เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ';
+};
+
+
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
@@ -19,7 +37,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     const [empUser, setEmpUser] = useState<EmployeeProfile | null>(null);
     const [firebaseLinkedEmpProfile, setFirebaseLinkedEmpProfile] = useState<EmployeeProfile | null>(null);
     const [loginType, setLoginType] = useState<'provider' | 'firebase' | 'internal' | null>(null);
-    const [currentUserClaims, setCurrentUserClaims] = useState<any>(null);
+    const [currentUserClaims, setCurrentUserClaims] = useState<unknown>(null);
     const lastProcessedUidRef = useRef<string | null>(null);
 
     useEffect(() => {
@@ -38,7 +56,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
             if (firebaseUser) {
                 try {
                 let email = firebaseUser.email;
-                let displayName = firebaseUser.displayName;
+                const displayName = firebaseUser.displayName || '';
 
                 if (!email && firebaseUser.providerData && firebaseUser.providerData.length > 0) {
                     const googleProviderData = firebaseUser.providerData.find(p => p.providerId === 'google.com');
@@ -53,14 +71,6 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
                     email: email,
                     displayName: displayName,
                 };
-
-                /*
-                console.log('[AuthContext] Processing new user:', {
-                    uid: processedUser.uid,
-                    email: processedUser.email,
-                    emailVerified: firebaseUser.emailVerified
-                });
-                */
 
                 if (!processedUser.email) {
                     //console.error('[AuthContext] Firebase user has no email after checking providerData');
@@ -82,12 +92,17 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
                 lastProcessedUidRef.current = firebaseUser.uid;
                 //console.log('[AuthContext] User processing completed successfully');
 
-                } catch (e: any) {
-                    console.error("[AuthContext] Validation failed:", e.message);
-                    setAuthError(e.message);
-                    await signOut(auth);
+                } catch (error: unknown) {
+                    console.error("[AuthContext] Validation failed:", getErrorMessage(error));
+                    setAuthError(getErrorMessage(error));
+                    
+                    try {
+                        await signOut(auth);
+                    } catch (signOutError: unknown) {
+                        console.error("[AuthContext] Error during sign out:", getErrorMessage(signOutError));
+                    }
                 } finally {
-                        setLoading(false);
+                    setLoading(false);
                 }                    
                 
             } 
@@ -113,10 +128,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         try {
             //console.log('[AuthContext] Starting Google sign in...');
             await AuthenticationService.handleGoogleLogin();
-            // onAuthStateChanged จะจัดการ state updates
-        } catch (e: any) {
-            //console.error('[AuthContext] Google sign in failed:', e);
-            setAuthError(e.message || "เกิดข้อผิดพลาดในการเข้าสู่ระบบด้วย Google");
+
+        } catch (error: unknown) {
+            //console.error('[AuthContext] Google sign in failed:', error);
+            const errorMessage = getErrorMessage(error);
+            setAuthError(errorMessage || "เกิดข้อผิดพลาดในการเข้าสู่ระบบด้วย Google");
             setLoading(false);
         }
     }, []);
@@ -128,9 +144,10 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
             //console.log('[AuthContext] Starting email sign in...');
             await AuthenticationService.handleEmailLogin(email, password);
             // onAuthStateChanged จะจัดการ state updates
-        } catch (e: any) {
-            console.error('[AuthContext] Email sign in failed:', e);
-            setAuthError(e.message || "เกิดข้อผิดพลาดในการเข้าสู่ระบบด้วยอีเมล");
+        } catch (error: unknown) {
+            console.error('[AuthContext] Email sign in failed:', error);
+            const errorMessage = getErrorMessage(error);
+            setAuthError(errorMessage || "เกิดข้อผิดพลาดในการเข้าสู่ระบบด้วยอีเมล");
             setLoading(false);
         }
     }, []);
@@ -142,9 +159,10 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
             //console.log('[AuthContext] Starting internal sign in...');
             await AuthenticationService.handleInternalLogin(empId, passcode);
             // onAuthStateChanged จะจัดการ state updates
-        } catch (e: any) {
-            console.error('[AuthContext] Internal sign in failed:', e);
-            setAuthError(e.message || "เกิดข้อผิดพลาดในการเข้าสู่ระบบแบบภายใน");
+        } catch (error: unknown) {
+            console.error('[AuthContext] Internal sign in failed:', error);
+            const errorMessage = getErrorMessage(error);
+            setAuthError(errorMessage || "เกิดข้อผิดพลาดในการเข้าสู่ระบบแบบภายใน");
             setLoading(false);
         }
     }, []);
@@ -181,6 +199,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     );
 };
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const useAuth = () => {
     const context = useContext(AuthContext);
     if (context === undefined) {

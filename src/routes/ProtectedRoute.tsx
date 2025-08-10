@@ -3,7 +3,7 @@
 import React from 'react';
 import { Navigate, useLocation, Outlet } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import type { Role } from '../types/types'; 
+import type { Role } from '../types'; 
 
 interface ProtectedRouteProps {
   requiredRole?: Role | Role[];
@@ -20,6 +20,7 @@ function checkRolePermission(userRole: Role, requiredRole: Role | Role[]): boole
     //siteAdmin: 3,
     //zoneAdmin: 4,
     //regionalAdmin: 5,
+    csmAdmin: 5,
     admin: 6,
     superadmin: 7
   };

@@ -15,16 +15,15 @@ import {
   onSnapshot,
   startAfter,
   QueryDocumentSnapshot,
+  Query,
+  QueryConstraint,
   type DocumentData
 } from 'firebase/firestore';
-import { db, storage } from './firebase';
+import { db, storage } from '../config/firebase';
 import { ref, getDownloadURL, uploadBytesResumable } from 'firebase/storage';
 
 // Import existing types from your types file
-import type { 
-  TrainingRecord,
-  EmployeeProfile 
-} from '../types/types'; // แก้ path ตามโครงสร้างจริง
+import type { TrainingRecord, EmployeeProfile } from '../types'; 
 
 // Additional interfaces for service layer
 interface TrainingFilters {
@@ -61,7 +60,7 @@ export const searchTrainingsWithFilters = (
     let q = query(trainingsRef);
     
     // สร้าง where clauses ตามเงื่อนไขที่มี
-    const conditions: any[] = [];
+    const conditions: QueryConstraint[] = [];
     
     // ค้นหาจาก empId
     if (filters.empId && filters.empId.trim()) {
@@ -198,10 +197,10 @@ export const searchTrainingsAdvanced = async (
 ): Promise<SearchResult> => {
   try {
     const trainingsRef = collection(db, 'trainings');
-    let baseQuery = query(trainingsRef, orderBy('trainingDate', 'desc'));
+    const baseQuery = query(trainingsRef, orderBy('trainingDate', 'desc'));
     
     // สำหรับการค้นหาที่ซับซ้อน อาจต้องใช้ multiple queries แล้วรวมผลลัพธ์
-    const queries: any[] = [];
+    const queries: Query<DocumentData>[] = [];
     
     // Query 1: ค้นหาจาก empId
     if (filters.empId && filters.empId.trim()) {

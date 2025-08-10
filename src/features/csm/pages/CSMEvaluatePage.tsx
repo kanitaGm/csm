@@ -2,15 +2,15 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../../contexts/AuthContext';
 import { Building2, ArrowLeft, Save, CheckCircle, AlertTriangle, Clock, CheckCircle2, Lock, Shield } from 'lucide-react';
-import type { Company, FormDoc, CsmAssessment, AssessmentAnswer } from '../../../types/types';
+import type { Company, CSMFormDoc, CSMAssessment, CSMAssessmentAnswer } from '../../../types';
 import csmService from '../../../services/csmService';
 import QuestionForm from '../components/QuestionForm';
-import { parseDate } from '../../../components/utils/dateUtils';
-import { useDebouncedAutoSave } from '../../../components/hooks/useDebouncedAutoSave';
-import { useOptimizedScoreCalculation } from '../../../components/hooks/useOptimizedScore';
-import { useOfflineSync } from '../../../components/hooks/useOfflineSync'; 
+import { parseDate } from '../../../utils/dateUtils';
+import { useDebouncedAutoSave } from '../../../hooks/useDebouncedAutoSave';
+import { useOptimizedScoreCalculation } from '../../../hooks/useOptimizedScore';
+import { useOfflineSync } from '../../../hooks/useOfflineSync'; 
 import { ProgressIndicator } from '../../../components/ui/ProgressIndicator';
-import { useKeyboardShortcuts } from '../../../components/hooks/useKeyboardShortcuts';
+import { useKeyboardShortcuts } from '../../../hooks/useKeyboardShortcuts';
 
 interface CSMEvaluatePageProps {
   vdCode?: string;
@@ -30,9 +30,9 @@ const CSMEvaluatePage: React.FC<CSMEvaluatePageProps> = ({ vdCode: propVdCode, o
   const [approving, setApproving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string>('');
   const [company, setCompany] = useState<Company | null>(null);
-  const [form, setForm] = useState<FormDoc | null>(null);
-  const [existingAssessment, setExistingAssessment] = useState<CsmAssessment | null>(null);
-  const [answers, setAnswers] = useState<AssessmentAnswer[]>([]);
+  const [form, setForm] = useState<CSMFormDoc | null>(null);
+  const [existingAssessment, setExistingAssessment] = useState<CSMAssessment | null>(null);
+  const [answers, setAnswers] = useState<CSMAssessmentAnswer[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   
@@ -49,17 +49,21 @@ const CSMEvaluatePage: React.FC<CSMEvaluatePageProps> = ({ vdCode: propVdCode, o
   });
 
   // Helper function to clean data before sending to service
-  const cleanAssessmentData = (data: Record<string, any>): any => {
-    const cleaned: any = {};
+  const cleanAssessmentData = (data: Record<string, unknown>): Partial<CSMAssessment> => {
+    const cleaned: Partial<CSMAssessment> = {};
     
     Object.keys(data).forEach(key => {
       const value = data[key];
       if (value !== undefined && value !== null) {
         if (value === '') {
-          // แปลง empty string เป็น null สำหรับ optional fields
-          cleaned[key] = ['vdCategory', 'riskLevel', 'assessor'].includes(key) ? value : null;
+          // แปลง empty string เป็น undefined สำหรับ optional fields หรือเก็บ empty string สำหรับ required fields
+          if (['vdCategory', 'riskLevel', 'assessor'].includes(key)) {
+            (cleaned as Record<string, unknown>)[key] = value;
+          } else {
+            (cleaned as Record<string, unknown>)[key] = undefined;
+          }
         } else {
-          cleaned[key] = value;
+          (cleaned as Record<string, unknown>)[key] = value;
         }
       }
     });
@@ -68,7 +72,7 @@ const CSMEvaluatePage: React.FC<CSMEvaluatePageProps> = ({ vdCode: propVdCode, o
   };
 
   // Validate assessment data
-  const validateAssessmentData = (): boolean => {
+  const validateAssessmentData = useCallback((): boolean => {
     if (!assessmentData.vdCategory.trim()) {
       setSaveMessage('กรุณาระบุหมวดหมู่บริษัท');
       return false;
@@ -82,6 +86,45 @@ const CSMEvaluatePage: React.FC<CSMEvaluatePageProps> = ({ vdCode: propVdCode, o
       return false;
     }
     return true;
+  }, [assessmentData.vdCategory, assessmentData.riskLevel, assessmentData.assessor]);
+
+  // Safe date parsing function
+  const safeParseDate = (dateValue: unknown): Date => {
+    // Type guard to check if dateValue is a valid DateInput
+    if (dateValue === null || dateValue === undefined) {
+      return new Date();
+    }
+    
+    // Check if it's already a Date object
+    if (dateValue instanceof Date) {
+      return dateValue;
+    }
+    
+    // Check if it's a string that can be parsed
+    if (typeof dateValue === 'string') {
+      const parsed = parseDate(dateValue);
+      return parsed || new Date();
+    }
+    
+    // Handle number (timestamp)
+    if (typeof dateValue === 'number') {
+      try {
+        return new Date(dateValue);
+      } catch {
+        return new Date();
+      }
+    }
+    
+    // For Firebase Timestamp or other objects with toDate method
+    if (typeof dateValue === 'object' && dateValue !== null && 'toDate' in dateValue) {
+      try {
+        return (dateValue as { toDate(): Date }).toDate();
+      } catch {
+        return new Date();
+      }
+    }
+    
+    return new Date();
   };
 
   // Define handleAutoSave function before using it in useDebouncedAutoSave
@@ -91,21 +134,22 @@ const CSMEvaluatePage: React.FC<CSMEvaluatePageProps> = ({ vdCode: propVdCode, o
     try {
       setSaveMessage('กำลังบันทึกอัตโนมัติ...');
 
-      const assessmentPayload: Omit<CsmAssessment, 'id'> = cleanAssessmentData({
+      const assessmentPayload: Omit<CSMAssessment, 'id'> = {
         vdCode: company.vdCode,
         vdName: company.name,
         vdCategory: assessmentData.vdCategory,
-        vdRefDoc: assessmentData.vdRefDoc || null,
-        vdWorkingArea: assessmentData.vdWorkingArea || null,
-        riskLevel: assessmentData.riskLevel as 'Low' | 'Moderate' | 'High' | 'Unknown',
+        vdRefDoc: assessmentData.vdRefDoc || undefined,
+        vdWorkingArea: assessmentData.vdWorkingArea || undefined,
+        riskLevel: assessmentData.riskLevel as 'Low' | 'Moderate' | 'High' | '',
         assessor: assessmentData.assessor,
         isActive: true,
         updateBy: user?.email || 'Admin System',
         createdAt: existingAssessment?.createdAt || new Date(),
         updatedAt: new Date(),
         answers: answers,
-        isApproved: existingAssessment?.isApproved ?? false
-      });
+        isApproved: existingAssessment?.isApproved ?? false,
+        ...cleanAssessmentData({})
+      };
 
       if (existingAssessment && existingAssessment.id) {
         await csmService.assessments.update(existingAssessment.id, assessmentPayload);
@@ -118,25 +162,20 @@ const CSMEvaluatePage: React.FC<CSMEvaluatePageProps> = ({ vdCode: propVdCode, o
       setLastSaved(new Date());
       setSaveMessage('บันทึกอัตโนมัติสำเร็จ');
       
-      setTimeout(() => setSaveMessage(''), 3000);
+      setTimeout(() => setSaveMessage(''), 60000);
 
     } catch (err) {
       console.error('Error auto-saving assessment:', err);
       setSaveMessage('เกิดข้อผิดพลาดในการบันทึกอัตโนมัติ');
-      setTimeout(() => setSaveMessage(''), 5000);
+      setTimeout(() => setSaveMessage(''), 20000);
     }
-  }, [assessmentData, answers, company, form, existingAssessment, user?.email]);
+  }, [validateAssessmentData, assessmentData, answers, company, form, existingAssessment, user?.email]);
 
   const { saving: autoSaving } = useDebouncedAutoSave(
     { answers, assessmentData },
     handleAutoSave,
-    5000
+    20000 // ดีเลย์ 20 วินาที หลังจากไม่มีการเปลี่ยนแปลง
   );
-
-  const safeParseDate = (dateValue: any): Date => {
-    const parsed = parseDate(dateValue);
-    return parsed || new Date();
-  };
 
   const handleNavigateBack = () => {
     if (onNavigateBack) {
@@ -146,43 +185,8 @@ const CSMEvaluatePage: React.FC<CSMEvaluatePageProps> = ({ vdCode: propVdCode, o
     }
   };
 
-  // Load initial data
-  useEffect(() => {
-    if (vdCode) {
-      loadInitialData();
-    } else {
-      setError('ไม่พบรหัสบริษัท');
-      setLoading(false);
-    }
-  }, [vdCode]);
-
-  // Auto-save functionality - บันทึกทุก 60 วินาทีเมื่อมีการเปลี่ยนแปลง
-  useEffect(() => {
-    if (existingAssessment?.isApproved) return; // ไม่ auto-save ถ้าอนุมัติแล้ว
-
-    const interval = setInterval(() => {
-      if (answers.length > 0 && assessmentData.vdCategory && assessmentData.assessor) {
-        handleAutoSave();
-      }
-    }, 60000); // Auto-save ทุก 60 วินาที
-
-    return () => clearInterval(interval);
-  }, [answers, assessmentData, existingAssessment?.isApproved, handleAutoSave]);
-
-  // Save on answers change (debounced)
-  useEffect(() => {
-    if (existingAssessment?.isApproved) return; // ไม่ auto-save ถ้าอนุมัติแล้ว
-
-    if (answers.length > 0 && assessmentData.vdCategory && assessmentData.assessor) {
-      const timeoutId = setTimeout(() => {
-        handleAutoSave();
-      }, 5000); // Auto-save หลังจากไม่มีการเปลี่ยนแปลง 5 วินาที
-
-      return () => clearTimeout(timeoutId);
-    }
-  }, [answers, existingAssessment?.isApproved, handleAutoSave]);
-
-  const loadInitialData = async () => {
+  // Load initial data - wrapped in useCallback to fix dependency warning
+  const loadInitialData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -230,16 +234,43 @@ const CSMEvaluatePage: React.FC<CSMEvaluatePageProps> = ({ vdCode: propVdCode, o
     } finally {
       setLoading(false);
     }
-  };
+  }, [vdCode]);
+
+  // Load initial data
+  useEffect(() => {
+    if (vdCode) {
+      loadInitialData();
+    } else {
+      setError('ไม่พบรหัสบริษัท');
+      setLoading(false);
+    }
+  }, [vdCode, loadInitialData]);
+
+  // Auto-save functionality - บันทึกทุก 60 วินาทีเมื่อมีการเปลี่ยนแปลง/
+  /*
+  useEffect(() => {
+    if (existingAssessment?.isApproved) return; // ไม่ auto-save ถ้าอนุมัติแล้ว
+
+    if (answers.length > 0 && assessmentData.vdCategory && assessmentData.assessor) {
+      const timeoutId = setTimeout(() => {
+        handleAutoSave();
+      }, 60000*10); // รอ 60 วินาที*10 =10นาที หลังการเปลี่ยนแปลงล่าสุด
+
+      return () => clearTimeout(timeoutId); // เคลียร์ timeout ถ้ามีการเปลี่ยนแปลงใหม่ก่อนครบ 60 วินาที
+    }
+  }, [answers, assessmentData.vdCategory, assessmentData.assessor, existingAssessment?.isApproved, handleAutoSave]);
+*/
+
+
 
   // Handle answers change
-  const handleAnswersChange = useCallback((newAnswers: AssessmentAnswer[]) => {
+  const handleAnswersChange = useCallback((newAnswers: CSMAssessmentAnswer[]) => {
     if (existingAssessment?.isApproved) return; // ไม่ให้แก้ไขถ้าอนุมัติแล้ว
     setAnswers(newAnswers);
   }, [existingAssessment?.isApproved]);
 
   // Manual save function (บันทึกแบบสมบูรณ์)
-  const handleManualSave = async () => {
+  const handleManualSave = useCallback(async () => {
     if (!validateAssessmentData()) {
       return;
     }
@@ -250,21 +281,22 @@ const CSMEvaluatePage: React.FC<CSMEvaluatePageProps> = ({ vdCode: propVdCode, o
       setSaving(true);
       setSaveMessage('กำลังบันทึก...');
 
-      const assessmentPayload: Omit<CsmAssessment, 'id'> = cleanAssessmentData({
+      const assessmentPayload: Omit<CSMAssessment, 'id'> = {
         vdCode: company.vdCode,
         vdName: company.name,
         vdCategory: assessmentData.vdCategory,
-        vdRefDoc: assessmentData.vdRefDoc || null,
-        vdWorkingArea: assessmentData.vdWorkingArea || null,
-        riskLevel: assessmentData.riskLevel as 'Low' | 'Moderate' | 'High' | 'Unknown',
+        vdRefDoc: assessmentData.vdRefDoc || undefined,
+        vdWorkingArea: assessmentData.vdWorkingArea || undefined,
+        riskLevel: assessmentData.riskLevel as 'Low' | 'Moderate' | 'High' | '',
         assessor: assessmentData.assessor,
         isActive: true,
         updateBy: user?.email || 'current-user@example.com',
         createdAt: existingAssessment?.createdAt || new Date(),
         updatedAt: new Date(),
         answers: answers,
-        isApproved: existingAssessment?.isApproved ?? false
-      });
+        isApproved: existingAssessment?.isApproved ?? false,
+        ...cleanAssessmentData({})
+      };
 
       if (existingAssessment && existingAssessment.id) {
         await csmService.assessments.update(existingAssessment.id, assessmentPayload);
@@ -288,10 +320,27 @@ const CSMEvaluatePage: React.FC<CSMEvaluatePageProps> = ({ vdCode: propVdCode, o
     } finally {
       setSaving(false);
     }
-  };
+  }, [validateAssessmentData, company, form, assessmentData, answers, existingAssessment, user?.email, loadInitialData]);
+
+  // Check if assessment is complete
+  const isAssessmentComplete = useCallback((): boolean => {
+    if (!form || answers.length === 0) return false;
+    
+    const requiredFields = form.fields.filter(field => field.required);
+    const completedRequired = requiredFields.every(field => {
+      const answer = answers.find(a => a.ckItem === field.ckItem);
+      return answer && 
+             answer.comment.trim() !== '' && 
+             answer.score && 
+             answer.score !== '' &&
+             answer.isFinish;
+    });
+    
+    return completedRequired;
+  }, [form, answers]);
 
   // Approve assessment function
-  const handleApprove = async () => {
+  const handleApprove = useCallback(async () => {
     if (!isAssessmentComplete()) {
       alert('กรุณาประเมินให้ครบถ้วนทุกข้อก่อนยืนยัน');
       return;
@@ -307,11 +356,12 @@ const CSMEvaluatePage: React.FC<CSMEvaluatePageProps> = ({ vdCode: propVdCode, o
       setApproving(true);
       setSaveMessage('กำลังยืนยันการประเมิน...');
 
-      const assessmentPayload: Partial<CsmAssessment> = cleanAssessmentData({
+      const assessmentPayload: Partial<CSMAssessment> = {
         isApproved: true,
         updatedAt: new Date(),
-        updateBy: user?.email || 'current-user@example.com'
-      });
+        updateBy: user?.email || 'current-user@example.com',
+        ...cleanAssessmentData({})
+      };
 
       await csmService.assessments.update(existingAssessment.id, assessmentPayload);
       
@@ -329,30 +379,10 @@ const CSMEvaluatePage: React.FC<CSMEvaluatePageProps> = ({ vdCode: propVdCode, o
     } finally {
       setApproving(false);
     }
-  };
-
-  // Alias for backward compatibility
-  const handleSave = handleManualSave;
-
-  // Check if assessment is complete
-  const isAssessmentComplete = (): boolean => {
-    if (!form || answers.length === 0) return false;
-    
-    const requiredFields = form.fields.filter(field => field.required);
-    const completedRequired = requiredFields.every(field => {
-      const answer = answers.find(a => a.ckItem === field.ckItem);
-      return answer && 
-             answer.comment.trim() !== '' && 
-             answer.score && 
-             answer.score !== '' &&
-             answer.isFinish;
-    });
-    
-    return completedRequired;
-  };
+  }, [company, form, existingAssessment, user?.email, loadInitialData, isAssessmentComplete]);
 
   // Calculate completion stats
-  const getCompletionStats = () => {
+  const getCompletionStats = useCallback(() => {
     if (!form || answers.length === 0) return { completed: 0, total: 0, percentage: 0, withAnswers: 0 };
     
     const completed = answers.filter(answer => 
@@ -369,15 +399,15 @@ const CSMEvaluatePage: React.FC<CSMEvaluatePageProps> = ({ vdCode: propVdCode, o
       total: form.fields.length,
       percentage: Math.round((completed / form.fields.length) * 100)
     };
-  };
+  }, [form, answers]);
 
   const stats = getCompletionStats();
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="flex items-center justify-center min-h-screen bg-gray-50">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <div className="w-12 h-12 mx-auto mb-4 border-b-2 border-blue-600 rounded-full animate-spin"></div>
           <p className="text-gray-600">กำลังโหลดข้อมูล...</p>
         </div>
       </div>
@@ -386,14 +416,14 @@ const CSMEvaluatePage: React.FC<CSMEvaluatePageProps> = ({ vdCode: propVdCode, o
 
   if (error) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="flex items-center justify-center min-h-screen bg-gray-50">
         <div className="text-center">
-          <AlertTriangle className="w-12 h-12 text-red-500 mx-auto mb-4" />
-          <h2 className="text-xl font-semibold text-gray-900 mb-2">เกิดข้อผิดพลาด</h2>
-          <p className="text-gray-600 mb-4">{error}</p>
+          <AlertTriangle className="w-12 h-12 mx-auto mb-4 text-red-500" />
+          <h2 className="mb-2 text-xl font-semibold text-gray-900">เกิดข้อผิดพลาด</h2>
+          <p className="mb-4 text-gray-600">{error}</p>
           <button
             onClick={handleNavigateBack}
-            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
+            className="px-4 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700"
           >
             กลับไปหน้ารายการ
           </button>
@@ -404,7 +434,7 @@ const CSMEvaluatePage: React.FC<CSMEvaluatePageProps> = ({ vdCode: propVdCode, o
 
   if (!company || !form) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="flex items-center justify-center min-h-screen bg-gray-50">
         <div className="text-center">
           <p className="text-gray-600">ไม่พบข้อมูลที่จำเป็น</p>
         </div>
@@ -415,14 +445,14 @@ const CSMEvaluatePage: React.FC<CSMEvaluatePageProps> = ({ vdCode: propVdCode, o
   // เพิ่ม offline indicator
   if (!isOnline) {
     return (
-      <div className="min-h-screen bg-gray-50 relative">
-        <div className="fixed top-4 right-4 bg-orange-100 border border-orange-400 text-orange-700 px-4 py-3 rounded z-50">
+      <div className="relative min-h-screen bg-gray-50">
+        <div className="fixed z-50 px-4 py-3 text-orange-700 bg-orange-100 border border-orange-400 rounded top-4 right-4">
           <div className="flex items-center gap-2">
             <span>⚠️ คุณอยู่ในโหมด Offline</span>
             {pendingSync && <span>- รอการซิงค์ข้อมูล</span>}
           </div>
         </div>
-        <div className="pt-20 px-4">
+        <div className="px-4 pt-20">
           <p className="text-center text-gray-600">กรุณาเชื่อมต่ออินเทอร์เน็ตเพื่อใช้งาน</p>
         </div>
       </div>
@@ -434,8 +464,8 @@ const CSMEvaluatePage: React.FC<CSMEvaluatePageProps> = ({ vdCode: propVdCode, o
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
-      <div className="bg-white shadow-sm border-b">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+      <div className="bg-white border-b shadow-sm">
+        <div className="px-4 py-4 mx-auto max-w-7xl sm:px-6 lg:px-8">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <button
@@ -456,7 +486,7 @@ const CSMEvaluatePage: React.FC<CSMEvaluatePageProps> = ({ vdCode: propVdCode, o
 
               {/* Approval Status Badge */}
               {isReadOnly && (
-                <div className="flex items-center gap-2 bg-green-100 text-green-800 px-3 py-1 rounded-full">
+                <div className="flex items-center gap-2 px-3 py-1 text-green-800 bg-green-100 rounded-full">
                   <Shield className="w-4 h-4" />
                   <span className="text-sm font-medium">ยืนยันแล้ว</span>
                 </div>
@@ -486,13 +516,13 @@ const CSMEvaluatePage: React.FC<CSMEvaluatePageProps> = ({ vdCode: propVdCode, o
                 {isAssessmentComplete() ? (
                   <CheckCircle className="w-5 h-5 text-green-600" />
                 ) : (
-                  <div className="w-5 h-5 rounded-full border-2 border-gray-300" />
+                  <div className="w-5 h-5 border-2 border-gray-300 rounded-full" />
                 )}
                 <span className="text-sm text-gray-600">
                   {stats.completed}/{stats.total} ข้อ ({stats.percentage}%)
                 </span>
                 {totalScore > 0 && (
-                  <span className="text-sm text-blue-600 ml-2">
+                  <span className="ml-2 text-sm text-blue-600">
                     คะแนน: {totalScore.toFixed(1)}/{maxScore}
                   </span>
                 )}
@@ -504,7 +534,7 @@ const CSMEvaluatePage: React.FC<CSMEvaluatePageProps> = ({ vdCode: propVdCode, o
                   <button
                     onClick={handleManualSave}
                     disabled={saving}
-                    className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    className="flex items-center gap-2 px-6 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <Save className="w-4 h-4" />
                     {saving ? 'กำลังบันทึก...' : 'บันทึก (Ctrl+S)'}
@@ -516,7 +546,7 @@ const CSMEvaluatePage: React.FC<CSMEvaluatePageProps> = ({ vdCode: propVdCode, o
                     onClick={handleApprove}
                     data-action="submit"
                     disabled={approving}
-                    className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    className="flex items-center gap-2 px-6 py-2 text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <CheckCircle className="w-4 h-4" />
                     {approving ? 'กำลังยืนยัน...' : 'ยืนยันเสร็จสิ้น (Ctrl+Enter)'}
@@ -537,7 +567,7 @@ const CSMEvaluatePage: React.FC<CSMEvaluatePageProps> = ({ vdCode: propVdCode, o
 
       {/* Save Message */}
       {saveMessage && (
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2">
+        <div className="px-4 py-2 mx-auto max-w-7xl sm:px-6 lg:px-8">
           <div className={`p-3 rounded-lg text-sm ${
             saveMessage.includes('สำเร็จ') || saveMessage.includes('ยืนยัน')
               ? 'bg-green-100 text-green-800 border border-green-200'
@@ -551,23 +581,24 @@ const CSMEvaluatePage: React.FC<CSMEvaluatePageProps> = ({ vdCode: propVdCode, o
       )}
 
       {/* Assessment Metadata Form */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        <div className="bg-white rounded-lg shadow-sm border p-6 mb-6">
+      <div className="px-4 py-6 mx-auto max-w-7xl sm:px-6 lg:px-8">
+        <div className="p-6 mb-6 bg-white border rounded-lg shadow-sm">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold text-gray-900">ข้อมูลการประเมิน</h2>
             {isReadOnly && (
-              <div className="flex items-center gap-2 text-amber-600 bg-amber-50 px-3 py-1 rounded-full">
+              <div className="flex items-center gap-2 px-3 py-1 rounded-full text-amber-600 bg-amber-50">
                 <Lock className="w-4 h-4" />
                 <span className="text-sm">ไม่สามารถแก้ไขได้</span>
               </div>
             )}
           </div>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+
+          {/* แถวบน 3 ช่อง */}
+          <div className="grid grid-cols-1 gap-4 mb-4 md:grid-cols-3">
             {/* Company Category */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                หมวดหมู่บริษัท <span className="text-red-500">*</span>
+              <label className="block mb-2 text-sm font-medium text-gray-700">
+                หมวดหมู่ (Category)<span className="text-red-500">*</span>
               </label>
               <select
                 value={assessmentData.vdCategory}
@@ -576,7 +607,7 @@ const CSMEvaluatePage: React.FC<CSMEvaluatePageProps> = ({ vdCode: propVdCode, o
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed"
               >
                 <option value="">เลือกหมวดหมู่</option>
-                <option value="1">งานทั่วไปที่ความเสี่ยงตำ | Office Admin</option>
+                <option value="1">งานทั่วไปที่ความเสี่ยงต่ำ | Office Admin</option>
                 <option value="2">งานบริการ | Service</option>
                 <option value="3">งานโครงสร้าง | Structure, Mechanical</option>
                 <option value="4">งานขนส่ง | Transportor</option>
@@ -586,8 +617,8 @@ const CSMEvaluatePage: React.FC<CSMEvaluatePageProps> = ({ vdCode: propVdCode, o
 
             {/* Reference Document */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                เลขที่อ้างอิง
+              <label className="block mb-2 text-sm font-medium text-gray-700">
+                เลขที่เอกสารอ้างอิง เช่น Contract/PO
               </label>
               <input
                 type="text"
@@ -601,7 +632,7 @@ const CSMEvaluatePage: React.FC<CSMEvaluatePageProps> = ({ vdCode: propVdCode, o
 
             {/* Working Area */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block mb-2 text-sm font-medium text-gray-700">
                 พื้นที่ปฏิบัติงาน
               </label>
               <input
@@ -613,10 +644,13 @@ const CSMEvaluatePage: React.FC<CSMEvaluatePageProps> = ({ vdCode: propVdCode, o
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed"
               />
             </div>
+          </div>
 
+          {/* แถวล่าง 2 ช่อง */}
+          <div className="grid grid-cols-1 gap-4 mb-4 md:grid-cols-2">
             {/* Risk Level */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block mb-2 text-sm font-medium text-gray-700">
                 ระดับความเสี่ยง <span className="text-red-500">*</span>
               </label>
               <select
@@ -630,47 +664,47 @@ const CSMEvaluatePage: React.FC<CSMEvaluatePageProps> = ({ vdCode: propVdCode, o
                 <option value="High">High - สูง</option>
               </select>
             </div>
-          </div>
 
-          {/* Assessor */}
-          <div className="mt-4">
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              ผู้ประเมิน <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="text"
-              value={assessmentData.assessor}
-              onChange={(e) => setAssessmentData(prev => ({ ...prev, assessor: e.target.value }))}
-              placeholder="ชื่อผู้ประเมิน"
-              disabled={isReadOnly}
-              className="w-full md:w-1/2 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed"
-            />
+            {/* Assessor */}
+            <div>
+              <label className="block mb-2 text-sm font-medium text-gray-700">
+                ผู้ประเมิน <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={assessmentData.assessor}
+                onChange={(e) => setAssessmentData(prev => ({ ...prev, assessor: e.target.value }))}
+                placeholder="ชื่อผู้ประเมิน"
+                disabled={isReadOnly}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed"
+              />
+            </div>
           </div>
 
           {/* Status Indicators */}
-          <div className="mt-6 p-4 bg-gray-50 rounded-lg">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
+          <div className="p-4 mt-6 rounded-lg bg-gray-50">
+            <div className="grid grid-cols-1 gap-4 text-sm md:grid-cols-4">
               <div className="flex items-center justify-between">
                 <span className="text-gray-600">ความคืบหน้า:</span>
                 <span className="font-medium">
                   {stats.completed}/{stats.total} ข้อ ({stats.percentage}%)
                 </span>
               </div>
-              
+
               <div className="flex items-center justify-between">
                 <span className="text-gray-600">มีคำตอบ:</span>
                 <span className="font-medium text-blue-600">
                   {stats.withAnswers} ข้อ
                 </span>
               </div>
-              
+
               <div className="flex items-center justify-between">
                 <span className="text-gray-600">คะแนนรวม:</span>
                 <span className="font-medium text-blue-600">
                   {totalScore.toFixed(1)}/{maxScore} ({avgScore.toFixed(1)} เฉลี่ย)
                 </span>
               </div>
-              
+
               <div className="flex items-center justify-between">
                 <span className="text-gray-600">สถานะ:</span>
                 <span className={`font-medium ${
@@ -680,7 +714,7 @@ const CSMEvaluatePage: React.FC<CSMEvaluatePageProps> = ({ vdCode: propVdCode, o
                   {isReadOnly ? 'ยืนยันแล้ว' : isAssessmentComplete() ? 'เสร็จสิ้น' : 'ดำเนินการ'}
                 </span>
               </div>
-              
+
               {existingAssessment && (
                 <div className="flex items-center justify-between">
                   <span className="text-gray-600">อัพเดทล่าสุด:</span>
@@ -691,10 +725,9 @@ const CSMEvaluatePage: React.FC<CSMEvaluatePageProps> = ({ vdCode: propVdCode, o
               )}
             </div>
           </div>
-        </div>
 
         {/* Progress Bar */}
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-4 mb-6">
+        <div className="p-4 mb-6 bg-white border border-gray-200 rounded-lg shadow-sm dark:bg-gray-800 dark:border-gray-700">
           <ProgressIndicator
             current={stats.completed}
             total={stats.total}
@@ -703,17 +736,19 @@ const CSMEvaluatePage: React.FC<CSMEvaluatePageProps> = ({ vdCode: propVdCode, o
           />
         </div>
 
-        {/* Question Form */}
-        {form && (
-          <QuestionForm
-            formFields={form.fields}
-            initialAnswers={answers}
-            vdCode={company.vdCode}
-            onAnswersChange={handleAnswersChange}
-            onSave={handleSave}
-            readOnly={isReadOnly}
-          />
-        )}
+
+          {/* Question Form */}
+          {form && (
+            <QuestionForm
+              formFields={form.fields}
+              initialAnswers={answers}
+              vdCode={company.vdCode}
+              onAnswersChange={handleAnswersChange}
+              onSave={handleManualSave}
+              readOnly={isReadOnly}              
+            />
+          )}
+        </div>
       </div>
     </div>
   );

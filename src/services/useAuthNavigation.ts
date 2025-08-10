@@ -5,7 +5,7 @@
 import { useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import type { AppUser } from '../types/types';
+import type { AppUser } from '../types';
 
 interface AuthNavigationOptions {
   redirectTo?: string; // เส้นทางที่จะ redirect หลัง login สำเร็จ

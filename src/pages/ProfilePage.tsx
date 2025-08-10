@@ -4,20 +4,20 @@
 // =================================================================
 import React from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import type { AppUser, EmployeeProfile } from '../types/types';
+import type { AppUser, EmployeeProfile } from '../types';
 
 const UserProfileCard: React.FC<{ user: AppUser }> = ({ user }) => {
     const isEmployee = 'firstName' in user.profile;
 
     return (
-        <div className="bg-white shadow-lg rounded-xl p-8 border border-gray-200">
-            <h2 className="text-2xl font-bold text-gray-800 mb-2">
+        <div className="p-8 bg-white border border-gray-200 shadow-lg rounded-xl">
+            <h2 className="mb-2 text-2xl font-bold text-gray-800">
                 {isEmployee ? `สวัสดี, ${(user.profile as EmployeeProfile).firstName}` : `สวัสดี, ${user.profile.displayName}`}
             </h2>
-            <p className="text-gray-600 mb-4">คุณเข้าสู่ระบบในฐานะ: 
-                <span className="font-bold px-2 py-1 rounded-full text-sm ml-2 bg-blue-100 text-blue-800">{user.role}</span>
+            <p className="mb-4 text-gray-600">คุณเข้าสู่ระบบในฐานะ: 
+                <span className="px-2 py-1 ml-2 text-sm font-bold text-blue-800 bg-blue-100 rounded-full">{user.role}</span>
             </p>
-            <div className="border-t border-gray-200 pt-4">
+            <div className="pt-4 border-t border-gray-200">
                 <p className="text-gray-500"><span className="font-semibold text-gray-700">Email:</span> {user.email}</p>
                 {isEmployee && (
                     <>
@@ -38,16 +38,16 @@ const ProfilePage: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-8">
+    <div className="min-h-screen p-8 bg-gray-50">
       <div className="max-w-4xl mx-auto">
-        <header className="flex justify-between items-center mb-8">
+        <header className="flex items-center justify-between mb-8">
           <h1 className="text-4xl font-bold text-gray-900">Profile</h1>
         </header>
         <main>
           <UserProfileCard user={user} />
           {/* Add more dashboard components here based on user role */}
-          <div className="mt-8 p-6 bg-white rounded-xl shadow-lg border border-gray-200">
-            <h3 className="text-xl font-semibold mb-4">ส่วนเนื้อหา</h3>
+          <div className="p-6 mt-8 bg-white border border-gray-200 shadow-lg rounded-xl">
+            <h3 className="mb-4 text-xl font-semibold">ส่วนเนื้อหา</h3>
             <p>เนื้อหาสำหรับผู้ใช้ที่มีสิทธิ์ `{user.role}` จะแสดงที่นี่</p>
           </div>
         </main>
