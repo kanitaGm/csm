@@ -7,6 +7,92 @@ export type DateInput = Timestamp | Date | string | null | undefined | { seconds
 // CSM FORM TYPES - Updated for Dynamic Forms
 // ========================================================================
 // for csm
+export interface CSMVendor {
+  id?: string; // Firestore Document ID  
+  companyId: string; // อ้างอิงไปยัง companies collection
+  vdCode: string; // Vendor Code - รหัสบริษัทที่ใช้อ้างอิง
+  vdName: string; // ชื่อบริษัท/หน่วยงาน
+  freqAss: string; // รอบ/ความถี่ในการตรวจประเมิน เช่น '1year', '2year', '4year'
+  isActive: boolean;
+  category: string; // หมวดหมู่บริษัท เช่น 1-admin, 2-service, 3-structure, 4-transporter
+  workingArea?: string[]; // พื้นที่ที่ทำงาน
+  createdAt?: Timestamp | Date | string;
+  updatedAt?: Timestamp | Date | string;
+}
+
+// Category configurations สำหรับ CSMVendor
+export interface CSMVendorCategory {
+  code: string; // เช่น 'admin', 'service', 'structure', 'transporter'
+  name: string;
+  description: string;
+  color: string; // สีสำหรับแสดงผล
+  defaultFrequency?: string; // ค่าเริ่มต้น แต่ไม่บังคับ  
+}
+
+//  Auditor information สำหรับ CSMAssessment
+export interface CSMAuditee{
+  name: string; // ชื่อผู้รับการตรวจประเมิน
+  email: string; // อีเมลผู้รับการตรวจประเมิน
+  phone?: string; // เบอร์ติดต่อผู้รับการตรวจประเมิน
+  position?: string; // ตำแหนน่งงาน(ถ้ามี)
+}
+
+export const CSM_VENDOR_CATEGORIES: CSMVendorCategory[] = [
+  {
+    code: '1',
+    name: 'Administrative',
+    description: 'บริษัทด้านบริหารจัดการ',
+    color: 'bg-blue-100 text-blue-800',
+    defaultFrequency: '1year'
+  },
+  {
+    code: '2',
+    name: 'Service Provider',
+    description: 'บริษัทให้บริการ',
+    color: 'bg-green-100 text-green-800',
+    defaultFrequency: '1year'
+  },
+  {
+    code: '3',
+    name: 'Structure/Construction',
+    description: 'บริษัทก่อสร้าง/โครงสร้าง',
+    color: 'bg-orange-100 text-orange-800',
+    defaultFrequency: '2year'
+  },
+  {
+    code: '4',
+    name: 'Transportation',
+    description: 'กลุ่มงานที่เกี่ยวข้องกับการขนส่ง',
+    color: 'bg-purple-100 text-purple-800',
+    defaultFrequency: '4year'
+  },
+  {
+    code: 'maintenance',
+    name: 'Maintenance',
+    description: 'บริษัทซ่อมบำรุง',
+    color: 'bg-yellow-100 text-yellow-800',
+    defaultFrequency: '1year'
+  },
+  {
+    code: 'security',
+    name: 'Security',
+    description: 'บริษัทรักษาความปลอดภัย',
+    color: 'bg-red-100 text-red-800',
+    defaultFrequency: '1year'
+  }
+];
+//  Assessment frequency options
+export const ASSESSMENT_FREQUENCIES = [
+  { value: '1year', label: 'ทุกปี', months: 12 },
+  { value: '2year', label: 'ทุก 2 ปี', months: 24 },
+  { value: '3year', label: 'ทุก 3 ปี', months: 36 },
+  { value: '4year', label: 'ทุก 4 ปี', months: 48 },
+  { value: '5year', label: 'ทุก 5 ปี', months: 60 }
+];
+
+
+/////////////////////// FORM /////////////////
+
 export interface CSMFormField  {
   id?:string;
   ckItem: string; // รหัสข้อ เช่น "1", "2", "3"
@@ -47,23 +133,46 @@ export interface CSMAssessmentAnswer {
 }
 // CsmAssessment - ข้อมูลการประเมิน (สำหรับสร้างใหม่) แก้ไขให้รองรับ null values สำหรับ optional fields
 export interface CSMAssessment {
-  id?: string; // Firestore Document ID
-  vdCode: string; // รหัสบริษัท (required)
-  vdName: string; // ชื่อบริษัท (required)
-  vdCategory?: string | null; // หมวดหมู่บริษัท (optional)
-  vdRefDoc?: string | null; // เลขที่อ้างอิง (สัญญา, PO) (optional)
-  vdWorkingArea?: string | null; // พื้นที่ปฏิบัติงาน (optional)
-  riskLevel: 'Low' | 'Moderate' | 'High' | ''; // ระดับความเสี่ยง (required with default)
-  assessor?: string | null; // ผู้ประเมิน (optional)
-  isActive: boolean; // เป็นการประเมินล่าสุดหรือไม่ (required)
-  updateBy: string; // email ผู้อัปเดต (required)
-  createdAt: DateInput; // วันที่สร้าง (required) - ใช้ DateInput
-  updatedAt: DateInput; // วันที่อัปเดต (required) - ใช้ DateInput
-  finalScore?: string | null; // คะแนนรวมทั้งหมด (calculated)
-  avgScore?: string | null; // คะแนนเฉลี่ย (calculated)
-  answers: CSMAssessmentAnswer[]; // รายการคำตอบ (required)
-  isApproved?: boolean; // สำหรับ lock ยืนยันว่าประเมินบริษัทชุดนี้เรียบร้อยแล้วจะแก้ไขไม่ได้ (optional)
+  id?: string;
+  companyId: string;
+  vdCode: string;
+  vdName: string; // เพิ่มชื่อ vendor
+  formId: string;
+  formVersion: string;
+  answers: CSMAssessmentAnswer[];
+  
+  // ✅ เพิ่มข้อมูลผู้ตรวจประเมิน
+  auditor: CSMAuditee; // ข้อมูลผู้ตรวจประเมิน
+  assessor?: string; // เก็บไว้เพื่อ backward compatibility
+  
+  // Assessment metadata
+  vdCategory?: string;
+  vdRefDoc?: string;
+  vdWorkingArea?: string;
+  riskLevel?: string;
+  
+  // Scoring
+  totalScore?: string;
+  maxScore?: string;
+  avgScore?: string;
+  
+  // Status and workflow
+  isActive: boolean;
+  isFinish?: boolean;
+  isApproved?: boolean;
+  approvedBy?: string;
+  approvedAt?: Timestamp | Date | string;
+  
+  // Timestamps
+  createdAt: Timestamp | Date | string;
+  updatedAt?: Timestamp | Date | string;
+  lastModifiedBy?: string;
+  
+  // Additional fields
+  notes?: string;
+  attachments?: string[];
 }
+
 // AssessmentDoc - ข้อมูลการประเมินที่ดึงจาก Firestore
 export interface CSMAssessmentDoc extends CSMAssessment {
   id: string; // Firestore Document ID (required)
@@ -116,3 +225,14 @@ export interface CSMAssessmentSummaryProps {
   vdCode: string;
   onViewDetails?: (assessmentId: string) => void;
 }
+
+
+//////////////////
+// Helper functions
+export const getFrequencyInfo = (freqCode: string) => {
+  return ASSESSMENT_FREQUENCIES.find(freq => freq.value === freqCode);
+};
+
+export const getCategoryInfo = (categoryCode: string): CSMVendorCategory | undefined => {
+  return CSM_VENDOR_CATEGORIES.find(cat => cat.code === categoryCode);
+};

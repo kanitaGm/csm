@@ -1,9 +1,9 @@
-// 📁 src/services/csmService.ts 
+// 📁 src/services/csmService.ts - แก้ไขให้สอดคล้องกับ CSMVendor system
 import { collection, doc, getDocs, getDoc, updateDoc, deleteDoc, 
   query, where, orderBy, limit, Timestamp, writeBatch, startAfter, FieldValue} from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { parseDate } from '../utils/dateUtils'; 
-import type { CSMFormDoc, CSMAssessment, CSMAssessmentDoc, CSMAssessmentSummary, Company, CSMAssessmentAnswer, CSMFormField, DateInput
+import type { CSMFormDoc, CSMAssessment, CSMAssessmentDoc, CSMAssessmentSummary, CSMVendor, CSMAssessmentAnswer, CSMFormField, DateInput
 } from '../types';
 import { cacheService } from './cacheService';
 import { withRetry } from '../utils/retryUtils';
@@ -55,8 +55,6 @@ const firestoreCircuitBreaker = new EnhancedCircuitBreaker(5, 60000);
 // =================== OPTIMIZED UTILITY FUNCTIONS ===================
 /**
  * ลบค่า undefined ออกจาก object ก่อนส่งไปยัง Firestore (Optimized)
- * @param obj - object ที่ต้องการทำความสะอาด
- * @returns object ที่ไม่มี undefined values
  */
 const cleanUndefinedValues = (obj: unknown): unknown => {
   if (obj === null || obj === undefined) {
@@ -71,7 +69,6 @@ const cleanUndefinedValues = (obj: unknown): unknown => {
     const cleaned: Record<string, unknown> = {};
     const entries = Object.entries(obj as Record<string, unknown>);
     
-    // Use for loop for better performance than forEach
     for (let i = 0; i < entries.length; i++) {
       const [key, value] = entries[i];
       if (value !== undefined) {
@@ -85,16 +82,12 @@ const cleanUndefinedValues = (obj: unknown): unknown => {
 };
 
 /**
- * เตรียมข้อมูลสำหรับ Firestore โดยแปลง undefined เป็น null หรือลบออก
- * @param data - ข้อมูลที่ต้องการเตรียม
- * @returns ข้อมูลที่พร้อมส่งไปยัง Firestore
+ * เตรียมข้อมูลสำหรับ Firestore
  */
 const prepareFirestoreData = (data: Record<string, unknown>): FirestoreData => {
   const cleaned = cleanUndefinedValues(data) as Record<string, unknown>;
   
-  // ตรวจสอบและแปลงค่าพิเศษ
   if (cleaned && typeof cleaned === 'object') {
-    // แปลง Date objects เป็น Timestamp
     Object.keys(cleaned).forEach(key => {
       const value = cleaned[key];
       if (value instanceof Date) {
@@ -112,8 +105,6 @@ const MAX_CACHE_SIZE = 1000;
 
 /**
  * แปลง DateInput เป็น Date object ใช้ parseDate จาก dateUtils (with caching)
- * @param dateValue - ค่า date ในรูปแบบต่างๆ
- * @returns Date object หรือ Date ปัจจุบันถ้าแปลงไม่ได้
  */
 const safeParseDate = (dateValue: unknown): Date => {
   if (!dateValue) return new Date();
@@ -138,11 +129,12 @@ const safeParseDate = (dateValue: unknown): Date => {
   return parsed;
 };
 
-// =================== COMPANIES SERVICES (Enhanced with Caching) ===================
-export const companiesService = {
-  async getAll(): Promise<Company[]> {
-    const cacheKey = 'companies-all';
-    const cached = cacheService.get<Company[]>(cacheKey);
+// =================== CSM VENDORS SERVICES ===================
+//  แก้ไข: ใช้ CSMVendor แทน Company และเชื่อมต่อกับ csmVendors collection
+export const vendorsService = {
+  async getAll(): Promise<CSMVendor[]> {
+    const cacheKey = 'csm-vendors-all';
+    const cached = cacheService.get<CSMVendor[]>(cacheKey);
     
     if (cached) {
       return cached;
@@ -151,83 +143,129 @@ export const companiesService = {
     try {
       const querySnapshot = await getDocs(
         query(
-          collection(db, 'companies'),
-          where('type', '==', 'csm'),
-          orderBy('name', 'asc')
+          collection(db, 'csmVendors'), //  เปลี่ยนจาก companies เป็น csmVendors
+          where('isActive', '==', true),
+          orderBy('vdName', 'asc') //  เปลี่ยนจาก name เป็น vdName
         )        
       );
-      const companies = querySnapshot.docs.map(doc => ({
+      const vendors = querySnapshot.docs.map(doc => ({
         ...doc.data(),
-        companyId: doc.id
-      } as Company));
+        id: doc.id //  เปลี่ยนจาก companyId เป็น id
+      } as CSMVendor));
 
-      cacheService.set(cacheKey, companies, 15); // Cache for 15 minutes
-      return companies;
+      cacheService.set(cacheKey, vendors, 15); // Cache for 15 minutes
+      return vendors;
     } catch (error) {
-      console.error('Error fetching companies:', error);
+      console.error('Error fetching CSM vendors:', error);
       throw error;
     }
   },
 
-  async search(searchTerm: string): Promise<Company[]> {
+  async search(searchTerm: string): Promise<CSMVendor[]> {
     try {
-      const companies = await this.getAll(); // ใช้ cached data
+      const vendors = await this.getAll(); // ใช้ cached data
       const term = searchTerm.toLowerCase().trim();
       
-      if (!term) return companies;
+      if (!term) return vendors;
 
-      return companies.filter(company => 
-        company.name.toLowerCase().includes(term) ||
-        company.vdCode.toLowerCase().includes(term)
+      return vendors.filter(vendor => 
+        vendor.vdName.toLowerCase().includes(term) ||
+        vendor.vdCode.toLowerCase().includes(term) ||
+        vendor.category.toLowerCase().includes(term)
       );
     } catch (error) {
-      console.error('Error searching companies:', error);
+      console.error('Error searching vendors:', error);
       throw error;
     }
   },
 
-  async getById(companyId: string): Promise<Company | null> {
-    const cacheKey = `company-${companyId}`;
-    const cached = cacheService.get<Company>(cacheKey);
+  async getById(vendorId: string): Promise<CSMVendor | null> {
+    const cacheKey = `csm-vendor-${vendorId}`;
+    const cached = cacheService.get<CSMVendor>(cacheKey);
     
     if (cached) {
       return cached;
     }
 
     try {
-      const docSnap = await getDoc(doc(db, 'companies', companyId));
+      const docSnap = await getDoc(doc(db, 'csmVendors', vendorId));
       if (docSnap.exists()) {
-        const company = { ...docSnap.data(), companyId: docSnap.id } as Company;
-        cacheService.set(cacheKey, company, 30); // Cache for 30 minutes
-        return company;
+        const vendor = { ...docSnap.data(), id: docSnap.id } as CSMVendor;
+        cacheService.set(cacheKey, vendor, 30); // Cache for 30 minutes
+        return vendor;
       }
       return null;
     } catch (error) {
-      console.error('Error fetching company:', error);
+      console.error('Error fetching vendor:', error);
       throw error;
     }
   },
 
-  async getByVdCode(vdCode: string): Promise<Company | null> {
+  async getByVdCode(vdCode: string): Promise<CSMVendor | null> {
+    const cacheKey = `csm-vendor-vdcode-${vdCode}`;
+    const cached = cacheService.get<CSMVendor>(cacheKey);
+    
+    if (cached) {
+      return cached;
+    }
+
     try {
       const querySnapshot = await getDocs(
-        query(collection(db, 'companies'), where('vdCode', '==', vdCode), limit(1))
+        query(
+          collection(db, 'csmVendors'), 
+          where('vdCode', '==', vdCode),
+          where('isActive', '==', true),
+          limit(1)
+        )
       );
+      
       if (!querySnapshot.empty) {
         const doc = querySnapshot.docs[0];
-        const company = { ...doc.data(), companyId: doc.id } as Company;
+        const vendor = { ...doc.data(), id: doc.id } as CSMVendor;
         
-        // Cache the result
-        const cacheKey = `company-${doc.id}`;
-        cacheService.set(cacheKey, company, 30);
-        
-        return company;
+        cacheService.set(cacheKey, vendor, 30);
+        return vendor;
       }
       return null;
     } catch (error) {
-      console.error('Error fetching company by vdCode:', error);
+      console.error('Error fetching vendor by vdCode:', error);
       throw error;
     }
+  },
+
+  async getByCompanyId(companyId: string): Promise<CSMVendor[]> {
+    const cacheKey = `csm-vendors-company-${companyId}`;
+    const cached = cacheService.get<CSMVendor[]>(cacheKey);
+    
+    if (cached) {
+      return cached;
+    }
+
+    try {
+      const querySnapshot = await getDocs(
+        query(
+          collection(db, 'csmVendors'),
+          where('companyId', '==', companyId),
+          where('isActive', '==', true),
+          orderBy('vdName', 'asc')
+        )
+      );
+      
+      const vendors = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      } as CSMVendor));
+
+      cacheService.set(cacheKey, vendors, 20);
+      return vendors;
+    } catch (error) {
+      console.error('Error fetching vendors by companyId:', error);
+      throw error;
+    }
+  },
+
+  clearCache(): void {
+    cacheService.clear();
   }
 };
 
@@ -308,7 +346,6 @@ export const formsService = {
   clearFormCache(): void {
     cacheService.clear(); 
   }
-
 };
 
 // =================== CSM ASSESSMENTS SERVICES (Fully Optimized) ===================
@@ -514,7 +551,8 @@ export const csmAssessmentsService = {
     };
   },
 
-  async getLatestByCompany(cLimit: number = 20, lastDoc?: unknown): Promise<{ summaries: CSMAssessmentSummary[]; hasMore: boolean; lastVisible: unknown }> {
+  //  อัพเดต getAllSummaries เพื่อใช้ CSMVendor
+  async getAllSummaries(cLimit: number = 20, lastDoc?: unknown): Promise<{ summaries: CSMAssessmentSummary[]; hasMore: boolean; lastVisible: unknown }> {
     const cacheKey = `latest-assessments-${cLimit}`;
     const cached = cacheService.get<{ summaries: CSMAssessmentSummary[]; hasMore: boolean; lastVisible: unknown }>(cacheKey);
     
@@ -551,7 +589,7 @@ export const csmAssessmentsService = {
         
         summaries.push({
           vdCode: data.vdCode,
-          vdName: data.vdName,
+          vdName: data.vdName, //  ใช้ vdName แทน companyName
           lastAssessmentId: doc.id,
           lastAssessmentDate: createdAtDate,
           totalScore,
@@ -678,14 +716,14 @@ export const csmAssessmentsService = {
   async getStatistics(): Promise<{
     totalAssessments: number;
     activeAssessments: number;
-    companiesAssessed: number;
+    vendorsAssessed: number; //  เปลี่ยนจาก companiesAssessed เป็น vendorsAssessed
     averageScore: number;
   }> {
     const cacheKey = 'csm-stats';
     const cached = cacheService.get<{
       totalAssessments: number;
       activeAssessments: number;
-      companiesAssessed: number;
+      vendorsAssessed: number;
       averageScore: number;
     }>(cacheKey);
     
@@ -696,7 +734,7 @@ export const csmAssessmentsService = {
     try {
       const assessments = await this.getAll();
       const activeAssessments = assessments.filter(a => a.isActive);
-      const uniqueCompanies = new Set(assessments.map(a => a.vdCode));
+      const uniqueVendors = new Set(assessments.map(a => a.vdCode)); //  เปลี่ยนเป็น vendors
       
       const totalScore = activeAssessments.reduce((sum, assessment) => {
         return sum + parseFloat(assessment.avgScore || '0');
@@ -707,7 +745,7 @@ export const csmAssessmentsService = {
       const stats = {
         totalAssessments: assessments.length,
         activeAssessments: activeAssessments.length,
-        companiesAssessed: uniqueCompanies.size,
+        vendorsAssessed: uniqueVendors.size, //  เปลี่ยนจาก companiesAssessed
         averageScore: Math.round(averageScore * 100) / 100
       };
 
@@ -718,7 +756,7 @@ export const csmAssessmentsService = {
       return {
         totalAssessments: 0,
         activeAssessments: 0,
-        companiesAssessed: 0,
+        vendorsAssessed: 0, //  เปลี่ยน field name
         averageScore: 0
       };
     }
@@ -737,8 +775,9 @@ export const csmAssessmentsService = {
   }
 };
 
+//  อัพเดต export ให้สอดคล้องกับ CSMVendor system
 export default {
-  companies: companiesService,
+  vendors: vendorsService, //  ใช้ vendorsService แทน csmVendorService
   forms: formsService,
   assessments: csmAssessmentsService
 };

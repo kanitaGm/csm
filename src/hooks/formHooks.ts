@@ -209,7 +209,7 @@ export function getFieldTypeIcon(type: string): string {
     select: '📋',
     file: '📎',
     rating: '⭐',
-    yesno: '✅',
+    yesno: '',
     signature: '✍️'
   };
   
@@ -429,10 +429,26 @@ export function useFormValidation(form: Partial<FormDoc>): FormValidationResult 
     const performanceScore = Math.max(0, 100 - (totalFields * 2)); // Penalty for too many fields
     const overallScore = (accessibilityScore + usabilityScore + performanceScore) / 3;
 
+    //  สร้าง errors object จาก fieldResults และ generalErrors
+    const errors: Record<string, string> = {};
+    
+    // เพิ่ม general errors
+    generalErrors.forEach((error, index) => {
+      errors[`general_${index}`] = error;
+    });
+    
+    // เพิ่ม field errors
+    Object.entries(fieldResults).forEach(([fieldId, result]) => {
+      if (result.errors.length > 0) {
+        errors[fieldId] = result.errors.join(', ');
+      }
+    });
+
     return {
       isValid: overallValid,
       fieldResults,
       generalErrors,
+      errors, //  เพิ่ม property นี้
       score: {
         accessibility: Math.round(accessibilityScore),
         usability: Math.round(usabilityScore),

@@ -32,11 +32,11 @@ export interface Plant {
 }
 
 export interface Company {
-  companyId: string; // Firestore Document ID
+  companyId: string; // Firestore Document ID  
   name: string; // ชื่อบริษัท
+  type:string;
   isActive: boolean;
   contactPerson?: string;
-  type:string;
   email?: string;
   phone?: string;
   address?: string;
@@ -44,6 +44,7 @@ export interface Company {
   createdAt?: Timestamp | Date | string;
   updatedAt?: Timestamp | Date | string;
 }
+
 
 // ========================================================================
 // UI COMPONENT TYPES
