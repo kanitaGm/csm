@@ -13,12 +13,16 @@ export interface DuplicateCheck {
   duplicateFields: string[];
 }
 
+
 export interface ImportResults {
-  success: number;
-  failed: number;
-  skipped: number;
+  success: number; 
+  failed: number; 
+  skipped: number; 
   errors: string[];
+  duration: number;
+  throughput: number;
 }
+
 
 export interface EditableData {
   [key: string]: unknown;
@@ -52,7 +56,10 @@ export const useCSVImport = (config: ImportConfig) => {
     success: 0,
     failed: 0,
     skipped: 0,
-    errors: []
+    errors: [],
+    duration: 0,
+    throughput: 0,
+
   });
   const [editedData, setEditedData] = useState<Map<string, EditableData>>(new Map());
 
@@ -266,10 +273,12 @@ export const useCSVImport = (config: ImportConfig) => {
     setImportComplete(false);
 
     const results: ImportResults = {
-      success: 0,
-      failed: 0,
-      skipped: 0,
-      errors: []
+    success: 0,
+    failed: 0,
+    skipped: 0,
+    errors: [],
+    duration: 0,
+    throughput: 0,
     };
 
     const batchSize = config.batchSize || 10;
@@ -379,7 +388,7 @@ export const useCSVImport = (config: ImportConfig) => {
     setImportComplete(false);
     setIsCheckingDuplicates(false);
     setDuplicateChecks([]);
-    setImportResults({ success: 0, failed: 0, skipped: 0, errors: [] });
+    setImportResults({ success: 0, failed: 0, skipped: 0, errors: [],duration: 0,    throughput: 0, });
     setEditedData(new Map());
   }, []);
 

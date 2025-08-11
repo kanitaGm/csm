@@ -33,11 +33,10 @@ export interface Plant {
 
 export interface Company {
   companyId: string; // Firestore Document ID
-  vdCode: string; // Vendor Code - รหัสบริษัทที่ใช้อ้างอิง
   name: string; // ชื่อบริษัท
   isActive: boolean;
-  category: string; // หมวดหมู่บริษัท เช่น structure, admin, service, transporter
   contactPerson?: string;
+  type:string;
   email?: string;
   phone?: string;
   address?: string;

@@ -9,7 +9,6 @@ import {
   FaTimes, FaUser, FaSpinner, FaSearch, FaFilter, FaEdit, FaSave, 
   FaFileExport, FaEye, FaEyeSlash, FaCheckSquare, FaSquare, FaUndo
 } from 'react-icons/fa';
-//import { useCSVProcessor } from './CSVProcessor';
 import { getAllTemplates, getTemplateByCollection, type CSVTemplateConfig } from './CSVTemplates';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -35,32 +34,36 @@ interface EditableCell {
 
 type FilterType = 'all' | 'valid' | 'errors' | 'duplicates';
 
-// สำหรับข้อมูลที่แสดงในตาราง (เพิ่ม originalIndex เป็น string เพื่อให้ consistent กับ Record<string, string>)
 type DataRow = Record<string, string> & { originalIndex: string };
 
 export default function ImportCSVPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
   
-  // ใช้ CSVProcessor แบบง่าย โดยให้เรามี state ของเราเอง
   const [currentStep, setCurrentStep] = useState(1);
   const [headers, setHeaders] = useState<string[]>([]);
   const [previewData, setPreviewData] = useState<Record<string, string>[]>([]);
   const [mappedData, setMappedData] = useState<Record<string, unknown>[]>([]);
   const [processingErrors, setProcessingErrors] = useState<{ message: string }[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [dataRowOffset] = useState(3); // ข้อมูลเริ่มจากแถวที่ 3
+  const [dataRowOffset] = useState(3);
 
   const templates = getAllTemplates();
 
-  // Template Selection - Fixed to work with templates array
-  const [selectedCollection, setSelectedCollection] = useState<string>(() => 
-    templates.length > 0 ? templates[0].collection : ''
-  );
+  // Template Selection - แก้ไขการจัดการ state
+  const [selectedCollection, setSelectedCollection] = useState<string>('');
+  
+  // Initialize selectedCollection when templates are loaded
+  useEffect(() => {
+    if (templates.length > 0 && !selectedCollection) {
+      setSelectedCollection(templates[0].collection);
+    }
+  }, [templates, selectedCollection]);
   
   const selectedTemplate = useMemo(() => {
-    return getTemplateByCollection(selectedCollection) ?? (templates.length > 0 ? templates[0] : null);
-  }, [selectedCollection, templates]);
+    if (!selectedCollection) return null;
+    return getTemplateByCollection(selectedCollection);
+  }, [selectedCollection]);
 
   // Core States
   const [isImporting, setIsImporting] = useState(false);
@@ -86,10 +89,9 @@ export default function ImportCSVPage() {
   const [editedData, setEditedData] = useState<Record<number, Record<string, string>>>({});
   const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
 
-  // Use ref to track if we've already processed this data
   const processedDataRef = useRef<string>('');
 
-  // Get current data with edits applied - Fixed to work with string values
+  // Get current data with edits applied
   const getCurrentData = useCallback((): Record<string, string>[] => {
     return previewData.map((row, index) => {
       const edits = editedData[index] || {};
@@ -106,7 +108,6 @@ export default function ImportCSVPage() {
       throw new Error('ไฟล์ต้องมีอย่างน้อย 3 แถว (header, description, data)');
     }
 
-    // Parse headers from first row
     const rawHeaders = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
     const cleanHeaders = rawHeaders.filter(h => h && !/^_\d+$/.test(h));
     
@@ -114,11 +115,10 @@ export default function ImportCSVPage() {
       throw new Error('ไม่พบหัวตารางในไฟล์');
     }
 
-    // Parse data from row 3 onwards (skip description row)
     const data: Record<string, string>[] = [];
     for (let i = 2; i < lines.length; i++) {
       const values = lines[i].split(',').map(v => v.trim().replace(/"/g, ''));
-      if (values.some(v => v)) { // Skip empty rows
+      if (values.some(v => v)) {
         const row: Record<string, string> = {};
         cleanHeaders.forEach((header, idx) => {
           row[header] = values[idx] || '';
@@ -143,7 +143,6 @@ export default function ImportCSVPage() {
     try {
       const requiredFields = selectedTemplate.requiredFields;
       
-      // Get unique values for each required field
       const fieldValues: Record<string, string[]> = {};
       requiredFields.forEach(field => {
         fieldValues[field] = [...new Set(currentData
@@ -172,7 +171,7 @@ export default function ImportCSVPage() {
         return results;
       };
 
-      // Check for CSV duplicates first (works offline)
+      // Check for CSV duplicates first
       const csvFieldMaps: Record<string, Map<string, number>> = {};
       requiredFields.forEach(field => {
         csvFieldMaps[field] = new Map<string, number>();
@@ -196,7 +195,7 @@ export default function ImportCSVPage() {
         });
       });
 
-      // Try to check database duplicates (may fail if offline)
+      // Check database duplicates
       try {
         const existingFieldValues: Record<string, Set<string>> = {};
         
@@ -220,7 +219,7 @@ export default function ImportCSVPage() {
           });
         });
       } catch (error) {
-        console.warn('Could not check database duplicates (offline mode):', error);
+        console.warn('Could not check database duplicates:', error);
       }
 
       setDuplicateChecks(duplicates);
@@ -231,9 +230,15 @@ export default function ImportCSVPage() {
     }
   }, [getCurrentData, selectedTemplate]);
 
-  // Process mapping (convert to mapped data)
+  // Process mapping - แก้ไขให้ใช้ template ที่เลือกอย่างถูกต้อง
   const processMapping = useCallback((template: CSVTemplateConfig) => {
-    if (!template || previewData.length === 0) return;
+    if (!template || previewData.length === 0) {
+      console.log('No template or preview data for processing');
+      return;
+    }
+
+    console.log('Processing mapping for template:', template.collection);
+    console.log('Template field mapping:', template.fieldMapping);
 
     const errors: { message: string }[] = [];
     const mapped: Record<string, unknown>[] = [];
@@ -263,9 +268,15 @@ export default function ImportCSVPage() {
           }
         });
 
+        // Apply row transformer if available
+        let finalMappedRow = mappedRow;
+        if (template.rowTransformer) {
+          finalMappedRow = template.rowTransformer(mappedRow) as Record<string, unknown>;
+        }
+
         // Validate required fields
         template.requiredFields.forEach(field => {
-          const value = mappedRow[field];
+          const value = finalMappedRow[field];
           if (!value || (typeof value === 'string' && !value.trim())) {
             errors.push({
               message: `แถวที่ ${index + dataRowOffset}: ฟิลด์ ${field} ไม่สามารถว่างได้`
@@ -275,7 +286,7 @@ export default function ImportCSVPage() {
 
         // Apply validation rules
         Object.entries(template.validationRules).forEach(([field, validator]) => {
-          const value = mappedRow[field];
+          const value = finalMappedRow[field];
           const validationError = validator(value);
           if (validationError) {
             errors.push({
@@ -284,29 +295,32 @@ export default function ImportCSVPage() {
           }
         });
 
-        mapped.push(mappedRow);
+        mapped.push(finalMappedRow);
       } catch (error) {
         errors.push({
-          message: `แถวที่ ${error} ${index + dataRowOffset}: เกิดข้อผิดพลาดในการประมวลผล`
+          message: `แถวที่ ${index + dataRowOffset}: เกิดข้อผิดพลาดในการประมวลผล - ${error}`
         });
       }
     });
 
+    console.log('Mapped data:', mapped);
+    console.log('Processing errors:', errors);
+
     setMappedData(mapped);
     setProcessingErrors(errors);
-    setCurrentStep(2);
   }, [previewData, dataRowOffset, user?.email]);
 
-  // useEffect for processing mapping when we have data and template
+  // useEffect for processing mapping when template changes or data is ready
   useEffect(() => {
-    if (currentStep === 2 && previewData.length > 0 && mappedData.length === 0 && selectedTemplate) {
+    if (previewData.length > 0 && selectedTemplate && currentStep === 2) {
+      console.log('Trigger processing for template:', selectedTemplate.collection);
       processMapping(selectedTemplate);
     }
-  }, [currentStep, previewData.length, mappedData.length, selectedTemplate, processMapping]);
+  }, [previewData, selectedTemplate, currentStep, processMapping]);
 
   // useEffect for duplicate checking after mapping
   useEffect(() => {
-    if (currentStep === 2 && mappedData.length > 0 && duplicateChecks.length === 0 && selectedTemplate) {
+    if (currentStep === 2 && mappedData.length > 0 && selectedTemplate) {
       const dataIdentifier = JSON.stringify({
         step: currentStep,
         dataLength: previewData.length,
@@ -319,7 +333,27 @@ export default function ImportCSVPage() {
         checkForDuplicates();
       }
     }
-  }, [currentStep, mappedData.length, duplicateChecks.length, selectedTemplate, previewData.length, headers, checkForDuplicates]);
+  }, [currentStep, mappedData.length, selectedTemplate, previewData.length, headers, checkForDuplicates]);
+
+  // Reset when template changes
+  useEffect(() => {
+    if (selectedTemplate) {
+      console.log('Template changed to:', selectedTemplate.collection);
+      // Reset data when template changes
+      setDuplicateChecks([]);
+      setEditedData({});
+      setSelectedRows(new Set());
+      setProcessingErrors([]);
+      setMappedData([]);
+      setCurrentPage(1);
+      processedDataRef.current = '';
+      
+      // Re-process if we have data
+      if (previewData.length > 0 && currentStep === 2) {
+        processMapping(selectedTemplate);
+      }
+    }
+  }, [selectedTemplate, processMapping, previewData.length, currentStep]);
 
   // Reset when new data comes in
   useEffect(() => {
@@ -336,7 +370,7 @@ export default function ImportCSVPage() {
     setCurrentPage(1);
   }, [filterType, searchTerm]);
 
-  // File handling
+  // File handling - แก้ไขให้รองรับการเปลี่ยน template
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -357,6 +391,9 @@ export default function ImportCSVPage() {
       setMappedData([]);
       
       const { headers: parsedHeaders, data } = await parseCSV(file);
+      console.log('Parsed headers:', parsedHeaders);
+      console.log('Parsed data rows:', data.length);
+      
       setHeaders(parsedHeaders);
       setPreviewData(data);
       setCurrentStep(2);
@@ -367,6 +404,12 @@ export default function ImportCSVPage() {
     } finally {
       setIsProcessing(false);
     }
+  };
+
+  // Template selection handler - แก้ไขให้รีเซ็ตข้อมูลและประมวลผลใหม่
+  const handleTemplateChange = (newCollection: string) => {
+    console.log('Changing template to:', newCollection);
+    setSelectedCollection(newCollection);
   };
 
   // Cell editing functions
@@ -398,7 +441,7 @@ export default function ImportCSVPage() {
     const currentData = getCurrentData();
     let dataWithIndex: DataRow[] = currentData.map((row, index) => ({ 
       ...row, 
-      originalIndex: index.toString() // Convert to string for consistency
+      originalIndex: index.toString()
     }));
 
     if (searchTerm) {
@@ -458,9 +501,14 @@ export default function ImportCSVPage() {
     }
   };
 
-  // Import data
+  // Import data - แก้ไขให้ใช้ collection ที่เลือกอย่างถูกต้อง
   const handleImport = async () => {
-    if (!selectedTemplate) return;
+    if (!selectedTemplate) {
+      alert('Please select a template first');
+      return;
+    }
+    
+    console.log('Starting import to collection:', selectedTemplate.collection);
     
     const rowsToImport = selectedRows.size > 0 
       ? mappedData.filter((_, index) => selectedRows.has(index))
@@ -498,9 +546,12 @@ export default function ImportCSVPage() {
           payload.createdAt = serverTimestamp();
           payload.lastUpdateBy = user?.email || 'CSV Import';
           
+          console.log(`Importing record ${i + 1} to ${selectedTemplate.collection}:`, payload);
+          
           await addDoc(collection(db, selectedTemplate.collection), payload);
           results.success++;
         } catch (error) {
+          console.error('Import error for record:', error);
           results.failed++;
           const originalRowIndex = mappedData.findIndex(p => p === recordData);
           results.errors.push(
@@ -512,6 +563,7 @@ export default function ImportCSVPage() {
         setImportProgress(Math.round(((i + 1) / rowsToImport.length) * 100));
       }
       
+      console.log('Import completed:', results);
       setImportResults(results);
       setImportComplete(true);
       setCurrentStep(3);
@@ -622,11 +674,7 @@ export default function ImportCSVPage() {
 
   // Statistics
   const totalRecords = previewData.length;
-  
-  // Find unique rows with duplicates
   const uniqueDuplicateRows = new Set(duplicateChecks.map(d => d.rowIndex)).size;
-  
-  // Find unique rows with validation errors
   const uniqueErrorRows = new Set(
     processingErrors
       .map(error => {
@@ -636,7 +684,6 @@ export default function ImportCSVPage() {
       .filter(rowIndex => rowIndex >= 0)
   ).size;
   
-  // Calculate valid rows
   const rowsWithIssues = new Set([
     ...duplicateChecks.map(d => d.rowIndex),
     ...processingErrors
@@ -687,9 +734,12 @@ export default function ImportCSVPage() {
               </label>
               <select
                 className="w-full p-3 text-lg border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                onChange={(e) => setSelectedCollection(e.target.value)}
+                onChange={(e) => handleTemplateChange(e.target.value)}
                 value={selectedCollection}
               >
+                {selectedCollection === '' && (
+                  <option value="" disabled>Choose a template...</option>
+                )}
                 {templates.map(template => (
                   <option key={template.collection} value={template.collection}>
                     {template.name} → {template.collection}
@@ -781,15 +831,29 @@ export default function ImportCSVPage() {
           <div className="p-6 mb-8 bg-white rounded-lg shadow-md">
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-2xl font-semibold">Preview & Validate Data</h2>
-              <div className="text-sm text-gray-600">
-                Collection: <span className="font-medium text-blue-600">{selectedTemplate?.collection}</span>
-              </div>
-              {isCheckingDuplicates && (
-                <div className="flex items-center space-x-2 text-blue-600">
-                  <FaSpinner className="animate-spin" />
-                  <span className="text-sm">Validating data...</span>
+              <div className="flex items-center space-x-4">
+                <div className="text-sm text-gray-600">
+                  Collection: <span className="font-medium text-blue-600">{selectedTemplate?.collection}</span>
                 </div>
-              )}
+                {/* Template selector in step 2 */}
+                <select
+                  className="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  onChange={(e) => handleTemplateChange(e.target.value)}
+                  value={selectedCollection}
+                >
+                  {templates.map(template => (
+                    <option key={template.collection} value={template.collection}>
+                      {template.name}
+                    </option>
+                  ))}
+                </select>
+                {isCheckingDuplicates && (
+                  <div className="flex items-center space-x-2 text-blue-600">
+                    <FaSpinner className="animate-spin" />
+                    <span className="text-sm">Validating data...</span>
+                  </div>
+                )}
+              </div>
             </div>
             
             {/* Enhanced Statistics Dashboard */}

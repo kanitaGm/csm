@@ -502,12 +502,11 @@ export const USER_ROLES_TEMPLATE: CSVTemplateConfig = {
 export const COMPANIES_TEMPLATE: CSVTemplateConfig = {
   name: 'Companies Import',
   collection: 'companies',
-  description: 'Import/export ข้อมูลบริษัท (vendors) สำหรับระบบ CSM และประเภทอื่นๆ',  
+  description: 'Import/export ข้อมูลบริษัท',  
   fieldMapping: {
     companyId: 'companyId',
     name: 'name',
     type: 'type',
-    category: 'category',
     address: 'address',
     phone: 'phone',
     email: 'email',
@@ -529,7 +528,6 @@ export const COMPANIES_TEMPLATE: CSVTemplateConfig = {
     companyId: 'รหัสบริษัทที่ไม่ซ้ำกัน (Unique company code)',
     name: 'ชื่อบริษัท',
     type: 'ประเภทบริษัท เช่น csm, safety, hr',
-    category: 'หมวดหมู่บริษัท เช่น Vendor, Supplier',
     address: 'ที่อยู่บริษัท',
     phone: 'เบอร์ติดต่อ',
     email: 'อีเมลบริษัท',
@@ -599,9 +597,83 @@ export const COMPANIES_TEMPLATE: CSVTemplateConfig = {
   },
 };
 
+
+// User Companies Template
+export const CSMVENDOR_TEMPLATE: CSVTemplateConfig = {
+  name: 'CSM Vendor Import',
+  collection: 'csmVendor',
+  description: 'Import/export ข้อมูลบริษัท (vendors) สำหรับระบบ CSM และประเภทอื่นๆ',  
+  fieldMapping: {
+    companyId: 'companyId',
+    vdCode: 'companyId',
+    vdName: 'vdName',
+    workingArea: 'workinArea',
+    category: 'category',
+    createdAt: 'createdAt',
+    updatedAt: 'updatedAt',
+  },
+  requiredFields: ['companyId', 'vdCoe', 'vdName', 'category'],
+  dateFields: ['createdAt', 'updatedAt'],
+  defaultValues: {
+    isActive: true,
+    createdAt: () => new Date(),
+    updatedAt: () => new Date(),
+    createdBy: (userEmail?: string) => userEmail || 'system',
+  },
+
+  fieldDescriptions: {
+    companyId: 'รหัสบริษัทที่ไม่ซ้ำกัน (Unique company code)',
+    vdCode: 'รหัสบริษัททีใช้ประเมิน CSM มาจากรหัวบริษัท_category+WorkingAres=a',
+    vdnName: 'ชื่อบริษัท',
+    type: 'ประเภทบริษัท เช่น csm, safety, hr',
+    workingArea: 'สถานที่รับงาน/ทำงานในกลุ่มบริษัท',
+    category: 'Category',
+  },
+
+  validationRules: {
+    companyId: (value: unknown) => {
+      if (!isString(value) || !value.trim()) {
+        return 'Company ID is required';
+      }
+      return null;
+    },
+    veCode: (value: unknown) => {
+      if (!isString(value) || !value.trim()) {
+        return 'Vendor Code is required';
+      }
+      return null;
+    },    
+    vdName: (value: unknown) => {
+      if (!isString(value) || !value.trim()) {
+        return 'Vendor name is required';
+      }
+      return null;
+    }
+  },
+
+  transformers: {
+    companyId: (value: unknown) => {
+      if (!isString(value)) return '';
+      return sanitizeId(value);
+    },
+    vdCode: (value: unknown) => {
+      if (!isString(value)) return '';
+      return sanitizeId(value);
+    },
+    vdName: (value: unknown) => {
+      if (isString(value)) {
+        return value.trim();
+      }
+      return value;
+    }
+  },
+};
+
+
 // Template Registry
 export const CSV_TEMPLATES: Record<string, CSVTemplateConfig> = {
-    company: COMPANIES_TEMPLATE,
+  company: COMPANIES_TEMPLATE,
+  vendor: CSMVENDOR_TEMPLATE,
   employees: EMPLOYEE_TEMPLATE,
   trainingRecords: TRAINING_TEMPLATE,
   users: USER_ROLES_TEMPLATE,  

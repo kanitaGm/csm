@@ -33,6 +33,7 @@ import EditFormPage from '../features/forms/DynamicFormEditPage';
 // Test/Util Pages
 import TestPage from '../features/test/test'; 
 import ImportCSVPage from '../utils/ImportCSVPage'; 
+import BulkDeleteExamples from '../features/test/BulkDeleteExamples'; //src/examples/BulkDeleteExamples.tsx
 
 
 
@@ -49,6 +50,8 @@ const AppRoutes = () => {
           
           <Route path="/admin/forms" element={<ThemeProvider><FormListPage /> </ThemeProvider>} />
           <Route path="/admin/forms/e/:formId" element={<EditFormPage />} />
+          <Route path="/admin/xDel" element={<BulkDeleteExamples />} />
+        
          
           
           

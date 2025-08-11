@@ -1,1179 +1,1021 @@
-// src/pages/employees/ImportEmployeePage.tsx
-
+// src/features/employees/components/ImportEmployeeForm.tsx
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { db } from '../../../config/firebase';
-import { collection, addDoc, query, where, getDocs, serverTimestamp } from 'firebase/firestore';
+import { collection,  query, where, getDocs, serverTimestamp, writeBatch, doc } from 'firebase/firestore';
 import { 
-  FaFileUpload, FaFileDownload, FaArrowLeft, FaCheck, FaExclamationTriangle, 
-  FaTimes, FaUser, FaSpinner, FaSearch, FaFilter, FaEdit, FaSave, 
-  FaFileExport, FaEye, FaEyeSlash, FaCheckSquare, FaSquare, FaUndo
+  FaFileUpload, FaFileDownload, FaArrowLeft, FaCheck, 
+  FaUser, FaSpinner, FaSearch, 
+  FaFileExport, FaEye, FaEyeSlash, FaUndo, FaCheckSquare, FaSquare
 } from 'react-icons/fa';
-import { useCSVProcessor } from '../../../utils/CSVProcessor';
-import { EMPLOYEE_TEMPLATE } from '../../../utils/CSVTemplates';   
+import { useSimpleCSVProcessor } from '../../../utils/CSVProcessor';
+import { EMPLOYEE_TEMPLATE } from '../../../utils/CSVTemplates';
 import { useAuth } from '../../../contexts/AuthContext';
-import { createSearchKeywords } from '../../../utils/employeeUtils'  
 
-// --- Type Definitions ---
+// Types
 interface ImportResults {
-  success: number; failed: number; skipped: number; errors: string[];
+  success: number;
+  failed: number;
+  errors: string[];
 }
-interface DuplicateCheck {
-  rowIndex: number; empId?: string; idCard?: string; email?: string;
-  duplicateType: 'database' | 'csv'; duplicateFields: string[];
-}
-interface EditableCell {
-  rowIndex: number; field: string;
-}
-type FilterType = 'all' | 'valid' | 'errors' | 'duplicates';
-type DataRow = Record<string, unknown> & { originalIndex: number };
 
-export default function ImportEmployeePage() {
+interface DuplicateCheck {
+  rowIndex: number;
+  fieldValue: string;
+  duplicateFields: string[];
+  duplicateType: 'database' | 'csv';
+}
+
+interface ValidationError {
+  row: number;
+  message: string;
+}
+
+interface CSVRow extends Record<string, string | number | null | undefined> {
+  originalIndex?: number;
+}
+
+interface EmployeeData {
+  empId: string;
+  idCard: string;
+  firstName: string;
+  lastName: string;
+  company: string;
+  [key: string]: unknown;
+}
+
+type FilterType = 'all' | 'valid' | 'errors' | 'duplicates';
+type Step = 1 | 2 | 3;
+
+// Utils
+const showAlert = (message: string): void => alert(message);
+const isValidRow = (row: unknown): row is CSVRow => typeof row === 'object' && row !== null;
+const isString = (value: unknown): value is string => typeof value === 'string';
+
+export default function ImportEmployeeForm(): React.ReactElement {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const csvProcessor = useCSVProcessor();
-
+  const csvProcessor = useSimpleCSVProcessor();
+  
   // Core States
+  const [currentStep, setCurrentStep] = useState<Step>(1);
+  const [mappedData, setMappedData] = useState<EmployeeData[]>([]);
+  const [validationErrors, setValidationErrors] = useState<ValidationError[]>([]);
+  const [duplicateChecks, setDuplicateChecks] = useState<DuplicateCheck[]>([]);
+  
+  // Import States
   const [isImporting, setIsImporting] = useState(false);
   const [importProgress, setImportProgress] = useState(0);
-  const [importComplete, setImportComplete] = useState(false);
-  const [isCheckingDuplicates, setIsCheckingDuplicates] = useState(false);
-  const [duplicateChecks, setDuplicateChecks] = useState<DuplicateCheck[]>([]);
-  const [importResults, setImportResults] = useState<ImportResults>({ 
-    success: 0, 
-    failed: 0, 
-    skipped: 0, 
-    errors: [] 
-  });
+  const [importResults, setImportResults] = useState<ImportResults>({ success: 0, failed: 0, errors: [] });
   
   // UI States
   const [currentPage, setCurrentPage] = useState(1);
-  const [rowsPerPage, setRowsPerPage] = useState(10);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState<FilterType>('all');
-  const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
-  const [editingCell, setEditingCell] = useState<EditableCell | null>(null);
+  const [editingCell, setEditingCell] = useState<{ rowIndex: number; field: string } | null>(null);
   const [editValue, setEditValue] = useState('');
-  const [editedData, setEditedData] = useState<Record<number, Record<string, unknown>>>({});
-  const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
+  const [editedData, setEditedData] = useState<Record<number, Record<string, string>>>({});
+  const [showOptions, setShowOptions] = useState(false);
+  const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
+  const [selectAll, setSelectAll] = useState(false);
+  
+  const rowsPerPage = 25;
+  const processedDataRef = useRef('');
 
-  // Get current data with edits applied
-  const getCurrentData = useCallback(() => {
-    return csvProcessor.state.previewData.map((row, index) => {
+  // Get current data with edits
+  const getCurrentData = useCallback((): CSVRow[] => {
+    return csvProcessor.state.previewData.map((row: unknown, index: number): CSVRow => {
+      if (!isValidRow(row)) return { originalIndex: index };
       const edits = editedData[index] || {};
-      return { ...row, ...edits };
+      return { ...row, ...edits, originalIndex: row.originalIndex ?? index };
     });
   }, [csvProcessor.state.previewData, editedData]);
 
-  // Use ref to track if we've already processed this data
-  const processedDataRef = useRef<string>('');
+  // Process and validate data
+  const processData = useCallback(async (): Promise<void> => {
+    if (!EMPLOYEE_TEMPLATE || csvProcessor.state.previewData.length === 0) return;
 
-  // Enhanced duplicate checking - memoized to prevent unnecessary re-creation
-  const checkForDuplicates = useCallback(async () => {
+    const mapped: EmployeeData[] = [];
+    const errors: ValidationError[] = [];
+
+    csvProcessor.state.previewData.forEach((row: unknown, index: number) => {
+      if (!isValidRow(row)) {
+        errors.push({ row: index, message: `Row ${index + 3}: Invalid data` });
+        return;
+      }
+
+      const employeeData: Partial<EmployeeData> = {};
+      let hasError = false;
+
+      // Map fields
+      Object.entries(EMPLOYEE_TEMPLATE.fieldMapping).forEach(([dbField, csvField]) => {
+        let value: string | number | null = row[csvField] ?? null;
+        
+        // Apply transformers
+        if (EMPLOYEE_TEMPLATE.transformers?.[csvField]) {
+          const transformedValue = EMPLOYEE_TEMPLATE.transformers[csvField](value);
+          value = transformedValue as string | number | null;
+        }
+        
+        employeeData[dbField as keyof EmployeeData] = value;
+      });
+
+      // Apply defaults
+      Object.entries(EMPLOYEE_TEMPLATE.defaultValues).forEach(([field, defaultValue]) => {
+        if (!employeeData[field as keyof EmployeeData]) {
+          employeeData[field as keyof EmployeeData] = typeof defaultValue === 'function' 
+            ? defaultValue(user?.email) 
+            : defaultValue;
+        }
+      });
+
+      // Validate required fields
+      EMPLOYEE_TEMPLATE.requiredFields.forEach(field => {
+        const value = employeeData[field as keyof EmployeeData];
+        if (!value || (isString(value) && !value.trim())) {
+          errors.push({ row: index, message: `Row ${index + 3}: ${field} is required` });
+          hasError = true;
+        }
+      });
+
+      // Custom validation
+      Object.entries(EMPLOYEE_TEMPLATE.validationRules).forEach(([field, validator]) => {
+        const value = employeeData[field as keyof EmployeeData];
+        const error = validator(value);
+        if (error) {
+          errors.push({ row: index, message: `Row ${index + 3}: ${field} - ${error}` });
+          hasError = true;
+        }
+      });
+
+      if (!hasError && employeeData.empId && employeeData.idCard && employeeData.firstName && employeeData.lastName && employeeData.company) {
+        mapped.push(employeeData as EmployeeData);
+      }
+    });
+
+    setMappedData(mapped);
+    setValidationErrors(errors);
+  }, [csvProcessor.state.previewData, user?.email]);
+
+  // Check duplicates
+  const checkDuplicates = useCallback(async (): Promise<void> => {
     const currentData = getCurrentData();
     if (currentData.length === 0) return;
 
-    setIsCheckingDuplicates(true);
     const duplicates: DuplicateCheck[] = [];
     
+    // Get unique values
+    const empIds = [...new Set(currentData.map(row => isString(row.empId) ? row.empId.toLowerCase().trim() : '').filter(Boolean))];
+    const idCards = [...new Set(currentData.map(row => isString(row.idCard) ? row.idCard.trim() : '').filter(Boolean))];
+
+    // Check database duplicates
+    const checkDB = async (values: string[], field: 'empId' | 'idCard'): Promise<Set<string>> => {
+      const results = new Set<string>();
+      for (let i = 0; i < values.length; i += 30) {
+        const batch = values.slice(i, i + 30);
+        const q = query(collection(db, 'employees'), where(field, 'in', batch));
+        const snapshot = await getDocs(q);
+        snapshot.forEach(doc => {
+          const data = doc.data();
+          const value = isString(data[field]) ? (field === 'empId' ? data[field].toLowerCase() : data[field]) : '';
+          if (value) results.add(value);
+        });
+      }
+      return results;
+    };
+
     try {
-      const empIds = [...new Set(currentData
-        .map(row => String(row.empId || '').toLowerCase().trim())
-        .filter(Boolean))];
-      const idCards = [...new Set(currentData
-        .map(row => String(row.idCard || '').trim())
-        .filter(Boolean))];
+      const [existingEmpIds, existingIdCards] = await Promise.all([
+        checkDB(empIds, 'empId'),
+        checkDB(idCards, 'idCard')
+      ]);
 
-      const checkBatch = async (values: string[], field: string) => {
-        const results = new Set<string>();
-        try {
-          for (let i = 0; i < values.length; i += 30) {
-            const batch = values.slice(i, i + 30);
-            if (batch.length === 0) continue;
-            
-            const q = query(collection(db, 'employees'), where(field, 'in', batch));
-            const snapshot = await getDocs(q);
-            snapshot.forEach(doc => {
-              const data = doc.data();
-              const value = field === 'empId' 
-                ? String(data.empId || '').toLowerCase().trim()
-                : String(data[field] || '').trim();
-              results.add(value);
-            });
-          }
-        } catch (error) {
-          console.warn(`Error checking duplicates for field ${field}:`, error);
-          // Continue without database duplicate checking if offline
-        }
-        return results;
-      };
-
-      // Check for CSV duplicates first (works offline)
-      const csvEmpIds = new Map<string, number>();
-      const csvIdCards = new Map<string, number>();
-
+      // Check database duplicates
       currentData.forEach((row, index) => {
-        const empId = String(row.empId || '');
-        const idCard = String(row.idCard || '');
-        
-        // Check CSV duplicates
-        const csvDuplicateFields: string[] = [];
-        if (empId) {
-          const key = empId.toLowerCase().trim();
-          if (csvEmpIds.has(key)) {
-            csvDuplicateFields.push('Employee ID');
-          } else {
-            csvEmpIds.set(key, index);
-          }
-        }
-        if (idCard) {
-          const key = idCard.trim();
-          if (csvIdCards.has(key)) {
-            csvDuplicateFields.push('ID Card');
-          } else {
-            csvIdCards.set(key, index);
-          }
-        }
+        const empId = isString(row.empId) ? row.empId.toLowerCase().trim() : '';
+        const idCard = isString(row.idCard) ? row.idCard.trim() : '';
+        const fields: string[] = [];
 
-        if (csvDuplicateFields.length > 0) {
-          duplicates.push({ 
-            rowIndex: index, 
-            empId, 
-            idCard, 
-            duplicateType: 'csv', 
-            duplicateFields: csvDuplicateFields 
+        if (empId && existingEmpIds.has(empId)) fields.push('Employee ID');
+        if (idCard && existingIdCards.has(idCard)) fields.push('ID Card');
+
+        if (fields.length > 0) {
+          duplicates.push({
+            rowIndex: index,
+            fieldValue: empId || idCard,
+            duplicateFields: fields,
+            duplicateType: 'database'
           });
         }
       });
 
-      // Try to check database duplicates (may fail if offline)
-      try {
-        const [existingEmpIds, existingIdCards] = await Promise.all([
-          checkBatch(empIds, 'empId'),
-          checkBatch(idCards, 'idCard')
-        ]);
+      // Check CSV internal duplicates
+      const csvEmpIds = new Map<string, number[]>();
+      const csvIdCards = new Map<string, number[]>();
 
-        currentData.forEach((row, index) => {
-          const empId = String(row.empId || '');
-          const idCard = String(row.idCard || '');
-          
-          // Check database duplicates
-          const dbDuplicateFields: string[] = [];
-          if (empId && existingEmpIds.has(empId.toLowerCase().trim())) {
-            dbDuplicateFields.push('Employee ID');
-          }
-          if (idCard && existingIdCards.has(idCard.trim())) {
-            dbDuplicateFields.push('ID Card');
-          }
+      currentData.forEach((row, index) => {
+        const empId = isString(row.empId) ? row.empId.toLowerCase().trim() : '';
+        const idCard = isString(row.idCard) ? row.idCard.trim() : '';
 
-          if (dbDuplicateFields.length > 0) {
-            duplicates.push({ 
-              rowIndex: index, 
-              empId, 
-              idCard, 
-              duplicateType: 'database', 
-              duplicateFields: dbDuplicateFields 
+        if (empId) {
+          if (!csvEmpIds.has(empId)) csvEmpIds.set(empId, []);
+          csvEmpIds.get(empId)!.push(index);
+        }
+        if (idCard) {
+          if (!csvIdCards.has(idCard)) csvIdCards.set(idCard, []);
+          csvIdCards.get(idCard)!.push(index);
+        }
+      });
+
+      [csvEmpIds, csvIdCards].forEach((map, mapIndex) => {
+        const field = mapIndex === 0 ? 'Employee ID' : 'ID Card';
+        map.forEach((indices, value) => {
+          if (indices.length > 1) {
+            indices.forEach(index => {
+              duplicates.push({
+                rowIndex: index,
+                fieldValue: value,
+                duplicateFields: [field],
+                duplicateType: 'csv'
+              });
             });
           }
         });
-      } catch (error) {
-        console.warn('Could not check database duplicates (offline mode):', error);
-        // Show a warning to user that database duplicate checking was skipped
-      }
+      });
 
       setDuplicateChecks(duplicates);
-    } catch (error: unknown) {
+    } catch (error) {
       console.error('Error checking duplicates:', error);
-      // Don't fail completely - at least show CSV duplicates
-    } finally {
-      setIsCheckingDuplicates(false);
     }
   }, [getCurrentData]);
 
-  // Fixed useEffect with proper dependencies and duplicate prevention
-  useEffect(() => {
-    const shouldProcessMapping = 
-      csvProcessor.state.currentStep === 2 && 
-      csvProcessor.state.previewData.length > 0 &&
-      csvProcessor.state.mappedData.length === 0; // Only process if not already processed
-
-    if (shouldProcessMapping) {
-      console.log('Processing mapping...');
-      
-      // Process mapping first - don't change this part
-      if (user?.email) {
-        csvProcessor.processMapping(EMPLOYEE_TEMPLATE, user.email);
-      }
-    }
-  }, [
-    csvProcessor.state.currentStep,
-    csvProcessor.state.previewData.length,
-    csvProcessor.state.mappedData.length,
-    csvProcessor,
-    user?.email
-  ]);
-
-  // Separate useEffect for duplicate checking - only run after mapping is complete
-  useEffect(() => {
-    const shouldCheckDuplicates = 
-      csvProcessor.state.currentStep === 2 && 
-      csvProcessor.state.previewData.length > 0 &&
-      csvProcessor.state.mappedData.length > 0 && // Wait for mapping to complete
-      duplicateChecks.length === 0; // Only check if not already checked
-
-    if (shouldCheckDuplicates) {
-      console.log('Checking duplicates...');
-      
-      // Create a unique identifier for this data set
-      const dataIdentifier = JSON.stringify({
-        step: csvProcessor.state.currentStep,
-        dataLength: csvProcessor.state.previewData.length,
-        headers: csvProcessor.state.headers
-      });
-
-      // Only process if this is new data
-      if (processedDataRef.current !== dataIdentifier) {
-        processedDataRef.current = dataIdentifier;
-        checkForDuplicates();
-      }
-    }
-  }, [
-    csvProcessor.state.currentStep,
-    csvProcessor.state.previewData.length,
-    csvProcessor.state.mappedData.length,
-    csvProcessor.state.headers,
-    duplicateChecks.length,
-    checkForDuplicates
-  ]);
-
-  // Separate useEffect for when previewData actually changes (file upload)
-  useEffect(() => {
-    if (csvProcessor.state.previewData.length > 0) {
-      setDuplicateChecks([]);
-      setEditedData({});
-      setSelectedRows(new Set());
-      setCurrentPage(1);
-      // Reset the processed data ref when new data comes in
-      processedDataRef.current = '';
-    }
-  }, [csvProcessor.state.previewData.length]);
-
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [filterType, searchTerm]);
-
-  // File handling
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Handle file upload
+  const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
     const file = e.target.files?.[0];
     if (!file) return;
-    
+
     if (file.size > 10 * 1024 * 1024) {
-      alert('File size too large. Please select a file smaller than 10MB.');
+      showAlert('File too large (max 10MB)');
       return;
     }
-    
+
+    if (!file.name.toLowerCase().endsWith('.csv')) {
+      showAlert('Please select a CSV file');
+      return;
+    }
+
     try {
       setDuplicateChecks([]);
       setEditedData({});
+      setCurrentStep(1);
+      setMappedData([]);
+      setValidationErrors([]);
       setSelectedRows(new Set());
-      await csvProcessor.handleFileUpload(file);
-    } catch (error: unknown) {
-      console.error('Error uploading file:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Error uploading file';
-      alert(errorMessage);
+      
+      await csvProcessor.parseFile(file);
+    } catch (error) {
+      showAlert('Error uploading file');
     }
-  };
+  }, [csvProcessor]);
 
-  // Cell editing functions
-  const handleCellEdit = (rowIndex: number, field: string, currentValue: string) => {
-    setEditingCell({ rowIndex, field });
-    setEditValue(String(currentValue));
-  };
-
-  const handleSaveEdit = () => {
-    if (!editingCell) return;
-    const { rowIndex, field } = editingCell;
+  // Handle cell edit
+  const handleCellEdit = useCallback((rowIndex: number, field: string, value: string) => {
     setEditedData(prev => ({
       ...prev,
-      [rowIndex]: {
-        ...prev[rowIndex],
-        [field]: editValue
+      [rowIndex]: { ...prev[rowIndex], [field]: value }
+    }));
+  }, []);
+
+  // Handle row selection
+  const handleRowSelect = useCallback((rowIndex: number) => {
+    setSelectedRows(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(rowIndex)) {
+        newSet.delete(rowIndex);
+      } else {
+        newSet.add(rowIndex);
       }
-    }));
-    setEditingCell(null);
-  };
+      return newSet;
+    });
+  }, []);
 
-  const handleCancelEdit = () => {
-    setEditingCell(null);
-    setEditValue('');
-  };
-
-  // Filter and search logic
+    // Filter data
   const filteredData = useMemo(() => {
-    const currentData = getCurrentData();
-    let dataWithIndex: DataRow[] = currentData.map((row, index) => ({ 
-      ...row, 
-      originalIndex: index 
-    }));
+    let data = getCurrentData();
 
-    if (searchTerm) {
-      dataWithIndex = dataWithIndex.filter(row =>
+    if (searchTerm.trim()) {
+      const search = searchTerm.toLowerCase();
+      data = data.filter(row =>
         Object.values(row).some(value => 
-          String(value).toLowerCase().includes(searchTerm.toLowerCase())
+          isString(value) && value.toLowerCase().includes(search)
         )
       );
     }
-    
+
     switch (filterType) {
       case 'errors':
-        return dataWithIndex.filter(row => 
-          csvProcessor.state.errors.some(e => 
-            e.message.includes(`Row ${row.originalIndex + csvProcessor.state.dataRowOffset}`)
-          )
-        );
+        data = data.filter((row, index) => {
+          const originalIndex = typeof row.originalIndex === 'number' ? row.originalIndex : index;
+          return validationErrors.some(error => error.row === originalIndex);
+        });
+        break;
       case 'duplicates':
-        return dataWithIndex.filter(row => 
-          duplicateChecks.some(d => d.rowIndex === row.originalIndex)
-        );
+        data = data.filter((row, index) => {
+          const originalIndex = typeof row.originalIndex === 'number' ? row.originalIndex : index;
+          return duplicateChecks.some(dup => dup.rowIndex === originalIndex);
+        });
+        break;
       case 'valid':
-        return dataWithIndex.filter(row => 
-          !csvProcessor.state.errors.some(e => 
-            e.message.includes(`Row ${row.originalIndex + csvProcessor.state.dataRowOffset}`)
-          ) &&
-          !duplicateChecks.some(d => d.rowIndex === row.originalIndex)
-        );
-      default:
-        return dataWithIndex;
+        data = data.filter((row, index) => {
+          const originalIndex = typeof row.originalIndex === 'number' ? row.originalIndex : index;
+          const hasError = validationErrors.some(error => error.row === originalIndex);
+          const hasDuplicate = duplicateChecks.some(dup => dup.rowIndex === originalIndex);
+          return !hasError && !hasDuplicate;
+        });
+        break;
     }
-  }, [getCurrentData, searchTerm, filterType, csvProcessor.state.errors, duplicateChecks, csvProcessor.state.dataRowOffset]);
 
-  // Pagination logic
-  const totalFilteredRecords = filteredData.length;
-  const totalPages = Math.ceil(totalFilteredRecords / rowsPerPage);
-  const startIndex = (currentPage - 1) * rowsPerPage;
-  const endIndex = startIndex + rowsPerPage;
-  const currentPageData: DataRow[] = filteredData.slice(startIndex, endIndex);
+    return data;
+  }, [getCurrentData, searchTerm, filterType, validationErrors, duplicateChecks]);
 
-  // Selection logic
-  const handleRowSelect = (rowIndex: number) => {
-    const newSelected = new Set(selectedRows);
-    if (newSelected.has(rowIndex)) {
-      newSelected.delete(rowIndex);
-    } else {
-      newSelected.add(rowIndex);
-    }
-    setSelectedRows(newSelected);
-  };
 
-  const handleSelectAll = () => {
-    if (selectedRows.size === totalFilteredRecords) {
+  // Handle select all
+  const handleSelectAll = useCallback(() => {
+    if (selectAll) {
       setSelectedRows(new Set());
     } else {
-      setSelectedRows(new Set(filteredData.map(row => row.originalIndex)));
+      const validRowIndices = filteredData
+        .map((_, index) => index)
+        .filter(index => {
+          const originalIndex = typeof filteredData[index].originalIndex === 'number' ? filteredData[index].originalIndex : index;
+          const hasError = validationErrors.some(error => error.row === originalIndex);
+          const hasDuplicate = duplicateChecks.some(dup => dup.rowIndex === originalIndex);
+          return !hasError && !hasDuplicate;
+        });
+      setSelectedRows(new Set(validRowIndices));
     }
-  };
+    setSelectAll(!selectAll);
+  }, [selectAll, filteredData, validationErrors, duplicateChecks]);
 
   // Import data
-  const handleImport = async () => {
-    const currentData = getCurrentData();
-    const rowsToImport = selectedRows.size > 0 
-      ? currentData.filter((_, index) => selectedRows.has(index))
-      : currentData.filter((_, index) => 
-          !duplicateChecks.some(d => d.rowIndex === index) && 
-          !csvProcessor.state.errors.some(e => 
-            e.message.includes(`Row ${index + csvProcessor.state.dataRowOffset}`)
-          )
-        );
+  const handleImport = useCallback(async (): Promise<void> => {
+    const validRows = mappedData.filter((_, index) => {
+      const hasError = validationErrors.some(error => error.row === index);
+      const hasDuplicate = duplicateChecks.some(dup => dup.rowIndex === index);
+      return !hasError && !hasDuplicate;
+    });
 
-    if (rowsToImport.length === 0) {
-      alert('No valid records to import.');
+    if (validRows.length === 0) {
+      showAlert('No valid rows to import');
       return;
     }
 
+    if (!confirm(`Import ${validRows.length} records?`)) return;
+
     setIsImporting(true);
     setImportProgress(0);
-    const results: ImportResults = { 
-      success: 0, 
-      failed: 0, 
-      skipped: currentData.length - rowsToImport.length, 
-      errors: [] 
-    };
+    
+    const results: ImportResults = { success: 0, failed: 0, errors: [] };
 
     try {
-      for (let i = 0; i < rowsToImport.length; i++) {
-        const employeeData = rowsToImport[i];
-        try {
-          const payload: Record<string, unknown> = { ...employeeData };
-          
-          // Remove empty string keys
-          if ('' in payload) delete payload[''];
-          
-          // Add metadata
-          if (typeof createSearchKeywords === 'function') {
-            payload.searchKeywords = createSearchKeywords(payload);
+      const batchSize = 10;
+      const batches: EmployeeData[][] = [];
+      
+      for (let i = 0; i < validRows.length; i += batchSize) {
+        batches.push(validRows.slice(i, i + batchSize));
+      }
+
+      for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+        const batch = writeBatch(db);
+        const currentBatch = batches[batchIndex];
+        
+        for (const employeeData of currentBatch) {
+          try {
+            const newDocRef = doc(collection(db, 'employees'));
+            batch.set(newDocRef, {
+              ...employeeData,
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+              createdBy: user?.email || 'system',
+              status: 'active'
+            });
+            results.success++;
+          } catch (error) {
+            results.failed++;
+            results.errors.push(`${employeeData.empId}: Import failed`);
           }
-          payload.createdAt = serverTimestamp();
-          payload.lastUpdateBy = user?.email || 'CSV Import';
-          
-          await addDoc(collection(db, 'employees'), payload);
-          results.success++;
-        } catch (error) {
-          results.failed++;
-          const originalRowIndex = currentData.findIndex(p => p === employeeData);
-          results.errors.push(
-            `Row ${originalRowIndex + csvProcessor.state.dataRowOffset}: ${
-              error instanceof Error ? error.message : 'Import failed'
-            }`
-          );
         }
-        setImportProgress(Math.round(((i + 1) / rowsToImport.length) * 100));
+        
+        try {
+          await batch.commit();
+        } catch (error) {
+          currentBatch.forEach(emp => {
+            results.failed++;
+            results.success = Math.max(0, results.success - 1);
+            results.errors.push(`${emp.empId}: Batch failed`);
+          });
+        }
+        
+        setImportProgress(Math.round(((batchIndex + 1) / batches.length) * 100));
+        await new Promise(resolve => setTimeout(resolve, 100));
       }
       
       setImportResults(results);
-      setImportComplete(true);
-      csvProcessor.goToStep(3);
-    } catch (error: unknown) {
-      console.error('Import error:', error);
-      const errorMessage = error instanceof Error ? error.message : 'An error occurred during import';
-      alert(errorMessage);
+      setCurrentStep(3);
+    } catch (error) {
+      showAlert('Import failed');
     } finally {
       setIsImporting(false);
     }
-  };
+  }, [mappedData, validationErrors, duplicateChecks, user?.email]);
 
-  // Utility functions
-  const downloadTemplate = () => {
-    csvProcessor.downloadTemplate(EMPLOYEE_TEMPLATE);
-  };
+  // Download template
+  const downloadTemplate = useCallback((): void => {
+    if (!EMPLOYEE_TEMPLATE) return;
+    
+    const headers = Object.values(EMPLOYEE_TEMPLATE.fieldMapping);
+    const descriptions = Object.keys(EMPLOYEE_TEMPLATE.fieldMapping);
+    const csvContent = [headers.join(','), descriptions.join(',')].join('\n');
+    
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.href = url;
+    link.download = 'employee_template.csv';
+    link.click();
+    URL.revokeObjectURL(url);
+  }, []);
 
-  const exportErrorReport = () => {
-    const errorRows = filteredData.filter(row => {
-      const hasError = csvProcessor.state.errors.some(error =>
-        error.message.includes(`Row ${row.originalIndex + csvProcessor.state.dataRowOffset}`)
-      );
-      const hasDuplicate = duplicateChecks.some(dup => dup.rowIndex === row.originalIndex);
+  // Export errors
+  const exportErrors = useCallback((): void => {
+    const errorRows = filteredData.filter((row, index) => {
+      const originalIndex = typeof row.originalIndex === 'number' ? row.originalIndex : index;
+      const hasError = validationErrors.some(error => error.row === originalIndex);
+      const hasDuplicate = duplicateChecks.some(dup => dup.rowIndex === originalIndex);
       return hasError || hasDuplicate;
     });
 
     if (errorRows.length === 0) {
-      alert('No errors to export');
+      showAlert('No errors to export');
       return;
     }
 
     const csvContent = [
       ['Row', ...csvProcessor.state.headers, 'Error Type', 'Error Details'].join(','),
       ...errorRows.map(row => {
-        const rowError = csvProcessor.state.errors.find(error =>
-          error.message.includes(`Row ${row.originalIndex + csvProcessor.state.dataRowOffset}`)
-        );
-        const duplicate = duplicateChecks.find(dup => dup.rowIndex === row.originalIndex);
+        const originalIndex = typeof row.originalIndex === 'number' ? row.originalIndex : 0;
+        const error = validationErrors.find(err => err.row === originalIndex);
+        const duplicate = duplicateChecks.find(dup => dup.rowIndex === originalIndex);
         
-        const errorType = duplicate ? 'Duplicate' : 'Validation';
-        const errorDetails = duplicate 
-          ? `${duplicate.duplicateFields.join(', ')} (${duplicate.duplicateType})`
-          : rowError || '';
-
         return [
-          row.originalIndex + csvProcessor.state.dataRowOffset,
+          originalIndex + 3,
           ...csvProcessor.state.headers.map(header => `"${String(row[header] ?? '')}"`),
-          errorType,
-          `"${errorDetails}"`
+          duplicate ? 'Duplicate' : 'Validation',
+          `"${duplicate ? duplicate.duplicateFields.join(', ') : error?.message || ''}"`
         ].join(',');
       })
     ].join('\n');
 
-    const blob = new Blob([csvContent], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
     link.href = url;
-    link.download = `employee_import_errors_${new Date().toISOString().split('T')[0]}.csv`;
+    link.download = `import_errors_${new Date().toISOString().split('T')[0]}.csv`;
     link.click();
-    window.URL.revokeObjectURL(url);
-  };
+    URL.revokeObjectURL(url);
+  }, [filteredData, validationErrors, duplicateChecks, csvProcessor.state.headers]);
 
-  const resetImport = () => {
-    csvProcessor.reset();
-    setImportComplete(false);
-    setImportResults({ success: 0, failed: 0, skipped: 0, errors: [] });
-    setImportProgress(0);
+
+
+  const paginatedData = useMemo(() => {
+    const startIndex = (currentPage - 1) * rowsPerPage;
+    return filteredData.slice(startIndex, startIndex + rowsPerPage);
+  }, [filteredData, currentPage]);
+
+  const getRowStatus = useCallback((originalIndex: number) => {
+    const error = validationErrors.find(err => err.row === originalIndex);
+    const duplicate = duplicateChecks.find(dup => dup.rowIndex === originalIndex);
+    
+    if (error) return { type: 'error' as const, message: error.message };
+    if (duplicate) return { 
+      type: 'duplicate' as const, 
+      message: `${duplicate.duplicateFields.join(', ')} (${duplicate.duplicateType})` 
+    };
+    return { type: 'valid' as const, message: 'Valid' };
+  }, [validationErrors, duplicateChecks]);
+
+  // Reset function
+  const resetAll = useCallback(() => {
+    setCurrentStep(1);
+    setMappedData([]);
+    setValidationErrors([]);
     setDuplicateChecks([]);
-    setCurrentPage(1);
-    setSelectedRows(new Set());
     setEditedData({});
-    setSearchTerm('');
-    setFilterType('all');
+    setSelectedRows(new Set());
+    csvProcessor.reset();
+  }, [csvProcessor]);
+
+  // Effects
+  useEffect(() => {
+    if (currentStep === 1 && csvProcessor.state.previewData.length > 0) {
+      setCurrentStep(2);
+    }
+  }, [currentStep, csvProcessor.state.previewData.length]);
+
+  useEffect(() => {
+    if (currentStep === 2 && csvProcessor.state.previewData.length > 0 && mappedData.length === 0) {
+      void processData();
+    }
+  }, [currentStep, csvProcessor.state.previewData.length, mappedData.length, processData]);
+
+  useEffect(() => {
+    if (currentStep === 2 && mappedData.length > 0 && duplicateChecks.length === 0) {
+      const dataId = JSON.stringify({
+        step: currentStep,
+        length: csvProcessor.state.previewData.length,
+        headers: csvProcessor.state.headers
+      });
+
+      if (processedDataRef.current !== dataId) {
+        processedDataRef.current = dataId;
+        void checkDuplicates();
+      }
+    }
+  }, [currentStep, mappedData.length, duplicateChecks.length, checkDuplicates, csvProcessor.state.previewData.length, csvProcessor.state.headers]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filterType, searchTerm]);
+
+  const stats = {
+    totalRows: csvProcessor.state.previewData.length,
+    validRows: mappedData.length - validationErrors.length - duplicateChecks.length,
+    errorCount: validationErrors.length,
+    duplicateCount: duplicateChecks.length
   };
 
-  const getRowStatus = (rowIndex: number) => {
-    return duplicateChecks.find(dup => dup.rowIndex === rowIndex);
-  };
-
-  const hasValidationError = (rowIndex: number) => {
-    return csvProcessor.state.errors.some(error =>
-      error.message.includes(`Row ${rowIndex + csvProcessor.state.dataRowOffset}`)
-    );
-  };
-
-  // Statistics - แก้ไขการคำนวณให้ถูกต้อง
-  const { state } = csvProcessor;
-  const totalRecords = state.previewData.length;
-  
-  // หาจำนวน unique rows ที่มี duplicates (ไม่นับซ้ำ)
-  const uniqueDuplicateRows = new Set(duplicateChecks.map(d => d.rowIndex)).size;
-  
-  // หาจำนวน unique rows ที่มี validation errors (ไม่นับซ้ำ)
-  const uniqueErrorRows = new Set(
-    state.errors
-      .map(error => {
-        const match = error.message.match(/แถวที่ (\d+):/);
-        return match ? parseInt(match[1]) - state.dataRowOffset : -1;
-      })
-      .filter(rowIndex => rowIndex >= 0)
-  ).size;
-  
-  // คำนวณ valid rows = total - (rows ที่มี duplicates หรือ errors)
-  const rowsWithIssues = new Set([
-    ...duplicateChecks.map(d => d.rowIndex),
-    ...state.errors
-      .map(error => {
-        const match = error.message.match(/แถวที่ (\d+):/);
-        return match ? parseInt(match[1]) - state.dataRowOffset : -1;
-      })
-      .filter(rowIndex => rowIndex >= 0)
-  ]);
-  
-  const validRowsCount = Math.max(0, totalRecords - rowsWithIssues.size);
+  const totalPages = Math.ceil(filteredData.length / rowsPerPage);
 
   return (
-    <div className="min-h-screen p-6 bg-gray-50">
+    <div className="min-h-screen p-4 bg-gray-50">
       <div className="mx-auto max-w-7xl">
-        {/* Steps Indicator */}
-        <div className="p-6 mb-8 bg-white rounded-lg shadow-md">
-          <div className="flex items-center justify-between">
-            {[
-              { num: 1, label: 'Upload CSV', icon: FaFileUpload },
-              { num: 2, label: 'Preview & Validate', icon: FaEye },
-              { num: 3, label: 'Import Results', icon: FaCheck }
-            ].map((step, index) => (
-              <div key={step.num} className="flex items-center">
-                <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-semibold transition-all ${
-                  state.currentStep >= step.num ? 'bg-blue-600 scale-110' : 'bg-gray-300'
-                }`}>
-                  {state.currentStep > step.num ? <FaCheck /> : <step.icon />}
-                </div>
-                <span className="ml-3 text-sm font-medium text-gray-700">
-                  {step.label}
-                </span>
-                {index < 2 && <div className="w-16 h-1 mx-4 bg-gray-300"></div>}
-              </div>
-            ))}
-          </div>
+        {/* Header */}
+        <div className="flex items-center mb-6">
+          <button
+            onClick={() => navigate('/employees')}
+            className="flex items-center px-4 py-2 mr-4 text-gray-700 bg-white border rounded-lg hover:bg-gray-50"
+          >
+            <FaArrowLeft className="mr-2" />
+            Back
+          </button>
+          <h1 className="text-3xl font-bold">Import Employees</h1>
         </div>
 
-        {/* Step 1: File Upload */}
-        {state.currentStep === 1 && (
-          <div className="p-6 mb-8 bg-white rounded-lg shadow-md">
+        {/* Progress Steps */}
+        <div className="flex items-center justify-center mb-8 space-x-8">
+          {[
+            { num: 1, title: 'Upload', icon: FaFileUpload },
+            { num: 2, title: 'Review', icon: FaUser },
+            { num: 3, title: 'Complete', icon: FaCheck }
+          ].map((step, index) => (
+            <div key={step.num} className="flex items-center space-x-4">
+              <div className="flex flex-col items-center">
+                <div className={`flex items-center justify-center w-12 h-12 rounded-full ${
+                  currentStep >= step.num ? 'bg-blue-600' : 'bg-gray-300'
+                }`}>
+                  {currentStep > step.num ? <FaCheck className="text-white" /> : <step.icon className="text-white" />}
+                </div>
+                <span className="mt-1 text-sm font-medium">{step.title}</span>
+              </div>
+              {index < 2 && (
+                <div className={`h-1 w-16 ${currentStep > step.num ? 'bg-blue-600' : 'bg-gray-300'}`} />
+              )}
+            </div>
+          ))}
+        </div>
+
+        {/* Step 1: Upload */}
+        {currentStep === 1 && (
+          <div className="p-8 bg-white rounded-xl shadow-lg">
             <h2 className="mb-6 text-2xl font-semibold">Upload CSV File</h2>
             
-            <div className="p-8 text-center transition-colors border-2 border-gray-300 border-dashed rounded-lg hover:border-blue-400">
-              <FaFileUpload className="mx-auto mb-4 text-5xl text-gray-400" />
-              <div className="space-y-3">
-                <p className="text-lg text-gray-600">Choose a CSV file to import employees</p>
-                <p className="text-sm text-gray-500">Maximum file size: 10MB</p>
-                <input
-                  type="file"
-                  accept=".csv"
-                  onChange={handleFileChange}
-                  className="hidden"
-                  id="csvFile"
-                  disabled={state.isProcessing}
-                />
-                <label
-                  htmlFor="csvFile"
-                  className={`inline-block px-6 py-3 rounded-lg cursor-pointer transition-all ${
-                    state.isProcessing
-                      ? 'bg-gray-400 text-white cursor-not-allowed'
-                      : 'bg-blue-600 text-white hover:bg-blue-700 hover:scale-105'
-                  }`}
-                >
-                  {state.isProcessing ? (
-                    <><FaSpinner className="inline mr-2 animate-spin" />Processing...</>
-                  ) : (
-                    'Select File'
-                  )}
-                </label>
-              </div>
+            <div className="p-12 text-center border-2 border-gray-300 border-dashed rounded-xl">
+              <FaFileUpload className="mx-auto mb-4 text-6xl text-blue-500" />
+              <h3 className="mb-2 text-xl font-medium">Upload Employee CSV</h3>
+              <p className="mb-6 text-gray-600">Choose a CSV file (max 10MB)</p>
+              
+              <input
+                type="file"
+                accept=".csv"
+                onChange={e => void handleFileChange(e)}
+                className="hidden"
+                id="file-upload"
+                disabled={csvProcessor.state.isProcessing}
+              />
+              <label
+                htmlFor="file-upload"
+                className={`px-8 py-4 text-white rounded-xl cursor-pointer ${
+                  csvProcessor.state.isProcessing 
+                    ? 'bg-gray-400 cursor-not-allowed' 
+                    : 'bg-blue-600 hover:bg-blue-700'
+                }`}
+              >
+                {csvProcessor.state.isProcessing ? (
+                  <>
+                    <FaSpinner className="inline mr-2 animate-spin" />
+                    Processing...
+                  </>
+                ) : (
+                  'Select CSV File'
+                )}
+              </label>
             </div>
 
             <div className="grid gap-6 mt-8 md:grid-cols-2">
-              <div className="p-4 border border-blue-200 rounded-lg bg-blue-50">
-                <h3 className="mb-3 text-sm font-medium text-blue-800">📋 CSV Format Requirements:</h3>
+              <div className="p-6 bg-blue-50 rounded-xl">
+                <h3 className="mb-4 text-lg font-semibold text-blue-800">Requirements</h3>
                 <ul className="space-y-1 text-sm text-blue-700">
-                  <li>• Use UTF-8 encoding and Comma-separated values</li>
-                  <li>• First row: Headers must match the template</li>
-                  <li>• Second row: Field descriptions (will be skipped)</li>
-                  <li>• Third row+: Employee data</li>
+                  <li>• UTF-8 encoding, comma-separated</li>
+                  <li>• First row: Headers</li>
+                  <li>• Required: empId, idCard, firstName, lastName, company</li>
                 </ul>
-                <div className="flex items-center mt-4 space-x-4">
-                  <button
-                    onClick={downloadTemplate}
-                    className="flex items-center px-4 py-2 space-x-2 text-white transition-colors bg-blue-600 rounded-lg hover:bg-blue-700"
-                  >
-                    <FaFileDownload />
-                    <span>Download Template</span>
-                  </button>
-                </div>
+                <button
+                  onClick={downloadTemplate}
+                  className="flex items-center px-4 py-2 mt-4 space-x-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700"
+                >
+                  <FaFileDownload />
+                  <span>Download Template</span>
+                </button>
               </div>
               
-              <div className="p-4 border border-green-200 rounded-lg bg-green-50">
-                <h3 className="mb-3 text-sm font-medium text-green-800">✅ Required Fields:</h3>
-                <div className="text-sm text-green-700">
-                  {EMPLOYEE_TEMPLATE.requiredFields.join(', ')}
-                </div>
+              <div className="p-6 bg-green-50 rounded-xl">
+                <h3 className="mb-4 text-lg font-semibold text-green-800">Features</h3>
+                <ul className="space-y-1 text-sm text-green-700">
+                  <li>• Automatic duplicate detection</li>
+                  <li>• Data validation & editing</li>
+                  <li>• Error reporting & export</li>
+                  <li>• Batch import processing</li>
+                </ul>
               </div>
             </div>
           </div>
         )}
 
-        {/* Step 2: Preview and Validate */}
-        {state.currentStep === 2 && (
-          <div className="p-6 mb-8 bg-white rounded-lg shadow-md">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-2xl font-semibold">Preview & Validate Data</h2>
-              {isCheckingDuplicates && (
-                <div className="flex items-center space-x-2 text-blue-600">
-                  <FaSpinner className="animate-spin" />
-                  <span className="text-sm">Validating data...</span>
+        {/* Step 2: Review */}
+        {currentStep === 2 && (
+          <div className="space-y-6">
+            {/* Stats */}
+            <div className="p-6 bg-white rounded-xl shadow-lg">
+              <h2 className="mb-4 text-2xl font-semibold">Review Data</h2>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="p-4 bg-blue-50 rounded-lg">
+                  <div className="text-2xl font-bold text-blue-700">{stats.totalRows}</div>
+                  <div className="text-sm text-blue-600">Total Rows</div>
+                </div>
+                <div className="p-4 bg-green-50 rounded-lg">
+                  <div className="text-2xl font-bold text-green-700">{stats.validRows}</div>
+                  <div className="text-sm text-green-600">Valid</div>
+                </div>
+                <div className="p-4 bg-red-50 rounded-lg">
+                  <div className="text-2xl font-bold text-red-700">{stats.errorCount}</div>
+                  <div className="text-sm text-red-600">Errors</div>
+                </div>
+                <div className="p-4 bg-yellow-50 rounded-lg">
+                  <div className="text-2xl font-bold text-yellow-700">{stats.duplicateCount}</div>
+                  <div className="text-sm text-yellow-600">Duplicates</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Controls */}
+            <div className="p-6 bg-white rounded-xl shadow-lg">
+              <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
+                <div className="flex items-center space-x-4">
+                  <div className="relative">
+                    <FaSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                    <input
+                      type="text"
+                      placeholder="Search..."
+                      value={searchTerm}
+                      onChange={e => setSearchTerm(e.target.value)}
+                      className="pl-10 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 w-64"
+                    />
+                  </div>
+                  
+                  <select
+                    value={filterType}
+                    onChange={e => setFilterType(e.target.value as FilterType)}
+                    className="px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="all">All ({stats.totalRows})</option>
+                    <option value="valid">Valid ({stats.validRows})</option>
+                    <option value="errors">Errors ({stats.errorCount})</option>
+                    <option value="duplicates">Duplicates ({stats.duplicateCount})</option>
+                  </select>
+                </div>
+
+                <div className="flex items-center space-x-4">
+                  <button
+                    onClick={() => setShowOptions(!showOptions)}
+                    className="flex items-center px-4 py-2 space-x-2 border rounded-lg hover:bg-gray-50"
+                  >
+                    {showOptions ? <FaEyeSlash /> : <FaEye />}
+                    <span>Options</span>
+                  </button>
+                  
+                  {(stats.errorCount > 0 || stats.duplicateCount > 0) && (
+                    <button
+                      onClick={exportErrors}
+                      className="flex items-center px-4 py-2 space-x-2 text-white bg-red-600 rounded-lg hover:bg-red-700"
+                    >
+                      <FaFileExport />
+                      <span>Export Errors</span>
+                    </button>
+                  )}
+
+                  <button
+                    onClick={resetAll}
+                    className="flex items-center px-4 py-2 space-x-2 text-gray-600 bg-white border rounded-lg hover:bg-gray-50"
+                  >
+                    <FaUndo />
+                    <span>Reset</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Bulk Actions */}
+              {showOptions && (
+                <div className="mt-4 p-4 bg-gray-50 rounded-lg">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-4">
+                      <button
+                        onClick={handleSelectAll}
+                        className="flex items-center space-x-2 px-3 py-1 text-sm border rounded hover:bg-gray-100"
+                      >
+                        {selectAll ? <FaCheckSquare /> : <FaSquare />}
+                        <span>Select All Valid</span>
+                      </button>
+                      <span className="text-sm text-gray-600">
+                        {selectedRows.size} selected
+                      </span>
+                    </div>
+
+                    {selectedRows.size > 0 && (
+                      <button
+                        onClick={() => handleImport()}
+                        className="flex items-center px-4 py-2 space-x-2 text-white bg-green-600 rounded-lg hover:bg-green-700"
+                      >
+                        <FaCheck />
+                        <span>Import Selected ({selectedRows.size})</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
-            
-            {/* Enhanced Statistics Dashboard */}
-            <div className="grid grid-cols-2 gap-4 mb-6 md:grid-cols-4">
-              <div className="p-4 border border-blue-200 rounded-lg bg-gradient-to-r from-blue-50 to-blue-100">
-                <div className="text-2xl font-bold text-blue-700">{totalRecords}</div>
-                <div className="text-sm text-blue-600">Total Records</div>
-              </div>
-              <div className="p-4 border border-green-200 rounded-lg bg-gradient-to-r from-green-50 to-green-100">
-                <div className="text-2xl font-bold text-green-700">{validRowsCount}</div>
-                <div className="text-sm text-green-600">Valid Records</div>
-              </div>
-              <div className="p-4 border border-red-200 rounded-lg bg-gradient-to-r from-red-50 to-red-100">
-                <div className="text-2xl font-bold text-red-700">{uniqueDuplicateRows}</div>
-                <div className="text-sm text-red-600">Duplicate Rows</div>
-              </div>
-              <div className="p-4 border border-yellow-200 rounded-lg bg-gradient-to-r from-yellow-50 to-yellow-100">
-                <div className="text-2xl font-bold text-yellow-700">{uniqueErrorRows}</div>
-                <div className="text-sm text-yellow-600">Error Rows</div>
-              </div>
-            </div>
 
-            {/* Enhanced Controls */}
-            <div className="flex flex-col gap-4 mb-6 md:flex-row">
-              {/* Search */}
-              <div className="flex-1">
-                <div className="relative">
-                  <FaSearch className="absolute text-gray-400 transform -translate-y-1/2 left-3 top-1/2" />
-                  <input
-                    type="text"
-                    placeholder="Search records..."
-                    className="w-full py-2 pl-10 pr-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                  />
-                </div>
-              </div>
-
-              {/* Filter */}
-              <div className="flex items-center space-x-2">
-                <FaFilter className="text-gray-400" />
-                <select
-                  className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                  value={filterType}
-                  onChange={(e) => setFilterType(e.target.value as FilterType)}
-                >
-                  <option value="all">All Records</option>
-                  <option value="valid">Valid Only</option>
-                  <option value="errors">Validation Errors</option>
-                  <option value="duplicates">Duplicates Only</option>
-                </select>
-              </div>            
-            {/* Rows per page */}
-            <select
-              className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-              value={rowsPerPage}
-              onChange={(e) => setRowsPerPage(Number(e.target.value))}
-            >
-              <option value={10}>10 per page</option>
-              <option value={25}>25 per page</option>
-              <option value={50}>50 per page</option>
-              <option value={100}>100 per page</option>
-            </select>
-          </div>
-
-          {/* Action Buttons */}
-          <div className="flex flex-wrap gap-3 mb-6">
-            <button
-              onClick={handleSelectAll}
-              className="flex items-center px-3 py-2 space-x-2 transition-colors bg-gray-100 rounded-lg hover:bg-gray-200"
-            >
-              {selectedRows.size === totalFilteredRecords ? <FaCheckSquare /> : <FaSquare />}
-              <span className="text-sm">
-                {selectedRows.size === totalFilteredRecords ? 'Deselect All' : 'Select All'}
-              </span>
-            </button>
-
-            <button
-              onClick={exportErrorReport}
-              className="flex items-center px-3 py-2 space-x-2 text-orange-700 transition-colors bg-orange-100 rounded-lg hover:bg-orange-200"
-              disabled={uniqueDuplicateRows === 0 && uniqueErrorRows === 0}
-            >
-              <FaFileExport />
-              <span className="text-sm">Export Error Report</span>
-            </button>
-
-            <button
-              onClick={() => setShowAdvancedOptions(!showAdvancedOptions)}
-              className="flex items-center px-3 py-2 space-x-2 text-purple-700 transition-colors bg-purple-100 rounded-lg hover:bg-purple-200"
-            >
-              {showAdvancedOptions ? <FaEyeSlash /> : <FaEye />}
-              <span className="text-sm">Advanced Options</span>
-            </button>
-          </div>
-
-          {/* Advanced Options */}
-          {showAdvancedOptions && (
-            <div className="p-4 mb-6 border border-gray-200 rounded-lg bg-gray-50">
-              <h4 className="mb-3 font-medium text-gray-800">Advanced Import Options</h4>
-              <div className="grid gap-4 md:grid-cols-2">
-                <label className="flex items-center space-x-2">
-                  <input type="checkbox" className="rounded" />
-                  <span className="text-sm">Skip duplicate records automatically</span>
-                </label>
-                <label className="flex items-center space-x-2">
-                  <input type="checkbox" className="rounded" />
-                  <span className="text-sm">Create backup before import</span>
-                </label>
-                <label className="flex items-center space-x-2">
-                  <input type="checkbox" className="rounded" />
-                  <span className="text-sm">Send email notification on completion</span>
-                </label>
-                <label className="flex items-center space-x-2">
-                  <input type="checkbox" className="rounded" />
-                  <span className="text-sm">Update existing records if found</span>
-                </label>
-              </div>
-            </div>
-          )}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-          {/* Issues Summary */}
-          {(duplicateChecks.length > 0 || state.errors.length > 0) && (
-            <div className="p-4 mb-6 border border-red-200 rounded-lg bg-red-50">
-              <h4 className="mb-3 text-sm font-medium text-red-800">
-                <FaExclamationTriangle className="inline mr-2" />
-                Issues Found ({duplicateChecks.length + state.errors.length}):
-              </h4>
-              <div className="space-y-2 text-sm text-red-700">
-                {duplicateChecks.length > 0 && (
-                  <div>• {duplicateChecks.length} duplicate record(s) found</div>
-                )}
-                {state.errors.length > 0 && (
-                  <div>• {state.errors.length} validation error(s) found</div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Preview Table */}
-          <div className="mb-6 overflow-x-auto">
-            {/* Table Header Info */}
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center space-x-4">
-                <div className="text-sm text-gray-600">
-                  Showing {startIndex + 1} to {Math.min(endIndex, totalFilteredRecords)} of {totalFilteredRecords} filtered records
-                </div>
-                {selectedRows.size > 0 && (
-                  <div className="text-sm font-medium text-blue-600">
-                    {selectedRows.size} row(s) selected
-                  </div>
-                )}
-              </div>
-              <div className="text-sm text-gray-600">
-                Page {currentPage} of {totalPages}
-              </div>
-            </div>
-
-            <div className="overflow-hidden border border-gray-200 rounded-lg">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-3 py-3 text-left">
-                      <input
-                        type="checkbox"
-                        checked={selectedRows.size === totalFilteredRecords && totalFilteredRecords > 0}
-                        onChange={handleSelectAll}
-                        className="rounded"
-                      />
-                    </th>
-                    <th className="px-3 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">
-                      Row
-                    </th>
-                    {state.headers.slice(0, 6).map((header, index) => (
-                      <th key={index} className="px-3 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">
-                        {header}
+            {/* Data Table */}
+            <div className="bg-white rounded-xl shadow-lg overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        #
                       </th>
-                    ))}
-                    <th className="px-3 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">
-                      Status
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {currentPageData.map((row) => {
-                    const actualIndex = row.originalIndex;
-                    const rowStatus = getRowStatus(actualIndex);
-                    const hasError = hasValidationError(actualIndex);
-                    const isSelected = selectedRows.has(actualIndex);
-                    
-                    return (
-                      <tr 
-                        key={actualIndex} 
-                        className={`transition-colors ${
-                          rowStatus ? 'bg-red-50 hover:bg-red-100' : 
-                          hasError ? 'bg-yellow-50 hover:bg-yellow-100' :
-                          isSelected ? 'bg-blue-50 hover:bg-blue-100' :
-                          'hover:bg-gray-50'
-                        }`}
-                      >
-                        <td className="px-3 py-3">
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={() => handleRowSelect(actualIndex)}
-                            className="rounded"
-                          />
-                        </td>
-                        <td className="px-3 py-3 text-sm font-medium">
-                          <div className="flex items-center space-x-2">
-                            <span className={`${rowStatus || hasError ? 'text-red-600' : 'text-gray-900'}`}>
-                              {actualIndex + csvProcessor.state.dataRowOffset}
-                            </span>
-                            {(rowStatus || hasError) && (
-                              <FaExclamationTriangle 
-                                className="text-xs text-red-500" 
-                                title={rowStatus ? `Duplicate: ${rowStatus.duplicateFields.join(', ')}` : 'Validation Error'}
-                              />
-                            )}
-                          </div>
-                        </td>
-                        {state.headers.slice(0, 6).map((header, colIndex) => (
-                          <td key={colIndex} className="px-3 py-3 text-sm max-w-32">
-                            {editingCell?.rowIndex === actualIndex && editingCell?.field === header ? (
-                              <div className="flex items-center space-x-1">
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Status
+                      </th>
+                      {csvProcessor.state.headers.slice(0, 6).map(header => (
+                        <th key={header} className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          {header}
+                        </th>
+                      ))}
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {paginatedData.map((row, index) => {
+                      const originalIndex = typeof row.originalIndex === 'number' ? row.originalIndex : index;
+                      const status = getRowStatus(originalIndex);
+                      const isSelected = selectedRows.has(index);
+                      
+                      return (
+                        <tr key={`${originalIndex}-${index}`} className={`
+                          ${status.type === 'error' ? 'bg-red-50' : ''}
+                          ${status.type === 'duplicate' ? 'bg-yellow-50' : ''}
+                          ${isSelected ? 'bg-blue-50' : ''}
+                        `}>
+                          <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900">
+                            {originalIndex + 3}
+                          </td>
+                          <td className="px-4 py-4 whitespace-nowrap">
+                            <div className="flex items-center space-x-2">
+                              {status.type === 'valid' && (
+                                <button
+                                  onClick={() => handleRowSelect(index)}
+                                  className="text-green-600 hover:text-green-800"
+                                >
+                                  {isSelected ? <FaCheckSquare /> : <FaSquare />}
+                                </button>
+                              )}
+                              <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                                status.type === 'valid' ? 'bg-green-100 text-green-800' :
+                                status.type === 'error' ? 'bg-red-100 text-red-800' :
+                                'bg-yellow-100 text-yellow-800'
+                              }`}>
+                                {status.type === 'valid' ? 'Valid' : 
+                                 status.type === 'error' ? 'Error' : 'Duplicate'}
+                              </span>
+                            </div>
+                          </td>
+                          {csvProcessor.state.headers.slice(0, 6).map(header => (
+                            <td key={header} className="px-4 py-4 whitespace-nowrap text-sm text-gray-900">
+                              {editingCell?.rowIndex === index && editingCell?.field === header ? (
                                 <input
                                   type="text"
                                   value={editValue}
-                                  onChange={(e) => setEditValue(e.target.value)}
-                                  className="w-full px-2 py-1 text-xs border border-blue-300 rounded focus:ring-1 focus:ring-blue-500"
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') handleSaveEdit();
-                                    if (e.key === 'Escape') handleCancelEdit();
+                                  onChange={e => setEditValue(e.target.value)}
+                                  onBlur={() => {
+                                    handleCellEdit(originalIndex, header, editValue);
+                                    setEditingCell(null);
+                                  }}
+                                  onKeyDown={e => {
+                                    if (e.key === 'Enter') {
+                                      handleCellEdit(originalIndex, header, editValue);
+                                      setEditingCell(null);
+                                    }
+                                    if (e.key === 'Escape') {
+                                      setEditingCell(null);
+                                    }
                                   }}
                                   autoFocus
+                                  className="w-full px-2 py-1 border rounded focus:ring-2 focus:ring-blue-500"
                                 />
-                                <button
-                                  onClick={handleSaveEdit}
-                                  className="text-green-600 hover:text-green-800"
+                              ) : (
+                                <div
+                                  onClick={() => {
+                                    if (status.type !== 'valid') return;
+                                    setEditingCell({ rowIndex: index, field: header });
+                                    setEditValue(String(row[header] ?? ''));
+                                  }}
+                                  className={`cursor-pointer hover:bg-gray-100 px-2 py-1 rounded ${
+                                    status.type === 'valid' ? 'hover:bg-gray-100' : ''
+                                  }`}
                                 >
-                                  <FaSave className="text-xs" />
-                                </button>
-                                <button
-                                  onClick={handleCancelEdit}
-                                  className="text-gray-600 hover:text-gray-800"
-                                >
-                                  <FaUndo className="text-xs" />
-                                </button>
-                              </div>
-                            ) : (
-                              <div className="flex items-center space-x-1 group">
-                                <span className={`truncate ${rowStatus || hasError ? 'text-red-700' : 'text-gray-900'}`}>
                                   {String(row[header] ?? '')}
-                                </span>
-                                <button
-                                  onClick={() => handleCellEdit(actualIndex, header, String(row[header] ?? ''))}
-                                  className="text-blue-600 transition-opacity opacity-0 group-hover:opacity-100 hover:text-blue-800"
-                                >
-                                  <FaEdit className="text-xs" />
-                                </button>
+                                </div>
+                              )}
+                            </td>
+                          ))}
+                          <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {status.type !== 'valid' && (
+                              <div className="text-xs text-red-600 max-w-xs truncate" title={status.message}>
+                                {status.message}
                               </div>
                             )}
                           </td>
-                        ))}
-                        <td className="px-3 py-3 text-sm">
-                          {rowStatus ? (
-                            <span className="inline-flex items-center px-2 py-1 text-xs font-medium text-red-800 bg-red-100 rounded-full">
-                              <FaTimes className="mr-1" />
-                              Duplicate
-                            </span>
-                          ) : hasError ? (
-                            <span className="inline-flex items-center px-2 py-1 text-xs font-medium text-yellow-800 bg-yellow-100 rounded-full">
-                              <FaExclamationTriangle className="mr-1" />
-                              Error
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center px-2 py-1 text-xs font-medium text-green-800 bg-green-100 rounded-full">
-                              <FaCheck className="mr-1" />
-                              Valid
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Pagination */}
+              {totalPages > 1 && (
+                <div className="px-6 py-3 bg-gray-50 border-t border-gray-200">
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm text-gray-700">
+                      Showing {((currentPage - 1) * rowsPerPage) + 1} to {Math.min(currentPage * rowsPerPage, filteredData.length)} of {filteredData.length} entries
+                    </div>
+                    <div className="flex space-x-2">
+                      <button
+                        onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                        disabled={currentPage === 1}
+                        className="px-3 py-1 text-sm border rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Previous
+                      </button>
+                      {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                        const page = currentPage <= 3 ? i + 1 : currentPage - 2 + i;
+                        if (page > totalPages) return null;
+                        return (
+                          <button
+                            key={page}
+                            onClick={() => setCurrentPage(page)}
+                            className={`px-3 py-1 text-sm border rounded ${
+                              currentPage === page 
+                                ? 'bg-blue-600 text-white border-blue-600' 
+                                : 'hover:bg-gray-100'
+                            }`}
+                          >
+                            {page}
+                          </button>
+                        );
+                      })}
+                      <button
+                        onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                        disabled={currentPage === totalPages}
+                        className="px-3 py-1 text-sm border rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
-            {/* Pagination */}
-            {totalPages > 1 && (
-              <div className="flex items-center justify-between mt-6">
-                <div className="flex items-center space-x-2">
-                  <button
-                    onClick={() => setCurrentPage(1)}
-                    disabled={currentPage === 1}
-                    className="px-3 py-2 text-sm transition-colors border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    First
-                  </button>
-                  <button
-                    onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
-                    disabled={currentPage === 1}
-                    className="px-3 py-2 text-sm transition-colors border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Previous
-                  </button>
-                </div>
-
-                <div className="flex items-center space-x-1">
-                  {Array.from({ length: Math.min(7, totalPages) }, (_, i) => {
-                    let pageNum;
-                    if (totalPages <= 7) {
-                      pageNum = i + 1;
-                    } else {
-                      const start = Math.max(1, currentPage - 3);
-                      const end = Math.min(totalPages, start + 6);
-                      pageNum = start + i;
-                      if (pageNum > end) return null;
-                    }
-                    
-                    return (
-                      <button
-                        key={pageNum}
-                        onClick={() => setCurrentPage(pageNum)}
-                        className={`px-3 py-2 text-sm border rounded-lg transition-colors ${
-                          currentPage === pageNum
-                            ? 'bg-blue-600 text-white border-blue-600'
-                            : 'border-gray-300 hover:bg-gray-50'
-                        }`}
-                      >
-                        {pageNum}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                <div className="flex items-center space-x-2">
-                  <button
-                    onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
-                    disabled={currentPage === totalPages}
-                    className="px-3 py-2 text-sm transition-colors border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Next
-                  </button>
-                  <button
-                    onClick={() => setCurrentPage(totalPages)}
-                    disabled={currentPage === totalPages}
-                    className="px-3 py-2 text-sm transition-colors border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Last
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Action Buttons */}
-          <div className="flex items-center justify-between">
-            <button
-              onClick={() => csvProcessor.goToStep(1)}
-              className="flex items-center px-4 py-2 space-x-2 text-gray-700 transition-colors border border-gray-300 rounded-lg hover:bg-gray-50"
-            >
-              <FaArrowLeft />
-              <span>Back</span>
-            </button>
-            
-            <div className="flex items-center space-x-4">
-              <div className="text-sm text-gray-600">
-                {selectedRows.size > 0 
-                  ? `Ready to import ${selectedRows.size} selected record(s)`
-                  : `Ready to import ${validRowsCount} valid record(s)`
-                }
-              </div>
+            {/* Import Button */}
+            <div className="flex justify-between items-center">
               <button
-                onClick={handleImport}
-                disabled={isImporting || isCheckingDuplicates || (validRowsCount === 0 && selectedRows.size === 0)}
-                className={`flex items-center space-x-2 px-6 py-2 rounded-lg font-medium transition-all ${
-                  isImporting || isCheckingDuplicates || (validRowsCount === 0 && selectedRows.size === 0)
-                    ? 'bg-gray-400 text-white cursor-not-allowed'
-                    : 'bg-green-600 text-white hover:bg-green-700 hover:scale-105'
+                onClick={resetAll}
+                className="flex items-center px-6 py-3 space-x-2 text-gray-600 bg-white border rounded-lg hover:bg-gray-50"
+              >
+                <FaUndo />
+                <span>Start Over</span>
+              </button>
+
+              <button
+                onClick={() => void handleImport()}
+                disabled={isImporting || stats.validRows === 0}
+                className={`flex items-center px-8 py-3 space-x-2 text-white rounded-lg ${
+                  isImporting || stats.validRows === 0
+                    ? 'bg-gray-400 cursor-not-allowed'
+                    : 'bg-green-600 hover:bg-green-700'
                 }`}
               >
                 {isImporting ? (
                   <>
                     <FaSpinner className="animate-spin" />
-                    <span>Importing... ({importProgress}%)</span>
-                  </>
-                ) : isCheckingDuplicates ? (
-                  <>
-                    <FaSpinner className="animate-spin" />
-                    <span>Validating...</span>
+                    <span>Importing... {importProgress}%</span>
                   </>
                 ) : (
                   <>
                     <FaCheck />
-                    <span>
-                      Import {selectedRows.size > 0 ? selectedRows.size : validRowsCount} Records
-                    </span>
+                    <span>Import {stats.validRows} Records</span>
                   </>
                 )}
               </button>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Import Progress */}
-      {isImporting && (
-        <div className="p-6 mb-8 bg-white rounded-lg shadow-md">
-          <h3 className="mb-4 text-lg font-semibold">Import Progress</h3>
-          <div className="space-y-4">
-            <div className="w-full h-3 bg-gray-200 rounded-full">
-              <div 
-                className="h-3 transition-all duration-500 ease-out rounded-full bg-gradient-to-r from-blue-500 to-green-500"
-                style={{ width: `${importProgress}%` }}
-              ></div>
-            </div>
-            <div className="flex justify-between text-sm text-gray-600">
-              <span>{importProgress}% Complete</span>
-              <span>Importing records...</span>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Step 3: Import Results */}
-      {importComplete && (
-        <div className="p-6 bg-white rounded-lg shadow-md">
-          <h3 className="mb-6 text-2xl font-semibold">Import Results</h3>
-          
-          <div className="grid grid-cols-1 gap-6 mb-8 md:grid-cols-3">
-            <div className="p-6 border border-green-200 rounded-lg bg-gradient-to-r from-green-50 to-green-100">
-              <div className="flex items-center space-x-3">
-                <div className="p-2 bg-green-500 rounded-full">
-                  <FaCheck className="text-white" />
-                </div>
-                <div>
-                  <div className="text-3xl font-bold text-green-700">{importResults.success}</div>
+        {/* Step 3: Complete */}
+        {currentStep === 3 && (
+          <div className="max-w-2xl mx-auto">
+            <div className="p-8 bg-white rounded-xl shadow-lg text-center">
+              <div className="w-16 h-16 mx-auto mb-6 bg-green-100 rounded-full flex items-center justify-center">
+                <FaCheck className="text-2xl text-green-600" />
+              </div>
+              
+              <h2 className="mb-4 text-2xl font-semibold text-gray-900">Import Complete!</h2>
+              
+              <div className="mb-6 space-y-2">
+                <div className="p-4 bg-green-50 rounded-lg">
+                  <div className="text-2xl font-bold text-green-700">{importResults.success}</div>
                   <div className="text-sm text-green-600">Successfully Imported</div>
                 </div>
-              </div>
-            </div>
-            
-            <div className="p-6 border border-red-200 rounded-lg bg-gradient-to-r from-red-50 to-red-100">
-              <div className="flex items-center space-x-3">
-                <div className="p-2 bg-red-500 rounded-full">
-                  <FaTimes className="text-white" />
-                </div>
-                <div>
-                  <div className="text-3xl font-bold text-red-700">{importResults.failed}</div>
-                  <div className="text-sm text-red-600">Failed to Import</div>
-                </div>
-              </div>
-            </div>
-            
-            <div className="p-6 border border-yellow-200 rounded-lg bg-gradient-to-r from-yellow-50 to-yellow-100">
-              <div className="flex items-center space-x-3">
-                <div className="p-2 bg-yellow-500 rounded-full">
-                  <FaExclamationTriangle className="text-white" />
-                </div>
-                <div>
-                  <div className="text-3xl font-bold text-yellow-700">{importResults.skipped}</div>
-                  <div className="text-sm text-yellow-600">Skipped Records</div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Import Summary */}
-          <div className="p-4 mb-6 border border-blue-200 rounded-lg bg-blue-50">
-            <h4 className="mb-2 font-medium text-blue-800">Import Summary</h4>
-            <div className="text-sm text-blue-700">
-              <p>• Total processed: {importResults.success + importResults.failed + importResults.skipped} records</p>
-              <p>• Success rate: {Math.round((importResults.success / (importResults.success + importResults.failed)) * 100) || 0}%</p>
-              <p>• Completed at: {new Date().toLocaleString()}</p>
-              <p>• Imported by: {user?.email || 'Guest'}</p>
-            </div>
-          </div>
-
-          {/* Import Errors */}
-          {importResults.errors.length > 0 && (
-            <div className="p-4 mb-6 border border-red-200 rounded-lg bg-red-50">
-              <h4 className="mb-3 text-sm font-medium text-red-800">Import Errors ({importResults.errors.length}):</h4>
-              <div className="space-y-2 overflow-y-auto max-h-60">
-                {importResults.errors.map((error, index) => (
-                  <div key={index} className="flex items-start p-2 space-x-2 text-sm text-red-700 bg-red-100 rounded">
-                    <FaTimes className="text-red-500 mt-0.5 flex-shrink-0" />
-                    <span>{error}</span>
+                
+                {importResults.failed > 0 && (
+                  <div className="p-4 bg-red-50 rounded-lg">
+                    <div className="text-2xl font-bold text-red-700">{importResults.failed}</div>
+                    <div className="text-sm text-red-600">Failed to Import</div>
                   </div>
-                ))}
+                )}
+              </div>
+
+              {importResults.errors.length > 0 && (
+                <div className="mb-6 p-4 bg-red-50 rounded-lg">
+                  <h3 className="font-medium text-red-800 mb-2">Import Errors:</h3>
+                  <div className="text-sm text-red-700 max-h-32 overflow-y-auto">
+                    {importResults.errors.map((error, index) => (
+                      <div key={index} className="mb-1">{error}</div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex justify-center space-x-4">
+                <button
+                  onClick={() => navigate('/employees')}
+                  className="px-6 py-3 text-white bg-blue-600 rounded-lg hover:bg-blue-700"
+                >
+                  View Employees
+                </button>
+                <button
+                  onClick={resetAll}
+                  className="px-6 py-3 text-gray-600 bg-white border rounded-lg hover:bg-gray-50"
+                >
+                  Import More
+                </button>
               </div>
             </div>
-          )}
-
-          {/* Action Buttons */}
-          <div className="flex justify-center space-x-4">
-            <button
-              onClick={resetImport}
-              className="flex items-center px-6 py-3 space-x-2 text-gray-700 transition-colors border border-gray-300 rounded-lg hover:bg-gray-50"
-            >
-              <FaFileUpload />
-              <span>Import More Data</span>
-            </button>
-            <button
-              onClick={() => navigate('/employees')}
-              className="flex items-center px-6 py-3 space-x-2 text-white transition-colors bg-blue-600 rounded-lg hover:bg-blue-700"
-            >
-              <FaUser />
-              <span>View Employee List</span>
-            </button>
           </div>
-        </div>
-      )}
+        )}
       </div>
     </div>
   );
