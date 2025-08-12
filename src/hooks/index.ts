@@ -2,13 +2,15 @@
 // Updated Hooks Index with All Exports
 // ไฟล์: src/hooks/index.ts
 // ================================
+// Core CSM-specific hooks
+export { useCSMData } from './useCSMData';
+export { useDebouncedValue } from './useDebouncedValue';
+export { useVirtualList } from './useVirtualList';
 
 // Enhanced CSM-specific hooks (ใหม่/ปรับปรุงแล้ว)
 export { useOptimizedScoreCalculation } from './useOptimizedScore';
 export { useDebouncedAutoSave } from './useDebouncedAutoSave';
-export { useVirtualList } from './useVirtualList';
-export { useDebouncedValue } from './useDebouncedValue';
-export { useCSMData } from './useCSMData';
+
 
 // UI และ Interaction hooks
 export { usePagination } from './usePagination';
@@ -29,7 +31,7 @@ export { useAccessibility } from './useAccessibility';
 
 // Type exports for better TypeScript integration
 export type {
-  ScoreCalculation,
+  //ScoreCalculation,
   //AutoSaveOptions,
   //AutoSaveState,
   //VirtualListOptions,
@@ -54,3 +56,4 @@ export {
 export {
   cacheService
 } from '../utils/cacheService';
+

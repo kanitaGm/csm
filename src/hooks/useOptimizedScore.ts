@@ -4,7 +4,7 @@
 import { useMemo } from 'react';
 import type { CSMAssessmentAnswer, CSMFormField } from '../types/csm';
 
-export interface ScoreCalculation {
+ interface ScoreCalculation {
   readonly totalScore: number;
   readonly avgScore: number;
   readonly maxScore: number;
