@@ -141,7 +141,7 @@ export interface CSMAssessment {
   formVersion: string;
   answers: CSMAssessmentAnswer[];
   
-  // ✅ เพิ่มข้อมูลผู้ตรวจประเมิน
+  //  เพิ่มข้อมูลผู้ตรวจประเมิน
   auditor: CSMAuditee; // ข้อมูลผู้ตรวจประเมิน
   assessor?: string; // เก็บไว้เพื่อ backward compatibility
   
@@ -164,8 +164,8 @@ export interface CSMAssessment {
   approvedAt?: Timestamp | Date | string;
   
   // Timestamps
-  createdAt: Timestamp | Date | string;
-  updatedAt?: Timestamp | Date | string;
+  createdAt: Timestamp | Date | string | unknown;
+  updatedAt?: Timestamp | Date | string| unknown;
   lastModifiedBy?: string;
   
   // Additional fields

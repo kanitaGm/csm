@@ -286,7 +286,8 @@ export const formsService = {
     }
   },
 
-  async getByFormCode(formCode: string): Promise<CSMFormDoc | null> {
+  async getByFormCode(formCode: string | 'CSMChecklist'): Promise<CSMFormDoc | null> { //CSMChecklist
+    
     try {
       const querySnapshot = await getDocs(
         query(collection(db, 'forms'), where('formCode', '==', formCode), limit(1))

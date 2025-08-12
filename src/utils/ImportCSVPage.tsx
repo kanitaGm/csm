@@ -11,6 +11,7 @@ import {
 } from 'react-icons/fa';
 import { getAllTemplates, getTemplateByCollection, type CSVTemplateConfig } from './CSVTemplates';
 import { useAuth } from '../contexts/AuthContext';
+//import { template } from 'lodash';
 
 // --- Type Definitions ---
 interface ImportResults {
@@ -55,10 +56,13 @@ export default function ImportCSVPage() {
   
   // Initialize selectedCollection when templates are loaded
   useEffect(() => {
+    //console.log('Templates loaded:', templates);
     if (templates.length > 0 && !selectedCollection) {
-      setSelectedCollection(templates[0].collection);
+      const firstTemplate = templates[0];
+      //console.log('Setting initial template:', firstTemplate.collection);
+      setSelectedCollection(firstTemplate.collection);
     }
-  }, [templates, selectedCollection]);
+  }, [templates, selectedCollection ]); // เปลี่ยนจาก [templates, selectedCollection] /templates.length
   
   const selectedTemplate = useMemo(() => {
     if (!selectedCollection) return null;
@@ -233,12 +237,12 @@ export default function ImportCSVPage() {
   // Process mapping - แก้ไขให้ใช้ template ที่เลือกอย่างถูกต้อง
   const processMapping = useCallback((template: CSVTemplateConfig) => {
     if (!template || previewData.length === 0) {
-      console.log('No template or preview data for processing');
+      //console.log('No template or preview data for processing');
       return;
     }
 
-    console.log('Processing mapping for template:', template.collection);
-    console.log('Template field mapping:', template.fieldMapping);
+    //console.log('Processing mapping for template:', template.collection);
+    //console.log('Template field mapping:', template.fieldMapping);
 
     const errors: { message: string }[] = [];
     const mapped: Record<string, unknown>[] = [];
@@ -303,8 +307,8 @@ export default function ImportCSVPage() {
       }
     });
 
-    console.log('Mapped data:', mapped);
-    console.log('Processing errors:', errors);
+    //console.log('Mapped data:', mapped);
+    //console.log('Processing errors:', errors);
 
     setMappedData(mapped);
     setProcessingErrors(errors);
@@ -313,7 +317,7 @@ export default function ImportCSVPage() {
   // useEffect for processing mapping when template changes or data is ready
   useEffect(() => {
     if (previewData.length > 0 && selectedTemplate && currentStep === 2) {
-      console.log('Trigger processing for template:', selectedTemplate.collection);
+      //console.log('Trigger processing for template:', selectedTemplate.collection);
       processMapping(selectedTemplate);
     }
   }, [previewData, selectedTemplate, currentStep, processMapping]);
@@ -338,7 +342,7 @@ export default function ImportCSVPage() {
   // Reset when template changes
   useEffect(() => {
     if (selectedTemplate) {
-      console.log('Template changed to:', selectedTemplate.collection);
+      //console.log('Template changed to:', selectedTemplate.collection);
       // Reset data when template changes
       setDuplicateChecks([]);
       setEditedData({});
@@ -391,8 +395,8 @@ export default function ImportCSVPage() {
       setMappedData([]);
       
       const { headers: parsedHeaders, data } = await parseCSV(file);
-      console.log('Parsed headers:', parsedHeaders);
-      console.log('Parsed data rows:', data.length);
+      //console.log('Parsed headers:', parsedHeaders);
+      //console.log('Parsed data rows:', data.length);
       
       setHeaders(parsedHeaders);
       setPreviewData(data);
@@ -406,9 +410,32 @@ export default function ImportCSVPage() {
     }
   };
 
+    useEffect(() => {
+    console.log('selectedTemplate changed:', {
+      collection: selectedTemplate?.collection,
+      name: selectedTemplate?.name,
+      hasFieldMapping: !!selectedTemplate?.fieldMapping
+    });
+  }, [selectedTemplate]);
+
   // Template selection handler - แก้ไขให้รีเซ็ตข้อมูลและประมวลผลใหม่
   const handleTemplateChange = (newCollection: string) => {
-    console.log('Changing template to:', newCollection);
+    //console.log('Template change requested:', newCollection);
+    //console.log('Available templates:', Object.keys(templates));
+    
+    if (!newCollection) {
+      console.error('Empty collection provided');
+      return;
+    }
+    
+    const template = getTemplateByCollection(newCollection);
+    if (!template) {
+      console.error('Template not found for collection:', newCollection);
+      //console.log('Available templates:', getAllTemplates().map(t => t.collection));
+      return;
+    }
+    
+    //console.log('Setting collection to:', newCollection);
     setSelectedCollection(newCollection);
   };
 
@@ -502,13 +529,26 @@ export default function ImportCSVPage() {
   };
 
   // Import data - แก้ไขให้ใช้ collection ที่เลือกอย่างถูกต้อง
-  const handleImport = async () => {
+ const handleImport = async () => {
+    //console.log('=== Import Started ===');
+    //console.log('selectedTemplate:', selectedTemplate);
+    //console.log('selectedCollection:', selectedCollection);
+    
     if (!selectedTemplate) {
+      console.error('No template selected!');
+      //console.log('Available templates:', getAllTemplates().map(t => ({ name: t.name, collection: t.collection })));
       alert('Please select a template first');
       return;
     }
     
-    console.log('Starting import to collection:', selectedTemplate.collection);
+    if (!selectedTemplate.collection) {
+      console.error('Template has no collection!');
+      alert('Template configuration error - no collection specified');
+      return;
+    }
+    
+    //console.log('Importing to collection:', selectedTemplate.collection);
+    //console.log('Template name:', selectedTemplate.name);
     
     const rowsToImport = selectedRows.size > 0 
       ? mappedData.filter((_, index) => selectedRows.has(index))
@@ -523,6 +563,8 @@ export default function ImportCSVPage() {
       alert('No valid records to import.');
       return;
     }
+
+    //console.log(`Preparing to import ${rowsToImport.length} records`);
 
     setIsImporting(true);
     setImportProgress(0);
@@ -546,12 +588,13 @@ export default function ImportCSVPage() {
           payload.createdAt = serverTimestamp();
           payload.lastUpdateBy = user?.email || 'CSV Import';
           
-          console.log(`Importing record ${i + 1} to ${selectedTemplate.collection}:`, payload);
+          //console.log(`Importing record ${i + 1}/${rowsToImport.length} to collection "${selectedTemplate.collection}":`, payload);
           
-          await addDoc(collection(db, selectedTemplate.collection), payload);
+          const docRef = await addDoc(collection(db, selectedTemplate.collection), payload);
+          console.log(`Successfully imported record ${i + 1}, doc ID:`, docRef.id);
           results.success++;
         } catch (error) {
-          console.error('Import error for record:', error);
+          console.error(`Import error for record ${i + 1}:`, error);
           results.failed++;
           const originalRowIndex = mappedData.findIndex(p => p === recordData);
           results.errors.push(
@@ -563,12 +606,13 @@ export default function ImportCSVPage() {
         setImportProgress(Math.round(((i + 1) / rowsToImport.length) * 100));
       }
       
-      console.log('Import completed:', results);
+      //console.log('=== Import Completed ===');
+      //console.log('Results:', results);
       setImportResults(results);
       setImportComplete(true);
       setCurrentStep(3);
     } catch (error: unknown) {
-      console.error('Import error:', error);
+      //console.error('Import error:', error);
       const errorMessage = error instanceof Error ? error.message : 'An error occurred during import';
       alert(errorMessage);
     } finally {
@@ -696,6 +740,8 @@ export default function ImportCSVPage() {
   
   const validRowsCount = Math.max(0, totalRecords - rowsWithIssues.size);
 
+
+
   return (
     <div className="min-h-screen p-6 bg-gray-50">
       <div className="mx-auto max-w-7xl">
@@ -728,7 +774,7 @@ export default function ImportCSVPage() {
             <h2 className="mb-6 text-2xl font-semibold">Select Template & Upload CSV File</h2>
 
             {/* Template Selection */}
-            <div className="mb-8">
+            <div className="mb-8">              
               <label className="block mb-3 text-lg font-medium text-gray-700">
                 Select Data Type
               </label>
@@ -744,6 +790,8 @@ export default function ImportCSVPage() {
                   <option key={template.collection} value={template.collection}>
                     {template.name} → {template.collection}
                   </option>
+
+
                 ))}
               </select>
               

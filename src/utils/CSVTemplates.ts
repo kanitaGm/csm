@@ -497,7 +497,6 @@ export const USER_ROLES_TEMPLATE: CSVTemplateConfig = {
   }
 };
 
-
 // User Companies Template
 export const COMPANIES_TEMPLATE: CSVTemplateConfig = {
   name: 'Companies Import',
@@ -510,7 +509,7 @@ export const COMPANIES_TEMPLATE: CSVTemplateConfig = {
     address: 'address',
     phone: 'phone',
     email: 'email',
-    workingArea: 'workinArea',
+    workingArea: 'workingArea',
     contactPerson: 'contactPerson',
     createdAt: 'createdAt',
     updatedAt: 'updatedAt',
@@ -597,22 +596,21 @@ export const COMPANIES_TEMPLATE: CSVTemplateConfig = {
   },
 };
 
-
 // User Companies Template
 export const CSMVENDOR_TEMPLATE: CSVTemplateConfig = {
   name: 'CSM Vendor Import',
-  collection: 'csmVendor',
+  collection: 'csmVendors',
   description: 'Import/export ข้อมูลบริษัท (vendors) สำหรับระบบ CSM และประเภทอื่นๆ',  
   fieldMapping: {
     companyId: 'companyId',
-    vdCode: 'companyId',
+    vdCode: 'vdCode',
     vdName: 'vdName',
-    workingArea: 'workinArea',
+    workingArea: 'workingArea',
     category: 'category',
     createdAt: 'createdAt',
     updatedAt: 'updatedAt',
   },
-  requiredFields: ['companyId', 'vdCoe', 'vdName', 'category'],
+  requiredFields: ['companyId', 'vdCode', 'vdName', 'category'],
   dateFields: ['createdAt', 'updatedAt'],
   defaultValues: {
     isActive: true,
@@ -624,7 +622,7 @@ export const CSMVENDOR_TEMPLATE: CSVTemplateConfig = {
   fieldDescriptions: {
     companyId: 'รหัสบริษัทที่ไม่ซ้ำกัน (Unique company code)',
     vdCode: 'รหัสบริษัททีใช้ประเมิน CSM มาจากรหัวบริษัท_category+WorkingAres=a',
-    vdnName: 'ชื่อบริษัท',
+    vdName: 'ชื่อบริษัท',
     type: 'ประเภทบริษัท เช่น csm, safety, hr',
     workingArea: 'สถานที่รับงาน/ทำงานในกลุ่มบริษัท',
     category: 'Category',
@@ -637,7 +635,7 @@ export const CSMVENDOR_TEMPLATE: CSVTemplateConfig = {
       }
       return null;
     },
-    veCode: (value: unknown) => {
+    vdCode: (value: unknown) => {
       if (!isString(value) || !value.trim()) {
         return 'Vendor Code is required';
       }
@@ -671,20 +669,27 @@ export const CSMVENDOR_TEMPLATE: CSVTemplateConfig = {
 
 
 // Template Registry
-export const CSV_TEMPLATES: Record<string, CSVTemplateConfig> = {
-  company: COMPANIES_TEMPLATE,
-  vendor: CSMVENDOR_TEMPLATE,
+export const CSV_TEMPLATES: Record<string, CSVTemplateConfig> = {  
+  companies: COMPANIES_TEMPLATE,  
+  csmVendors: CSMVENDOR_TEMPLATE,
   employees: EMPLOYEE_TEMPLATE,
-  trainingRecords: TRAINING_TEMPLATE,
+  trainings: TRAINING_TEMPLATE,
   users: USER_ROLES_TEMPLATE,  
 
 };
 
 // Helper functions
 export const getTemplateByCollection = (collection: string): CSVTemplateConfig | null => {
-  return CSV_TEMPLATES[collection] || null;
+  //console.log('getTemplateByCollection called with:', collection);
+  //console.log('Available templates in CSV_TEMPLATES:', Object.keys(CSV_TEMPLATES));
+  const template = CSV_TEMPLATES[collection] || null;
+  //console.log('Template found:', template ? template.name : 'null');
+  
+  return template;
 };
 
 export const getAllTemplates = (): CSVTemplateConfig[] => {
-  return Object.values(CSV_TEMPLATES);
+  const templates = Object.values(CSV_TEMPLATES);
+  //console.log('getAllTemplates returning:', templates.map(t => ({ name: t.name, collection: t.collection })));
+  return templates;
 };
