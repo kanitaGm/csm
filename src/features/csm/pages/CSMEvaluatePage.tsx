@@ -64,7 +64,7 @@ const CSMEvaluatePage: React.FC<CSMEvaluatePageProps> = ({ vdCode: propVdCode })
 
       // Get vendor with company information using the new service
       const vendorWithCompany = await csmVendorService.getVendorWithCompany(vdCode);
-      
+      /*
       if (!vendorWithCompany) {
         addToast({
           type: 'error',
@@ -73,7 +73,7 @@ const CSMEvaluatePage: React.FC<CSMEvaluatePageProps> = ({ vdCode: propVdCode })
         });
         navigate('/csm');
         return;
-      }
+      }*/
 
       setVendor(vendorWithCompany.vendor);
       setCompany(vendorWithCompany.company);

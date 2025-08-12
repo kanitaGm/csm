@@ -18,8 +18,8 @@ export interface CSMVendor {
   workingArea?: string[]; // พื้นที่ที่ทำงาน
   createdAt?: Timestamp | Date | string;
   updatedAt?: Timestamp | Date | string;
- createdBy: string; 
-  laseUpdateBy: string;
+  createdBy: string; 
+  lastUpdateBy : string;
 
 }
 

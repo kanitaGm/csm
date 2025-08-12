@@ -97,7 +97,10 @@ const normalizeVendorData = (docData: unknown): CSMVendor | null => {
     category: isValidString(data.category) ? data.category : '1',
     workingArea,
     createdAt,
-    updatedAt
+    updatedAt,
+    createdBy: isValidString(data.createdBy) ? data.createdBy : '',       
+    lastUpdateBy: isValidString(data.lastUpdateBy) ? data.lastUpdateBy : ''  
+    
   };
 };
 
@@ -183,97 +186,18 @@ export const vendorsService = {
         }
       });
 
-      console.log(`✅ Loaded ${vendors.length} vendors from Firestore`);
-      
-      // ถ้าไม่มีข้อมูลจาก Firestore ให้ใช้ mock data สำหรับ demo
-      if (vendors.length === 0) {
-        console.log('📝 No vendors found in Firestore, using demo data');
-        const mockVendors = this.generateDemoVendors();
-        cacheService.set(cacheKey, mockVendors, 5); // Cache แป็นเวลาสั้น
-        return mockVendors;
-      }
-      
+      console.log(`✅ Loaded ${vendors.length} vendors from Firestore`);      
       cacheService.set(cacheKey, vendors, CACHE_DURATIONS.VENDORS);
       return vendors;
 
     } catch (error) {
       console.error('❌ Error fetching vendors from Firestore:', error);
       console.log('🔄 Using demo data as fallback');
-      
-      // Fallback to demo data
-      const demoVendors = this.generateDemoVendors();
-      cacheService.set(cacheKey, demoVendors, 2); // Cache for 2 minutes only
-      return demoVendors;
+      return [];     
+
     }
   },
 
-  /**
-   * Generate demo vendors for testing/fallback
-   */
-  generateDemoVendors(): CSMVendor[] {
-    return [
-      {
-        id: 'demo-1',
-        companyId: 'company-demo-1',
-        vdCode: 'VD001',
-        vdName: 'บริษัท ก่อสร้างทดสอบ จำกัด',
-        freqAss: '1year',
-        isActive: true,
-        category: '3',
-        workingArea: ['Bangkok', 'Samut Prakan'],
-        createdAt: new Date('2024-01-01'),
-        updatedAt: new Date()
-      },
-      {
-        id: 'demo-2',
-        companyId: 'company-demo-2',
-        vdCode: 'VD002',
-        vdName: 'บริษัท บริการทดสอบ จำกัด',
-        freqAss: '1year',
-        isActive: true,
-        category: '2',
-        workingArea: ['Bangkok'],
-        createdAt: new Date('2024-01-02'),
-        updatedAt: new Date()
-      },
-      {
-        id: 'demo-3',
-        companyId: 'company-demo-3',
-        vdCode: 'VD003',
-        vdName: 'บริษัท ขนส่งทดสอบ จำกัด',
-        freqAss: '2year',
-        isActive: true,
-        category: '4',
-        workingArea: ['Bangkok', 'Chonburi'],
-        createdAt: new Date('2024-01-03'),
-        updatedAt: new Date()
-      },
-      {
-        id: 'demo-4',
-        companyId: 'company-demo-4',
-        vdCode: 'VD004',
-        vdName: 'บริษัท ซ่อมบำรุงทดสอบ จำกัด',
-        freqAss: '1year',
-        isActive: true,
-        category: 'maintenance',
-        workingArea: ['Bangkok', 'Rayong'],
-        createdAt: new Date('2024-01-04'),
-        updatedAt: new Date()
-      },
-      {
-        id: 'demo-5',
-        companyId: 'company-demo-5',
-        vdCode: 'VD005',
-        vdName: 'บริษัท รักษาความปลอดภัยทดสอบ จำกัด',
-        freqAss: '1year',
-        isActive: true,
-        category: 'security',
-        workingArea: ['Bangkok'],
-        createdAt: new Date('2024-01-05'),
-        updatedAt: new Date()
-      }
-    ];
-  },
 
   /**
    * Search vendors by term
