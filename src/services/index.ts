@@ -1,9 +1,12 @@
 // Auth service
 export * from './authService';
 
-// Other services/*
-//export * from './users';
-//export * from './csm';
+export { enhancedVendorsService } from './enhancedCsmService';
+export * from './authService';
+export * from './csmService';
+export * from './employeeService';
+export * from './formService';
+export * from './trainingService';
 
 // Default exports
 export { AuthenticationService } from './authService';

@@ -2,9 +2,12 @@
   "compilerOptions": {
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.tsbuildinfo",
     "target": "ES2023",
-    "lib": ["ES2023"],
+      "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "skipLibCheck": true,
+    "useDefineForClassFields": true,
+
+     "experimentalDecorators": true,
 
     // base uri
     "baseUrl": "src",
@@ -25,7 +28,7 @@
       "@routes/*": ["routes/*"],
       "@styles/*": ["styles/*"],
       "@types/*": ["types/*"],
-      "@/*": ["*"],
+      "@/*": ["*"]
     },
 
     /* Bundler mode */
@@ -34,15 +37,16 @@
     "verbatimModuleSyntax": true,
     "moduleDetection": "force",
     "noEmit": true,
+    "jsx": "react-jsx",
 
     /* Linting */
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true,
 
+
   },
-  "include": ["vite.config.ts"]
+  "include": ["src", "vite.config.ts"]
 }

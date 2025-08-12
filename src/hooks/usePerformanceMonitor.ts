@@ -114,6 +114,7 @@ class SimplePerformanceTracker {
   }
 }
 
+
 // Singleton instance
 const performanceTracker = new SimplePerformanceTracker();
 

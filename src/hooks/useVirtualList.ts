@@ -1,162 +1,270 @@
-// src/hooks/useVirtualList.ts - Minimal Version (Hook Only)
-import { useState, useMemo, useCallback } from 'react';
+// ================================
+// Fixed useVirtualList Hook - TypeScript Strict Mode Compatible
+// ไฟล์: src/hooks/useVirtualList.ts
+// ================================
 
-interface VirtualListOptions {
-  itemHeight: number;
-  containerHeight: number;
-  overscan?: number;
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import type { RefObject } from 'react';
+
+export interface VirtualListOptions<T> {
+  readonly items: readonly T[];
+  readonly itemHeight: number;
+  readonly containerHeight: number;
+  readonly overscan?: number;
 }
 
-interface VirtualItem<T> {
-  item: T;
-  index: number;
-  style: React.CSSProperties;
+export interface VirtualListResult<T> {
+  readonly containerRef: RefObject<HTMLDivElement | null>; // แก้ไข type ให้รองรับ null
+  readonly visibleItems: readonly { readonly item: T; readonly index: number }[];
+  readonly scrollToIndex: (index: number) => void;
 }
 
-interface VirtualListResult<T> {
-  visibleItems: VirtualItem<T>[];
-  containerStyle: React.CSSProperties;
-  totalHeight: number;
-  scrollToIndex: (index: number) => void;
-  handleScroll: (event: React.UIEvent<HTMLDivElement>) => void;
-}
+export const useVirtualList = <T>({
+  items,
+  itemHeight,
+  containerHeight,
+  overscan = 5
+}: VirtualListOptions<T>): VirtualListResult<T> => {
+  const [scrollTop, setScrollTop] = useState<number>(0);
+  const containerRef = useRef<HTMLDivElement | null>(null); // แก้ไข type ให้รองรับ null
 
-export const useVirtualList = <T>(
-  items: T[],
-  options: VirtualListOptions
-): VirtualListResult<T> => {
-  const {
-    itemHeight,
-    containerHeight,
-    overscan = 5
-  } = options;
-
-  const [scrollTop, setScrollTop] = useState(0);
-
-  // Calculate total height
-  const totalHeight = useMemo(() => {
-    return items.length * itemHeight;
-  }, [items.length, itemHeight]);
-
-  // Calculate visible range
-  const { startIndex, endIndex } = useMemo(() => {
-    const start = Math.floor(scrollTop / itemHeight);
-    const visibleCount = Math.ceil(containerHeight / itemHeight);
-    const end = start + visibleCount;
-
-    // Apply overscan
-    const overscanStart = Math.max(0, start - overscan);
-    const overscanEnd = Math.min(items.length - 1, end + overscan);
-
-    return {
-      startIndex: overscanStart,
-      endIndex: overscanEnd
-    };
+  const visibleRange = useMemo(() => {
+    const startIndex = Math.max(0, Math.floor(scrollTop / itemHeight) - overscan);
+    const endIndex = Math.min(
+      items.length - 1,
+      Math.floor((scrollTop + containerHeight) / itemHeight) + overscan
+    );
+    return { startIndex, endIndex } as const;
   }, [scrollTop, itemHeight, containerHeight, items.length, overscan]);
 
-  // Generate visible items with positioning
-  const visibleItems = useMemo((): VirtualItem<T>[] => {
-    const visible: VirtualItem<T>[] = [];
+  const visibleItems = useMemo(() => {
+    return items.slice(visibleRange.startIndex, visibleRange.endIndex + 1).map((item, index) => ({
+      item,
+      index: visibleRange.startIndex + index
+    } as const));
+  }, [items, visibleRange]);
 
-    for (let i = startIndex; i <= endIndex && i < items.length; i++) {
-      visible.push({
-        item: items[i],
-        index: i,
-        style: {
-          position: 'absolute' as const,
-          top: i * itemHeight,
-          left: 0,
-          right: 0,
-          height: itemHeight,
-          minHeight: itemHeight
-        }
-      });
+  const scrollToIndex = useCallback((index: number): void => {
+    const container = containerRef.current;
+    if (container && index >= 0 && index < items.length) {
+      const scrollPosition = index * itemHeight;
+      container.scrollTop = scrollPosition;
     }
+  }, [itemHeight, items.length]);
 
-    return visible;
-  }, [items, startIndex, endIndex, itemHeight]);
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
 
-  // Container style for proper scrolling
-  const containerStyle: React.CSSProperties = useMemo(() => ({
-    height: containerHeight,
-    overflow: 'auto',
-    position: 'relative'
-  }), [containerHeight]);
+    const handleScroll = (): void => {
+      setScrollTop(container.scrollTop);
+    };
 
-  // Scroll handler
-  const handleScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
-    const target = event.target as HTMLDivElement;
-    setScrollTop(target.scrollTop);
+    container.addEventListener('scroll', handleScroll, { passive: true });
+    return () => container.removeEventListener('scroll', handleScroll);
   }, []);
 
-  // Scroll to specific index
-  const scrollToIndex = useCallback((index: number) => {
-    if (index < 0 || index >= items.length) {
-      return;
-    }
-
-    const targetScrollTop = index * itemHeight;
-    setScrollTop(targetScrollTop);
-  }, [items.length, itemHeight]);
-
   return {
+    containerRef,
     visibleItems,
-    containerStyle,
-    totalHeight,
-    scrollToIndex,
-    handleScroll
+    scrollToIndex
   };
 };
 
-// ✅ Simple pagination hook (no virtual scrolling)
-export const usePagination = <T>(items: T[], itemsPerPage: number = 25) => {
-  const [currentPage, setCurrentPage] = useState(1);
+// ================================
+// Enhanced version with additional features
+// ================================
 
-  const paginatedItems = useMemo(() => {
-    const startIndex = (currentPage - 1) * itemsPerPage;
-    const endIndex = startIndex + itemsPerPage;
-    return items.slice(startIndex, endIndex);
-  }, [items, currentPage, itemsPerPage]);
+export interface EnhancedVirtualListOptions<T> extends VirtualListOptions<T> {
+  readonly enableSmoothScrolling?: boolean;
+  readonly loadMoreThreshold?: number;
+  readonly onLoadMore?: () => void;
+  readonly estimatedItemHeight?: number;
+  readonly getItemHeight?: (index: number, item: T) => number;
+}
 
-  const totalPages = Math.ceil(items.length / itemsPerPage);
-  const hasNextPage = currentPage < totalPages;
-  const hasPrevPage = currentPage > 1;
+export interface EnhancedVirtualListResult<T> extends VirtualListResult<T> {
+  readonly isNearBottom: boolean;
+  readonly scrollToTop: () => void;
+  readonly scrollToBottom: () => void;
+  readonly getVisibleRange: () => { startIndex: number; endIndex: number };
+}
 
-  const goToPage = useCallback((page: number) => {
-    const validPage = Math.max(1, Math.min(page, totalPages));
-    setCurrentPage(validPage);
-  }, [totalPages]);
+export const useEnhancedVirtualList = <T>({
+  items,
+  itemHeight,
+  containerHeight,
+  overscan = 5,
+  enableSmoothScrolling = false,
+  loadMoreThreshold = 3,
+  onLoadMore,
+  estimatedItemHeight,
+  getItemHeight
+}: EnhancedVirtualListOptions<T>): EnhancedVirtualListResult<T> => {
+  const [scrollTop, setScrollTop] = useState<number>(0);
+  const [isNearBottom, setIsNearBottom] = useState<boolean>(false);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const loadMoreTriggeredRef = useRef<boolean>(false);
 
-  const nextPage = useCallback(() => {
-    if (hasNextPage) {
-      setCurrentPage(prev => prev + 1);
+  // Dynamic item height calculation
+  const getEffectiveItemHeight = useCallback((index: number): number => {
+    if (getItemHeight && items[index]) {
+      return getItemHeight(index, items[index]);
     }
-  }, [hasNextPage]);
+    return estimatedItemHeight || itemHeight;
+  }, [getItemHeight, items, estimatedItemHeight, itemHeight]);
 
-  const prevPage = useCallback(() => {
-    if (hasPrevPage) {
-      setCurrentPage(prev => prev - 1);
+  // Calculate total height for dynamic heights
+  const totalHeight = useMemo(() => {
+    if (!getItemHeight && !estimatedItemHeight) {
+      return items.length * itemHeight;
     }
-  }, [hasPrevPage]);
+    
+    let height = 0;
+    for (let i = 0; i < items.length; i++) {
+      height += getEffectiveItemHeight(i);
+    }
+    return height;
+  }, [items.length, itemHeight, getEffectiveItemHeight, getItemHeight, estimatedItemHeight]);
+
+  // Calculate visible range with dynamic heights
+  const visibleRange = useMemo(() => {
+    if (!getItemHeight && !estimatedItemHeight) {
+      // Fixed height calculation
+      const startIndex = Math.max(0, Math.floor(scrollTop / itemHeight) - overscan);
+      const endIndex = Math.min(
+        items.length - 1,
+        Math.floor((scrollTop + containerHeight) / itemHeight) + overscan
+      );
+      return { startIndex, endIndex };
+    }
+
+    // Dynamic height calculation
+    let currentHeight = 0;
+    let startIndex = 0;
+    let endIndex = items.length - 1;
+
+    // Find start index
+    for (let i = 0; i < items.length; i++) {
+      const itemHeight = getEffectiveItemHeight(i);
+      if (currentHeight + itemHeight > scrollTop) {
+        startIndex = Math.max(0, i - overscan);
+        break;
+      }
+      currentHeight += itemHeight;
+    }
+
+    // Find end index
+    currentHeight = 0;
+    for (let i = 0; i < items.length; i++) {
+      const itemHeight = getEffectiveItemHeight(i);
+      currentHeight += itemHeight;
+      if (currentHeight > scrollTop + containerHeight) {
+        endIndex = Math.min(items.length - 1, i + overscan);
+        break;
+      }
+    }
+
+    return { startIndex, endIndex };
+  }, [scrollTop, containerHeight, items.length, overscan, getEffectiveItemHeight, getItemHeight, estimatedItemHeight, itemHeight]);
+
+  const visibleItems = useMemo(() => {
+    return items.slice(visibleRange.startIndex, visibleRange.endIndex + 1).map((item, index) => ({
+      item,
+      index: visibleRange.startIndex + index
+    } as const));
+  }, [items, visibleRange]);
+
+  // Enhanced scroll functions
+  const scrollToIndex = useCallback((index: number): void => {
+    const container = containerRef.current;
+    if (!container || index < 0 || index >= items.length) return;
+
+    let scrollPosition = 0;
+    
+    if (!getItemHeight && !estimatedItemHeight) {
+      scrollPosition = index * itemHeight;
+    } else {
+      for (let i = 0; i < index; i++) {
+        scrollPosition += getEffectiveItemHeight(i);
+      }
+    }
+
+    if (enableSmoothScrolling) {
+      container.scrollTo({
+        top: scrollPosition,
+        behavior: 'smooth'
+      });
+    } else {
+      container.scrollTop = scrollPosition;
+    }
+  }, [items.length, itemHeight, getEffectiveItemHeight, enableSmoothScrolling, getItemHeight, estimatedItemHeight]);
+
+  const scrollToTop = useCallback((): void => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    if (enableSmoothScrolling) {
+      container.scrollTo({ top: 0, behavior: 'smooth' });
+    } else {
+      container.scrollTop = 0;
+    }
+  }, [enableSmoothScrolling]);
+
+  const scrollToBottom = useCallback((): void => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    if (enableSmoothScrolling) {
+      container.scrollTo({ top: totalHeight, behavior: 'smooth' });
+    } else {
+      container.scrollTop = totalHeight;
+    }
+  }, [totalHeight, enableSmoothScrolling]);
+
+  const getVisibleRange = useCallback(() => {
+    return visibleRange;
+  }, [visibleRange]);
+
+  // Handle scroll events
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleScroll = (): void => {
+      const newScrollTop = container.scrollTop;
+      setScrollTop(newScrollTop);
+
+      // Check if near bottom for load more
+      const scrollHeight = container.scrollHeight;
+      const clientHeight = container.clientHeight;
+      const distanceFromBottom = scrollHeight - (newScrollTop + clientHeight);
+      
+      const nearBottom = distanceFromBottom < (loadMoreThreshold * itemHeight);
+      setIsNearBottom(nearBottom);
+
+      // Trigger load more
+      if (nearBottom && !loadMoreTriggeredRef.current && onLoadMore) {
+        loadMoreTriggeredRef.current = true;
+        onLoadMore();
+      } else if (!nearBottom) {
+        loadMoreTriggeredRef.current = false;
+      }
+    };
+
+    container.addEventListener('scroll', handleScroll, { passive: true });
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, [loadMoreThreshold, itemHeight, onLoadMore]);
 
   return {
-    paginatedItems,
-    currentPage,
-    totalPages,
-    hasNextPage,
-    hasPrevPage,
-    goToPage,
-    nextPage,
-    prevPage
+    containerRef,
+    visibleItems,
+    scrollToIndex,
+    isNearBottom,
+    scrollToTop,
+    scrollToBottom,
+    getVisibleRange
   };
 };
 
-// ✅ Example usage types
-export interface VirtualListComponentProps<T> {
-  items: T[];
-  itemHeight: number;
-  height: number;
-  renderItem: (item: T, index: number) => React.ReactNode;
-  className?: string;
-  onScroll?: (scrollTop: number) => void;
-}
+export default useVirtualList;

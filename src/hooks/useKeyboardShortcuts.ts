@@ -1,31 +1,34 @@
 // 📁 src/components/hooks/useKeyboardShortcuts.ts 
+// Fixed useKeyboardShortcuts Hook
+// ================================
 import { useEffect } from 'react';
 
-export const useKeyboardShortcuts = () => {
+type ShortcutHandler = (event: KeyboardEvent) => void;
+type ShortcutMap = Record<string, ShortcutHandler>;
+
+export const useKeyboardShortcuts = (
+  shortcuts: ShortcutMap, 
+  enabled: boolean = true
+): void => {
   useEffect(() => {
-    const handleKeyPress = (e: KeyboardEvent) => {
-      // Ctrl/Cmd + S = Save
-      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-        e.preventDefault();
-        const saveButton = document.querySelector('[data-action="save"]') as HTMLButtonElement;
-        if (saveButton) saveButton.click();
-      }
-      
-      // Ctrl/Cmd + Enter = Submit/Approve
-      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-        e.preventDefault();
-        const submitButton = document.querySelector('[data-action="submit"]') as HTMLButtonElement;
-        if (submitButton) submitButton.click();
-      }
-      
-      // Escape = Close modals
-      if (e.key === 'Escape') {
-        const closeButton = document.querySelector('[data-action="close"]') as HTMLButtonElement;
-        if (closeButton) closeButton.click();
+    if (!enabled) return;
+
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      const key = [
+        event.ctrlKey && 'ctrl',
+        event.altKey && 'alt',
+        event.shiftKey && 'shift',
+        event.metaKey && 'meta',
+        event.key.toLowerCase()
+      ].filter(Boolean).join('+');
+
+      const handler = shortcuts[key];
+      if (handler) {
+        handler(event);
       }
     };
-    
-    document.addEventListener('keydown', handleKeyPress);
-    return () => document.removeEventListener('keydown', handleKeyPress);
-  }, []);
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [shortcuts, enabled]);
 };
