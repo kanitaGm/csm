@@ -1,5 +1,5 @@
 // 📁 src/features/csm/pages/CSMListPage.tsx
-// Working version with proper dependencies and fallback data
+// Strict TypeScript with Real Firestore Data Only
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { 
   Search, Plus, Building2, Calendar, Star, Filter, 
@@ -14,18 +14,30 @@ import { ToastContainer } from '../../../components/ui/ToastContainer';
 import { SkeletonLoader } from '../../../components/ui/SkeletonLoader';
 import { getCategoryInfo, CSM_VENDOR_CATEGORIES } from '../../../types/csm';
 import { formatDate } from '../../../utils/dateUtils';
+import { safeWorkingAreaDisplay } from '../../../utils/dataValidation';
 
+// =================== TYPES ===================
 interface CSMFilterOptions {
-  search: string;
-  category: string;
-  assessmentStatus: 'all' | 'completed' | 'in-progress' | 'not-assessed' | 'expired';
-  riskLevel: string;
+  readonly search: string;
+  readonly category: string;
+  readonly assessmentStatus: 'all' | 'completed' | 'in-progress' | 'not-assessed' | 'expired';
+  readonly riskLevel: string;
 }
 
 interface CSMListPageProps {
-  onSelectVendor?: (vendor: CSMVendor) => void;
+  readonly onSelectVendor?: (vendor: CSMVendor) => void;
 }
 
+interface StatisticsData {
+  readonly totalVendors: number;
+  readonly assessedVendors: number;
+  readonly averageScore: number;
+  readonly expiredAssessments: number;
+}
+
+type AssessmentStatus = 'completed' | 'in-progress' | 'not-assessed' | 'expired';
+
+// =================== MAIN COMPONENT ===================
 const CSMListPage: React.FC<CSMListPageProps> = ({ onSelectVendor }) => {
   const [filters, setFilters] = useState<CSMFilterOptions>({
     search: '',
@@ -34,9 +46,9 @@ const CSMListPage: React.FC<CSMListPageProps> = ({ onSelectVendor }) => {
     riskLevel: 'all'
   });
   
-  const [showFilters, setShowFilters] = useState(false);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage, setItemsPerPage] = useState(12);
+  const [showFilters, setShowFilters] = useState<boolean>(false);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [itemsPerPage, setItemsPerPage] = useState<number>(12);
 
   const {
     vendors,
@@ -51,16 +63,14 @@ const CSMListPage: React.FC<CSMListPageProps> = ({ onSelectVendor }) => {
   const { toasts, addToast, removeToast } = useToast();
   const debouncedSearch = useDebouncedValue(filters.search, 300);
 
-  // Load data on mount
+  // =================== EFFECTS ===================
   useEffect(() => {
-    loadData();
+    void loadData();
   }, [loadData]);
 
-  // Clear error when it's shown
   useEffect(() => {
     if (error) {
       addToast({
-        id: `error-${Date.now()}`,
         type: 'error',
         title: 'เกิดข้อผิดพลาด',
         message: error
@@ -69,12 +79,12 @@ const CSMListPage: React.FC<CSMListPageProps> = ({ onSelectVendor }) => {
     }
   }, [error, addToast, clearError]);
 
-  // Helper functions
+  // =================== HELPER FUNCTIONS ===================
   const getAssessmentSummary = useCallback((vdCode: string): CSMAssessmentSummary | null => {
-    return assessmentSummaries.find(summary => summary.vdCode === vdCode) || null;
+    return assessmentSummaries.find(summary => summary.vdCode === vdCode) ?? null;
   }, [assessmentSummaries]);
 
-  const getAssessmentStatus = useCallback((_vendor: CSMVendor, summary: CSMAssessmentSummary | null) => {
+  const getAssessmentStatus = useCallback((_vendor: CSMVendor, summary: CSMAssessmentSummary | null): AssessmentStatus => {
     if (!summary) return 'not-assessed';
 
     const daysSinceAssessment = Math.floor((Date.now() - summary.lastAssessmentDate.getTime()) / (1000 * 60 * 60 * 24));
@@ -84,8 +94,8 @@ const CSMListPage: React.FC<CSMListPageProps> = ({ onSelectVendor }) => {
     return 'completed';
   }, []);
 
-  // Filtering logic
-  const filteredVendors = useMemo(() => {
+  // =================== COMPUTED VALUES ===================
+  const filteredVendors = useMemo((): readonly CSMVendor[] => {
     return vendors.filter(vendor => {
       const matchesSearch = debouncedSearch === '' || 
         vendor.vdName.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
@@ -98,21 +108,22 @@ const CSMListPage: React.FC<CSMListPageProps> = ({ onSelectVendor }) => {
       const matchesAssessmentStatus = filters.assessmentStatus === 'all' || assessmentStatus === filters.assessmentStatus;
       
       const matchesRiskLevel = filters.riskLevel === 'all' || 
-        (summary?.riskLevel?.toLowerCase() === filters.riskLevel?.toLowerCase());
+        summary?.riskLevel?.toLowerCase() === filters.riskLevel?.toLowerCase();
       
       return matchesSearch && matchesCategory && matchesAssessmentStatus && matchesRiskLevel;
     });
   }, [vendors, debouncedSearch, filters, getAssessmentSummary, getAssessmentStatus]);
 
-  // Pagination
-  const totalPages = Math.ceil(filteredVendors.length / itemsPerPage);
-  const paginatedVendors = useMemo(() => {
+  const totalPages = useMemo((): number => {
+    return Math.ceil(filteredVendors.length / itemsPerPage);
+  }, [filteredVendors.length, itemsPerPage]);
+
+  const paginatedVendors = useMemo((): readonly CSMVendor[] => {
     const startIndex = (currentPage - 1) * itemsPerPage;
     return filteredVendors.slice(startIndex, startIndex + itemsPerPage);
   }, [filteredVendors, currentPage, itemsPerPage]);
 
-  // Statistics
-  const statistics = useMemo(() => {
+  const statistics = useMemo((): StatisticsData => {
     return {
       totalVendors: vendors.length,
       assessedVendors: assessmentSummaries.length,
@@ -125,19 +136,17 @@ const CSMListPage: React.FC<CSMListPageProps> = ({ onSelectVendor }) => {
     };
   }, [vendors, assessmentSummaries, getAssessmentStatus]);
 
-  // Event handlers
-  const handleRefresh = useCallback(async () => {
+  // =================== EVENT HANDLERS ===================
+  const handleRefresh = useCallback(async (): Promise<void> => {
     try {
       await refreshData();
       addToast({
-        id: `refresh-success-${Date.now()}`,
         type: 'success',
         title: 'รีเฟรชสำเร็จ',
         message: 'ข้อมูลได้รับการอัปเดตเรียบร้อยแล้ว'
       });
-    } catch (error) {
+    } catch {
       addToast({
-        id: `refresh-error-${Date.now()}`,
         type: 'error',
         title: 'เกิดข้อผิดพลาด',
         message: 'ไม่สามารถรีเฟรชข้อมูลได้'
@@ -145,20 +154,24 @@ const CSMListPage: React.FC<CSMListPageProps> = ({ onSelectVendor }) => {
     }
   }, [refreshData, addToast]);
 
-  const handleVendorClick = useCallback((vendor: CSMVendor) => {
+  const handleVendorClick = useCallback((vendor: CSMVendor): void => {
     if (onSelectVendor) {
       onSelectVendor(vendor);
     }
     window.location.href = `/csm/evaluate/${vendor.vdCode}`;
   }, [onSelectVendor]);
 
-  const handleFilterChange = useCallback((key: keyof CSMFilterOptions, value: string) => {
+  const handleFilterChange = useCallback((key: keyof CSMFilterOptions, value: string): void => {
     setFilters(prev => ({ ...prev, [key]: value }));
-    setCurrentPage(1); // Reset to first page
+    setCurrentPage(1);
   }, []);
 
-  // Utility functions for styling
-  const getRiskLevelColor = useCallback((riskLevel: string) => {
+  const handleNavigate = useCallback((url: string): void => {
+    window.location.href = url;
+  }, []);
+
+  // =================== UTILITY FUNCTIONS ===================
+  const getRiskLevelColor = useCallback((riskLevel: string): string => {
     switch (riskLevel.toLowerCase()) {
       case 'low': return 'bg-green-100 text-green-800 border-green-200';
       case 'moderate': return 'bg-yellow-100 text-yellow-800 border-yellow-200';
@@ -167,7 +180,7 @@ const CSMListPage: React.FC<CSMListPageProps> = ({ onSelectVendor }) => {
     }
   }, []);
 
-  const getStatusColor = useCallback((status: string) => {
+  const getStatusColor = useCallback((status: string): string => {
     switch (status) {
       case 'completed': return 'bg-green-100 text-green-800 border-green-200';
       case 'in-progress': return 'bg-blue-100 text-blue-800 border-blue-200';
@@ -177,7 +190,7 @@ const CSMListPage: React.FC<CSMListPageProps> = ({ onSelectVendor }) => {
     }
   }, []);
 
-  const getStatusText = useCallback((status: string) => {
+  const getStatusText = useCallback((status: string): string => {
     switch (status) {
       case 'completed': return 'ประเมินแล้ว';
       case 'in-progress': return 'กำลังประเมิน';
@@ -187,28 +200,55 @@ const CSMListPage: React.FC<CSMListPageProps> = ({ onSelectVendor }) => {
     }
   }, []);
 
-  // Loading state
+  // =================== LOADING STATE ===================
   if (loading) {
     return (
       <div className="p-6 space-y-6">
         <div className="flex items-center justify-between">
-          <SkeletonLoader width="w-48" height="h-8" />
-          <SkeletonLoader width="w-32" height="h-10" />
+          <SkeletonLoader lines={1} className="w-48 h-8" />
+          <SkeletonLoader lines={1} className="w-32 h-10" />
         </div>
         <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <SkeletonLoader key={i} width="w-full" height="h-24" />
+          {Array.from({ length: 4 }, (_, i) => (
+            <SkeletonLoader key={i} lines={2} className="w-full h-24" />
           ))}
         </div>
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {Array.from({ length: 8 }).map((_, i) => (
-            <SkeletonLoader key={i} width="w-full" height="h-64" />
+          {Array.from({ length: 8 }, (_, i) => (
+            <SkeletonLoader key={i} lines={8} className="w-full h-64" />
           ))}
         </div>
       </div>
     );
   }
 
+  // =================== EMPTY STATE ===================
+  if (vendors.length === 0 && !loading) {
+    return (
+      <div className="p-6 space-y-6">
+        <ToastContainer toasts={toasts} onRemove={removeToast} />
+        
+        <div className="p-12 text-center bg-white rounded-lg shadow-sm dark:bg-gray-800">
+          <Building2 className="w-16 h-16 mx-auto mb-4 text-gray-400" />
+          <h3 className="mb-2 text-lg font-medium text-gray-900 dark:text-white">
+            ไม่พบข้อมูลผู้รับเหมา
+          </h3>
+          <p className="mb-6 text-gray-500 dark:text-gray-400">
+            ยังไม่มีข้อมูลผู้รับเหมาในระบบ กรุณาเพิ่มข้อมูลใหม่
+          </p>
+          <button
+            onClick={() => handleNavigate('/csm/vendors/add')}
+            className="flex items-center gap-2 px-4 py-2 mx-auto text-sm text-white bg-blue-600 rounded-lg hover:bg-blue-700"
+          >
+            <Plus className="w-4 h-4" />
+            เพิ่มผู้รับเหมาใหม่
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // =================== MAIN RENDER ===================
   return (
     <div className="min-h-screen p-6 space-y-6 bg-gray-50 dark:bg-gray-900">
       <ToastContainer toasts={toasts} onRemove={removeToast} />
@@ -227,7 +267,7 @@ const CSMListPage: React.FC<CSMListPageProps> = ({ onSelectVendor }) => {
           
           <div className="flex items-center gap-3">
             <button
-              onClick={handleRefresh}
+              onClick={() => void handleRefresh()}
               disabled={loading}
               className="flex items-center gap-2 px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-700 disabled:opacity-50"
             >
@@ -236,7 +276,7 @@ const CSMListPage: React.FC<CSMListPageProps> = ({ onSelectVendor }) => {
             </button>
             
             <button
-              onClick={() => window.location.href = '/csm/vendors/add'}
+              onClick={() => handleNavigate('/csm/vendors/add')}
               className="flex items-center gap-2 px-4 py-2 text-sm text-white bg-blue-600 rounded-lg hover:bg-blue-700"
             >
               <Plus className="w-4 h-4" />
@@ -434,8 +474,8 @@ const CSMListPage: React.FC<CSMListPageProps> = ({ onSelectVendor }) => {
                   
                   {/* Category Badge */}
                   <div className="mt-3">
-                    <span className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium ${categoryInfo?.color || 'bg-gray-100 text-gray-800'}`}>
-                      {categoryInfo?.name || vendor.category}
+                    <span className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium ${categoryInfo?.color ?? 'bg-gray-100 text-gray-800'}`}>
+                      {categoryInfo?.name ?? vendor.category}
                     </span>
                   </div>
                 </div>
@@ -482,15 +522,19 @@ const CSMListPage: React.FC<CSMListPageProps> = ({ onSelectVendor }) => {
                   )}
 
                   {/* Working Area */}
-                  {vendor.workingArea && vendor.workingArea.length > 0 && (
-                    <div className="flex items-center gap-2">
-                      <MapPin className="w-4 h-4 text-gray-400" />
-                      <span className="text-sm text-gray-600 dark:text-gray-400">
-                        {vendor.workingArea.slice(0, 2).join(', ')}
-                        {vendor.workingArea.length > 2 && ` +${vendor.workingArea.length - 2} เพิ่มเติม`}
-                      </span>
-                    </div>
-                  )}
+                  {(() => {
+                    const workingAreaInfo = safeWorkingAreaDisplay(vendor.workingArea, 2);
+                    
+                    return workingAreaInfo.display && (
+                      <div className="flex items-center gap-2">
+                        <MapPin className="w-4 h-4 text-gray-400" />
+                        <span className="text-sm text-gray-600 dark:text-gray-400">
+                          {workingAreaInfo.display}
+                          {workingAreaInfo.hasMore && ` +${workingAreaInfo.totalCount - 2} เพิ่มเติม`}
+                        </span>
+                      </div>
+                    );
+                  })()}
 
                   {/* Assessment Frequency */}
                   <div className="flex items-center gap-2">
@@ -510,7 +554,7 @@ const CSMListPage: React.FC<CSMListPageProps> = ({ onSelectVendor }) => {
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          window.location.href = `/csm/details/${vendor.vdCode}`;
+                          handleNavigate(`/csm/details/${vendor.vdCode}`);
                         }}
                         className="flex items-center gap-1 px-3 py-1.5 text-xs text-blue-600 hover:text-blue-800 border border-blue-200 rounded-md hover:bg-blue-50 dark:text-blue-400 dark:border-blue-400 dark:hover:bg-blue-900/20"
                       >
@@ -521,7 +565,7 @@ const CSMListPage: React.FC<CSMListPageProps> = ({ onSelectVendor }) => {
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          window.location.href = `/csm/vendors/edit/${vendor.vdCode}`;
+                          handleNavigate(`/csm/vendors/edit/${vendor.vdCode}`);
                         }}
                         className="flex items-center gap-1 px-3 py-1.5 text-xs text-gray-600 hover:text-gray-800 border border-gray-200 rounded-md hover:bg-gray-50 dark:text-gray-400 dark:border-gray-400 dark:hover:bg-gray-700"
                       >
@@ -547,7 +591,7 @@ const CSMListPage: React.FC<CSMListPageProps> = ({ onSelectVendor }) => {
           })}
         </div>
       ) : (
-        /* Empty State */
+        /* Filtered Empty State */
         <div className="p-12 text-center bg-white rounded-lg shadow-sm dark:bg-gray-800">
           <Building2 className="w-16 h-16 mx-auto mb-4 text-gray-400" />
           <h3 className="mb-2 text-lg font-medium text-gray-900 dark:text-white">
@@ -575,7 +619,7 @@ const CSMListPage: React.FC<CSMListPageProps> = ({ onSelectVendor }) => {
               </button>
             )}
             <button
-              onClick={() => window.location.href = '/csm/vendors/add'}
+              onClick={() => handleNavigate('/csm/vendors/add')}
               className="flex items-center gap-2 px-4 py-2 text-sm text-white bg-blue-600 rounded-lg hover:bg-blue-700"
             >
               <Plus className="w-4 h-4" />
@@ -647,16 +691,16 @@ const CSMListPage: React.FC<CSMListPageProps> = ({ onSelectVendor }) => {
       <div className="fixed z-50 bottom-6 right-6">
         <div className="flex flex-col gap-3">
           <button
-            onClick={() => window.location.href = '/csm/reports'}
-            className="flex items-center justify-center w-12 h-12 text-white bg-green-600 rounded-full shadow-lg hover:bg-green-700"
+            onClick={() => handleNavigate('/csm/reports')}
+            className="flex items-center justify-center w-12 h-12 text-white transition-colors bg-green-600 rounded-full shadow-lg hover:bg-green-700"
             title="รายงาน"
           >
             <BarChart3 className="w-6 h-6" />
           </button>
           
           <button
-            onClick={() => window.location.href = '/csm/vendors/add'}
-            className="flex items-center justify-center w-12 h-12 text-white bg-blue-600 rounded-full shadow-lg hover:bg-blue-700"
+            onClick={() => handleNavigate('/csm/vendors/add')}
+            className="flex items-center justify-center w-12 h-12 text-white transition-colors bg-blue-600 rounded-full shadow-lg hover:bg-blue-700"
             title="เพิ่มผู้รับเหมา"
           >
             <Plus className="w-6 h-6" />

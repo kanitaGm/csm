@@ -1,234 +1,221 @@
-// ================================
-// Fully Fixed csmService.ts - แก้ไข All TypeScript Errors
-// ไฟล์: src/services/csmService.ts
-// ================================
-
+// 📁 src/services/csmService.ts - Strict TypeScript with Real Data Only
 import { 
-  collection, 
-  doc, 
-  getDocs, 
-  getDoc, 
-  updateDoc, 
-  deleteDoc, 
-  query, 
-  where, 
-  orderBy, 
-  limit, 
-  Timestamp, 
-  FieldValue
+  collection, doc, getDocs, getDoc, addDoc, updateDoc,  
+  query, where, orderBy, limit,  Timestamp,    
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
-//import { parseDate } from '../utils/dateUtils'; 
 import type { 
-  CSMFormDoc, 
-  CSMAssessment, 
-  CSMAssessmentDoc, 
-  CSMAssessmentSummary, 
-  CSMVendor, 
-  CSMAssessmentAnswer, 
-  CSMFormField, 
-  //DateInput
+  CSMFormDoc, CSMAssessmentDoc, CSMAssessmentSummary, 
+  CSMVendor, CSMAssessmentAnswer
 } from '../types';
 import { cacheService } from './cacheService';
-import { CircuitBreaker } from '../utils/circuitBreaker';
 
-// =================== TYPE DEFINITIONS ===================
-type FirestoreData = {
-  [x: string]: FieldValue | Partial<unknown> | undefined;
+// =================== CONSTANTS ===================
+const COLLECTIONS = {
+  CSM_VENDORS: 'csmVendors',
+  CSM_FORMS: 'csmForms', 
+  CSM_ASSESSMENTS: 'csmAssessments',
+  COMPANIES: 'companies'
+} as const;
+
+const CACHE_DURATIONS = {
+  VENDORS: 30, // 30 minutes
+  FORMS: 60,   // 1 hour
+  ASSESSMENTS: 15 // 15 minutes
+} as const;
+
+// =================== TYPE GUARDS ===================
+const isValidString = (value: unknown): value is string => {
+  return typeof value === 'string' && value.length > 0;
 };
 
-interface CircuitBreakerMetrics {
-  readonly successCount: number;
-  readonly failureCount: number;
-  readonly avgResponseTime: number;
-}
+const isValidArray = <T>(value: unknown): value is T[] => {
+  return Array.isArray(value);
+};
 
-// =================== ENHANCED CIRCUIT BREAKER ===================
-class EnhancedCircuitBreaker extends CircuitBreaker {
-  private metrics: CircuitBreakerMetrics = {
-    successCount: 0,
-    failureCount: 0,
-    avgResponseTime: 0
-  };
+const isValidDate = (value: unknown): value is Date => {
+  return value instanceof Date && !isNaN(value.getTime());
+};
 
-  constructor(threshold: number, timeout: number) {
-    super({
-      failureThreshold: threshold,
-      resetTimeout: timeout,
-      monitoringPeriod: 10000
-    });
-  }
+const isTimestamp = (value: unknown): value is Timestamp => {
+  return value !== null && 
+         typeof value === 'object' && 
+         'seconds' in (value as object) && 
+         'nanoseconds' in (value as object);
+};
 
-  async execute<T>(operation: () => Promise<T>): Promise<T> {
-    const startTime = Date.now();
-    
-    try {
-      const result = await super.execute(operation);
-      this.metrics = {
-        ...this.metrics,
-        successCount: this.metrics.successCount + 1
-      };
-      this.updateResponseTime(Date.now() - startTime);
-      return result;
-    } catch (error) {
-      this.metrics = {
-        ...this.metrics,
-        failureCount: this.metrics.failureCount + 1
-      };
-      throw error;
-    }
-  }
-
-  private updateResponseTime(time: number): void {
-    const total = this.metrics.successCount + this.metrics.failureCount;
-    this.metrics = {
-      ...this.metrics,
-      avgResponseTime: (this.metrics.avgResponseTime * (total - 1) + time) / total
-    };
-  }
-
-  // แก้ไข: เปลี่ยนจาก private เป็น public method
-  getMetrics(): CircuitBreakerMetrics {
-    return { ...this.metrics };
-  }
-}
-
-// สร้าง enhanced circuit breaker instance
-const firestoreCircuitBreaker = new EnhancedCircuitBreaker(5, 60000);
-
-// =================== UTILITY FUNCTIONS ===================
-/**
- * ลบค่า undefined ออกจาก object ก่อนส่งไปยัง Firestore
- */
-const cleanUndefinedValues = (obj: unknown): unknown => {
-  if (obj === null || obj === undefined) {
+// =================== DATA VALIDATION ===================
+const normalizeVendorData = (docData: unknown): CSMVendor | null => {
+  if (!docData || typeof docData !== 'object') {
+    console.error('Invalid vendor document data:', docData);
     return null;
   }
+
+  const data = docData as Record<string, unknown>;
   
-  if (Array.isArray(obj)) {
-    return obj.map(item => cleanUndefinedValues(item));
+  // Required fields validation
+  if (!isValidString(data.vdCode) || !isValidString(data.vdName) || !isValidString(data.companyId)) {
+    console.error('Missing required vendor fields:', data);
+    return null;
   }
-  
-  if (typeof obj === 'object' && obj.constructor === Object) {
-    const cleaned: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(obj)) {
-      if (value !== undefined) {
-        cleaned[key] = cleanUndefinedValues(value);
-      }
-    }
-    return cleaned;
+
+  // Normalize working area
+  let workingArea: string[] = [];
+  if (isValidArray<string>(data.workingArea)) {
+    workingArea = data.workingArea.filter(isValidString);
+  } else if (isValidString(data.workingArea)) {
+    workingArea = [data.workingArea];
   }
-  
-  return obj;
+
+  // Normalize dates
+  let createdAt: Date = new Date();
+  let updatedAt: Date = new Date();
+
+  if (isTimestamp(data.createdAt)) {
+    createdAt = data.createdAt.toDate();
+  } else if (isValidDate(data.createdAt)) {
+    createdAt = data.createdAt;
+  } else if (isValidString(data.createdAt)) {
+    createdAt = new Date(data.createdAt);
+  }
+
+  if (isTimestamp(data.updatedAt)) {
+    updatedAt = data.updatedAt.toDate();
+  } else if (isValidDate(data.updatedAt)) {
+    updatedAt = data.updatedAt;
+  } else if (isValidString(data.updatedAt)) {
+    updatedAt = new Date(data.updatedAt);
+  }
+
+  return {
+    id: isValidString(data.id) ? data.id : undefined,
+    companyId: data.companyId,
+    vdCode: data.vdCode,
+    vdName: data.vdName,
+    freqAss: isValidString(data.freqAss) ? data.freqAss : '1year',
+    isActive: data.isActive === true,
+    category: isValidString(data.category) ? data.category : '1',
+    workingArea,
+    createdAt,
+    updatedAt
+  };
 };
 
-/**
- * เตรียมข้อมูลสำหรับ Firestore โดยลบค่า undefined และแปลง Date เป็น Timestamp
- */
-const prepareFirestoreData = (data: Record<string, unknown>): FirestoreData => {
-  const cleaned = cleanUndefinedValues(data) as Record<string, unknown>;
-  
-  // แปลง Date objects เป็น Firestore Timestamps
-  for (const [key, value] of Object.entries(cleaned)) {
-    if (value instanceof Date) {
-      cleaned[key] = Timestamp.fromDate(value);
-    }
+const normalizeAssessmentSummary = (docData: unknown): CSMAssessmentSummary | null => {
+  if (!docData || typeof docData !== 'object') {
+    return null;
   }
-  
-  return cleaned as FirestoreData;
+
+  const data = docData as Record<string, unknown>;
+
+  if (!isValidString(data.vdCode) || !isValidString(data.vdName)) {
+    return null;
+  }
+
+  let lastAssessmentDate = new Date();
+  if (isTimestamp(data.lastAssessmentDate)) {
+    lastAssessmentDate = data.lastAssessmentDate.toDate();
+  } else if (isValidDate(data.lastAssessmentDate)) {
+    lastAssessmentDate = data.lastAssessmentDate;
+  }
+
+  let updatedAt = new Date();
+  if (isTimestamp(data.updatedAt)) {
+    updatedAt = data.updatedAt.toDate();
+  } else if (isValidDate(data.updatedAt)) {
+    updatedAt = data.updatedAt;
+  }
+
+  const riskLevel = data.riskLevel as 'Low' | 'Moderate' | 'High' | '';
+  if (!['Low', 'Moderate', 'High', ''].includes(riskLevel)) {
+    console.warn('Invalid risk level:', riskLevel);
+  }
+
+  return {
+    vdCode: data.vdCode,
+    vdName: data.vdName,
+    lastAssessmentId: isValidString(data.lastAssessmentId) ? data.lastAssessmentId : '',
+    lastAssessmentDate,
+    totalScore: typeof data.totalScore === 'number' ? data.totalScore : 0,
+    avgScore: typeof data.avgScore === 'number' ? data.avgScore : 0,
+    riskLevel: ['Low', 'Moderate', 'High', ''].includes(riskLevel) ? riskLevel : '',
+    summaryByCategory: typeof data.summaryByCategory === 'object' ? 
+      data.summaryByCategory as Record<string, unknown> : {},
+    updatedAt
+  };
 };
 
-// =================== DATE CONVERSION UTILITIES ===================
-const DATE_CACHE = new Map<string, Date>();
-const MAX_CACHE_SIZE = 1000;
-
-// แก้ไข: สร้าง safe date conversion function
-const convertToDate = (timestamp: unknown): Date => {
-  if (timestamp instanceof Date) {
-    return timestamp;
-  }
-  
-  if (timestamp && typeof timestamp === 'object' && 'toDate' in timestamp) {
-    const firestoreTimestamp = timestamp as { toDate: () => Date };
-    return firestoreTimestamp.toDate();
-  }
-  
-  if (typeof timestamp === 'string') {
-    const parsed = new Date(timestamp);
-    return isNaN(parsed.getTime()) ? new Date() : parsed;
-  }
-  
-  if (typeof timestamp === 'number') {
-    return new Date(timestamp);
-  }
-  
-  return new Date();
-};
-
-const parseOptimizedDate = (dateValue: unknown): Date => {
-  // แก้ไข: ใช้ convertToDate แทน parseDate เพื่อ handle unknown types
-  const cacheKey = String(dateValue);
-  
-  if (DATE_CACHE.has(cacheKey)) {
-    return DATE_CACHE.get(cacheKey)!;
-  }
-  
-  const parsed = convertToDate(dateValue);
-  
-  // Prevent memory leak by limiting cache size
-  if (DATE_CACHE.size >= MAX_CACHE_SIZE) {
-    const firstKey = DATE_CACHE.keys().next().value;
-    if (firstKey) {
-      DATE_CACHE.delete(firstKey);
-    }
-  }
-  
-  DATE_CACHE.set(cacheKey, parsed);
-  return parsed;
-};
-
-// =================== CSM VENDORS SERVICES ===================
+// =================== VENDORS SERVICE ===================
 export const vendorsService = {
+  /**
+   * Get all active CSM vendors from Firestore
+   */
   async getAll(): Promise<CSMVendor[]> {
     const cacheKey = 'csm-vendors-all';
     const cached = cacheService.get<CSMVendor[]>(cacheKey);
     
     if (cached) {
+      console.log(`🔄 Loading ${cached.length} vendors from cache`);
       return cached;
     }
 
     try {
+      console.log('🔍 Fetching vendors from Firestore...');
+      
       const querySnapshot = await getDocs(
         query(
-          collection(db, 'csmVendors'),
+          collection(db, COLLECTIONS.CSM_VENDORS),
           where('isActive', '==', true),
           orderBy('vdName', 'asc')
-        )        
+        )
       );
-      const vendors = querySnapshot.docs.map(docSnap => ({
-        ...docSnap.data(),
-        id: docSnap.id
-      } as CSMVendor));
 
-      cacheService.set(cacheKey, vendors, 15); // Cache for 15 minutes
+      const vendors: CSMVendor[] = [];
+      
+      querySnapshot.docs.forEach(doc => {
+        const rawData = { id: doc.id, ...doc.data() };
+        const normalizedVendor = normalizeVendorData(rawData);
+        
+        if (normalizedVendor) {
+          vendors.push(normalizedVendor);
+        } else {
+          console.warn('Skipped invalid vendor document:', doc.id);
+        }
+      });
+
+      console.log(`✅ Loaded ${vendors.length} vendors from Firestore`);
+      
+      if (vendors.length > 0) {
+        cacheService.set(cacheKey, vendors, CACHE_DURATIONS.VENDORS);
+      }
+      
       return vendors;
+
     } catch (error) {
-      console.error('Error fetching CSM vendors:', error);
-      throw error;
+      console.error('❌ Error fetching vendors from Firestore:', error);
+      throw new Error('Failed to fetch vendors from database');
     }
   },
 
+  /**
+   * Search vendors by term
+   */
   async search(searchTerm: string): Promise<CSMVendor[]> {
+    if (!isValidString(searchTerm)) {
+      return this.getAll();
+    }
+
     try {
       const vendors = await this.getAll();
       const term = searchTerm.toLowerCase().trim();
       
-      if (!term) return vendors;
-
       return vendors.filter(vendor => 
         vendor.vdName.toLowerCase().includes(term) ||
         vendor.vdCode.toLowerCase().includes(term) ||
-        vendor.category.toLowerCase().includes(term)
+        vendor.category.toLowerCase().includes(term) ||
+        (vendor.workingArea && vendor.workingArea.some(area => 
+          area.toLowerCase().includes(term)
+        ))
       );
     } catch (error) {
       console.error('Error searching vendors:', error);
@@ -236,7 +223,14 @@ export const vendorsService = {
     }
   },
 
+  /**
+   * Get vendor by ID
+   */
   async getById(vendorId: string): Promise<CSMVendor | null> {
+    if (!isValidString(vendorId)) {
+      throw new Error('Invalid vendor ID');
+    }
+
     const cacheKey = `csm-vendor-${vendorId}`;
     const cached = cacheService.get<CSMVendor>(cacheKey);
     
@@ -245,20 +239,35 @@ export const vendorsService = {
     }
 
     try {
-      const docSnap = await getDoc(doc(db, 'csmVendors', vendorId));
-      if (docSnap.exists()) {
-        const vendor = { ...docSnap.data(), id: docSnap.id } as CSMVendor;
-        cacheService.set(cacheKey, vendor, 30);
+      const docSnap = await getDoc(doc(db, COLLECTIONS.CSM_VENDORS, vendorId));
+      
+      if (!docSnap.exists()) {
+        return null;
+      }
+
+      const rawData = { id: docSnap.id, ...docSnap.data() };
+      const vendor = normalizeVendorData(rawData);
+      
+      if (vendor) {
+        cacheService.set(cacheKey, vendor, CACHE_DURATIONS.VENDORS);
         return vendor;
       }
+      
       return null;
     } catch (error) {
-      console.error('Error fetching vendor:', error);
+      console.error('Error fetching vendor by ID:', error);
       throw error;
     }
   },
 
+  /**
+   * Get vendor by vendor code
+   */
   async getByVdCode(vdCode: string): Promise<CSMVendor | null> {
+    if (!isValidString(vdCode)) {
+      throw new Error('Invalid vendor code');
+    }
+
     const cacheKey = `csm-vendor-vdcode-${vdCode}`;
     const cached = cacheService.get<CSMVendor>(cacheKey);
     
@@ -269,20 +278,26 @@ export const vendorsService = {
     try {
       const querySnapshot = await getDocs(
         query(
-          collection(db, 'csmVendors'), 
+          collection(db, COLLECTIONS.CSM_VENDORS),
           where('vdCode', '==', vdCode),
           where('isActive', '==', true),
           limit(1)
         )
       );
       
-      if (!querySnapshot.empty) {
-        const docSnap = querySnapshot.docs[0];
-        const vendor = { ...docSnap.data(), id: docSnap.id } as CSMVendor;
-        
-        cacheService.set(cacheKey, vendor, 30);
+      if (querySnapshot.empty) {
+        return null;
+      }
+
+      const doc = querySnapshot.docs[0];
+      const rawData = { id: doc.id, ...doc.data() };
+      const vendor = normalizeVendorData(rawData);
+      
+      if (vendor) {
+        cacheService.set(cacheKey, vendor, CACHE_DURATIONS.VENDORS);
         return vendor;
       }
+      
       return null;
     } catch (error) {
       console.error('Error fetching vendor by vdCode:', error);
@@ -290,7 +305,14 @@ export const vendorsService = {
     }
   },
 
+  /**
+   * Get vendors by company ID
+   */
   async getByCompanyId(companyId: string): Promise<CSMVendor[]> {
+    if (!isValidString(companyId)) {
+      throw new Error('Invalid company ID');
+    }
+
     const cacheKey = `csm-vendors-company-${companyId}`;
     const cached = cacheService.get<CSMVendor[]>(cacheKey);
     
@@ -301,215 +323,143 @@ export const vendorsService = {
     try {
       const querySnapshot = await getDocs(
         query(
-          collection(db, 'csmVendors'),
+          collection(db, COLLECTIONS.CSM_VENDORS),
           where('companyId', '==', companyId),
           where('isActive', '==', true),
           orderBy('vdName', 'asc')
         )
       );
       
-      const vendors = querySnapshot.docs.map(docSnap => ({
-        id: docSnap.id,
-        ...docSnap.data()
-      } as CSMVendor));
+      const vendors: CSMVendor[] = [];
+      
+      querySnapshot.docs.forEach(doc => {
+        const rawData = { id: doc.id, ...doc.data() };
+        const vendor = normalizeVendorData(rawData);
+        
+        if (vendor) {
+          vendors.push(vendor);
+        }
+      });
 
-      cacheService.set(cacheKey, vendors, 20);
+      cacheService.set(cacheKey, vendors, CACHE_DURATIONS.VENDORS);
       return vendors;
+      
     } catch (error) {
       console.error('Error fetching vendors by companyId:', error);
       throw error;
     }
   },
 
+  /**
+   * Create new vendor
+   */
+  async create(vendorData: Omit<CSMVendor, 'id'>): Promise<string> {
+    // Validate required fields
+    if (!isValidString(vendorData.vdCode) || 
+        !isValidString(vendorData.vdName) || 
+        !isValidString(vendorData.companyId)) {
+      throw new Error('Missing required vendor fields');
+    }
+
+    // Check if vdCode already exists
+    const existing = await this.getByVdCode(vendorData.vdCode);
+    if (existing) {
+      throw new Error(`Vendor with code ${vendorData.vdCode} already exists`);
+    }
+
+    try {
+      const cleanedData = {
+        companyId: vendorData.companyId,
+        vdCode: vendorData.vdCode,
+        vdName: vendorData.vdName,
+        freqAss: vendorData.freqAss || '1year',
+        isActive: true,
+        category: vendorData.category || '1',
+        workingArea: isValidArray<string>(vendorData.workingArea) ? vendorData.workingArea : [],
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now()
+      };
+
+      const docRef = await addDoc(collection(db, COLLECTIONS.CSM_VENDORS), cleanedData);
+      
+      // Clear related caches
+      this.clearCache();
+      
+      return docRef.id;
+    } catch (error) {
+      console.error('Error creating vendor:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Update vendor
+   */
+  async update(vendorId: string, vendorData: Partial<CSMVendor>): Promise<void> {
+    if (!isValidString(vendorId)) {
+      throw new Error('Invalid vendor ID');
+    }
+
+    try {
+      const updateData: Record<string, unknown> = {
+        ...vendorData,
+        updatedAt: Timestamp.now()
+      };
+
+      // Remove undefined values
+      Object.keys(updateData).forEach(key => {
+        if (updateData[key] === undefined) {
+          delete updateData[key];
+        }
+      });
+
+      await updateDoc(doc(db, COLLECTIONS.CSM_VENDORS, vendorId), updateData);
+
+      // Clear related caches
+      this.clearCache();
+    } catch (error) {
+      console.error('Error updating vendor:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Soft delete vendor
+   */
+  async delete(vendorId: string): Promise<void> {
+    if (!isValidString(vendorId)) {
+      throw new Error('Invalid vendor ID');
+    }
+
+    try {
+      await updateDoc(doc(db, COLLECTIONS.CSM_VENDORS, vendorId), {
+        isActive: false,
+        updatedAt: Timestamp.now()
+      });
+
+      // Clear related caches
+      this.clearCache();
+    } catch (error) {
+      console.error('Error deleting vendor:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Clear vendor caches
+   */
   clearCache(): void {
     cacheService.clear();
   }
 };
 
-// =================== FORMS SERVICES ===================
-export const formsService = {
-  async getAll(): Promise<CSMFormDoc[]> {
-    try {
-      const querySnapshot = await getDocs(
-        query(collection(db, 'forms'), orderBy('updatedAt', 'desc'))
-      );
-      return querySnapshot.docs.map(docSnap => ({
-        ...docSnap.data(),
-        id: docSnap.id
-      } as CSMFormDoc));
-    } catch (error) {
-      console.error('Error fetching forms:', error);
-      throw error;
-    }
-  },
-
-  async getByFormCode(formCode: string): Promise<CSMFormDoc | null> {
-    try {
-      const querySnapshot = await getDocs(
-        query(collection(db, 'forms'), where('formCode', '==', formCode), limit(1))
-      );
-      if (!querySnapshot.empty) {
-        const docSnap = querySnapshot.docs[0];
-        return { ...docSnap.data(), id: docSnap.id } as CSMFormDoc;
-      }
-      return null;
-    } catch (error) {
-      console.error('Error fetching form by code:', error);
-      throw error;
-    }
-  },
-
-  async getCSMChecklist(): Promise<CSMFormDoc | null> {
-    const cacheKey = 'csm-checklist-form';
-    const cached = cacheService.get<CSMFormDoc>(cacheKey);
-    
-    if (cached) {
-      return cached;
-    }
-    
-    const form = await this.getByFormCode('CSMChecklist');
-    if (form) {
-      cacheService.set(cacheKey, form, 30);
-    }
-    
-    return form;
-  },
-
-  async update(formId: string, formData: Partial<CSMFormDoc>): Promise<void> {
-    try {
-      const cleanedData = prepareFirestoreData({
-        ...formData,
-        updatedAt: Timestamp.now()
-      });
-      
-      await updateDoc(doc(db, 'forms', formId), cleanedData);
-      this.clearFormCache();
-    } catch (error) {
-      console.error('Error updating form:', error);
-      throw error;
-    }
-  },
-
-  async delete(formId: string): Promise<void> {
-    try {
-      await deleteDoc(doc(db, 'forms', formId));
-      this.clearFormCache();
-    } catch (error) {
-      console.error('Error deleting form:', error);
-      throw error;
-    }
-  },
-
-  clearFormCache(): void {
-    cacheService.clear(); 
-  }
-};
-
-// =================== CSM ASSESSMENTS SERVICES ===================
-export const csmAssessmentsService = {
-  // Score calculation functions
-  calculateTotalScore: (answers: CSMAssessmentAnswer[], formFields: CSMFormField[]): number => {
-    return answers.reduce((total, answer) => {
-      const field = formFields.find(f => f.ckItem === answer.ckItem);
-      if (field && answer.score && answer.score !== 'n/a') {
-        const score = parseFloat(answer.score);
-        const weight = parseFloat(field.fScore || '1');
-        return total + (score * weight);
-      }
-      return total;
-    }, 0);
-  },
-
-  calculateAverageScore: (answers: CSMAssessmentAnswer[], formFields: CSMFormField[]): number => {
-    let totalWeightedScore = 0;
-    let totalWeight = 0;
-
-    answers.forEach(answer => {
-      const field = formFields.find(f => f.ckItem === answer.ckItem);
-      if (field && answer.score && answer.score !== 'n/a') {
-        const score = parseFloat(answer.score);
-        const weight = parseFloat(field.fScore || '1');
-        totalWeightedScore += score * weight;
-        totalWeight += weight;
-      }
-    });
-
-    return totalWeight > 0 ? totalWeightedScore / totalWeight : 0;
-  },
-
-  calculateMaxScore: (answers: CSMAssessmentAnswer[], formFields: CSMFormField[]): number => {
-    return answers.reduce((max, answer) => {
-      const field = formFields.find(f => f.ckItem === answer.ckItem);
-      if (field && answer.score && answer.score !== 'n/a') {
-        const weight = parseFloat(field.fScore || '1');
-        return max + (2 * weight); // Assuming max individual score is 2
-      }
-      return max;
-    }, 0);
-  },
-
-  async getAll(): Promise<CSMAssessmentDoc[]> {
-    const cacheKey = 'csm-assessments-all';
-    const cached = cacheService.get<CSMAssessmentDoc[]>(cacheKey);
-    
-    if (cached) {
-      return cached;
-    }
-
-    try {
-      const querySnapshot = await firestoreCircuitBreaker.execute(async () => {
-        return await getDocs(
-          query(collection(db, 'csmAssessments'), orderBy('updatedAt', 'desc'))
-        );
-      });
-      
-      const assessments = querySnapshot.docs.map(docSnap => ({
-        id: docSnap.id,
-        ...docSnap.data()
-      } as CSMAssessmentDoc));
-
-      cacheService.set(cacheKey, assessments, 10);
-      return assessments;
-    } catch (error) {
-      console.error('Error fetching assessments:', error);
-      throw error;
-    }
-  },
-
-  async getByVdCode(vdCode: string): Promise<CSMAssessmentDoc[]> {
-    const cacheKey = `csm-assessments-${vdCode}`;
-    const cached = cacheService.get<CSMAssessmentDoc[]>(cacheKey);
-    
-    if (cached) {
-      return cached;
-    }
-
-    try {
-      const querySnapshot = await firestoreCircuitBreaker.execute(async () => {
-        return await getDocs(
-          query(
-            collection(db, 'csmAssessments'),
-            where('vdCode', '==', vdCode),
-            orderBy('createdAt', 'desc')
-          )
-        );
-      });
-
-      const assessments = querySnapshot.docs.map(docSnap => ({
-        id: docSnap.id,
-        ...docSnap.data()
-      } as CSMAssessmentDoc));
-
-      cacheService.set(cacheKey, assessments, 15);
-      return assessments;
-    } catch (error) {
-      console.error('Error fetching assessments by vdCode:', error);
-      throw error;
-    }
-  },
-
-  async getSummariesByCompany(companyId: string): Promise<CSMAssessmentSummary[]> {
-    const cacheKey = `csm-summaries-${companyId}`;
+// =================== ASSESSMENT SUMMARIES SERVICE ===================
+export const assessmentSummariesService = {
+  /**
+   * Get all assessment summaries from Firestore
+   */
+  async getAll(): Promise<CSMAssessmentSummary[]> {
+    const cacheKey = 'csm-assessment-summaries-all';
     const cached = cacheService.get<CSMAssessmentSummary[]>(cacheKey);
     
     if (cached) {
@@ -517,162 +467,219 @@ export const csmAssessmentsService = {
     }
 
     try {
-      const querySnapshot = await firestoreCircuitBreaker.execute(async () => {
-        return await getDocs(
-          query(
-            collection(db, 'csmAssessments'),
-            where('companyId', '==', companyId),
-            where('isActive', '==', true),
-            orderBy('updatedAt', 'desc')
-          )
-        );
-      });
+      const querySnapshot = await getDocs(
+        query(
+          collection(db, 'csmAssessmentSummaries'),
+          orderBy('updatedAt', 'desc')
+        )
+      );
 
-      // Group by vdCode and get latest assessment for each vendor
-      const assessmentsByVendor = new Map<string, CSMAssessmentDoc>();
+      const summaries: CSMAssessmentSummary[] = [];
       
-      querySnapshot.docs.forEach(docSnap => {
-        const assessment = { id: docSnap.id, ...docSnap.data() } as CSMAssessmentDoc;
-        const existing = assessmentsByVendor.get(assessment.vdCode);
+      querySnapshot.docs.forEach(doc => {
+        const rawData = doc.data();
+        const summary = normalizeAssessmentSummary(rawData);
         
-        // แก้ไข: ใช้ convertToDate แทน new Date เพื่อ handle unknown types
-        if (!existing || convertToDate(assessment.updatedAt) > convertToDate(existing.updatedAt)) {
-          assessmentsByVendor.set(assessment.vdCode, assessment);
+        if (summary) {
+          summaries.push(summary);
         }
       });
 
-      const summaries: CSMAssessmentSummary[] = Array.from(assessmentsByVendor.values()).map(assessment => {
-        // แก้ไข: cast เป็น any เพื่อ access dynamic properties safely
-        const assessmentData = assessment as unknown as Record<string, unknown>;
-        return {
-          vdCode: assessment.vdCode,
-          vdName: assessment.vdName,
-          lastAssessmentId: assessment.id,
-          lastAssessmentDate: parseOptimizedDate(assessment.updatedAt), // แก้ไข: ใช้ parseOptimizedDate
-          totalScore: parseFloat(String(assessmentData.totalScore || assessmentData.finalScore || '0')),
-          avgScore: parseFloat(String(assessmentData.avgScore || '0')),
-          riskLevel: this.calculateRiskLevel(parseFloat(String(assessmentData.avgScore || '0'))),
-          updatedAt: parseOptimizedDate(assessment.updatedAt) // แก้ไข: ใช้ parseOptimizedDate
-        };
-      });
-
-      cacheService.set(cacheKey, summaries, 10);
+      cacheService.set(cacheKey, summaries, CACHE_DURATIONS.ASSESSMENTS);
       return summaries;
+      
     } catch (error) {
       console.error('Error fetching assessment summaries:', error);
-      throw error;
+      return []; // Return empty array instead of throwing
     }
   },
 
-  calculateRiskLevel(avgScore: number): 'Low' | 'Moderate' | 'High' | '' {
-    if (avgScore >= 1.5) return 'Low';
-    if (avgScore >= 1.0) return 'Moderate'; 
-    if (avgScore > 0) return 'High';
-    return '';
-  },
+  /**
+   * Get assessment summary by vendor code
+   */
+  async getByVdCode(vdCode: string): Promise<CSMAssessmentSummary | null> {
+    if (!isValidString(vdCode)) {
+      return null;
+    }
 
-  async update(assessmentId: string, updates: Partial<CSMAssessment>): Promise<void> {
     try {
-      const cleanedData = prepareFirestoreData({
-        ...updates,
-        updatedAt: Timestamp.now()
-      });
-      
-      await updateDoc(doc(db, 'csmAssessments', assessmentId), cleanedData);
-      await this.clearAssessmentCaches();
+      const summaries = await this.getAll();
+      return summaries.find(s => s.vdCode === vdCode) || null;
     } catch (error) {
-      console.error('Error updating assessment:', error);
-      throw error;
+      console.error('Error fetching assessment summary:', error);
+      return null;
     }
-  },
+  }
+};
 
-  async delete(assessmentId: string): Promise<void> {
-    try {
-      await deleteDoc(doc(db, 'csmAssessments', assessmentId));
-      await this.clearAssessmentCaches();
-    } catch (error) {
-      console.error('Error deleting assessment:', error);
-      throw error;
-    }
-  },
-
-  isAssessmentComplete(answers: CSMAssessmentAnswer[]): boolean {
-    return answers.every(answer => 
-      answer.comment.trim() !== '' && 
-      answer.score && 
-      answer.score !== '' &&
-      answer.isFinish === true
-    );
-  },
-
-  async getStatistics(): Promise<{
-    totalAssessments: number;
-    activeAssessments: number;
-    vendorsAssessed: number;
-    averageScore: number;
-  }> {
-    const cacheKey = 'csm-stats';
-    const cached = cacheService.get<{
-      totalAssessments: number;
-      activeAssessments: number;
-      vendorsAssessed: number;
-      averageScore: number;
-    }>(cacheKey);
+// =================== FORMS SERVICE ===================
+export const formsService = {
+  /**
+   * Get all CSM forms from Firestore
+   */
+  async getAll(): Promise<CSMFormDoc[]> {
+    const cacheKey = 'csm-forms-all';
+    const cached = cacheService.get<CSMFormDoc[]>(cacheKey);
     
     if (cached) {
       return cached;
     }
 
     try {
-      const assessments = await this.getAll();
-      const activeAssessments = assessments.filter(a => a.isActive);
-      const uniqueVendors = new Set(assessments.map(a => a.vdCode));
+      const querySnapshot = await getDocs(
+        query(
+          collection(db, COLLECTIONS.CSM_FORMS),
+          where('isActive', '==', true),
+          orderBy('updatedAt', 'desc')
+        )
+      );
       
-      const totalScore = activeAssessments.reduce((sum, assessment) => {
-        const assessmentData = assessment as unknown as Record<string, unknown>;
-        return sum + parseFloat(String(assessmentData.avgScore || '0'));
-      }, 0);
+      const forms = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      } as CSMFormDoc));
+
+      cacheService.set(cacheKey, forms, CACHE_DURATIONS.FORMS);
+      return forms;
       
-      const averageScore = activeAssessments.length > 0 ? totalScore / activeAssessments.length : 0;
-
-      const stats = {
-        totalAssessments: assessments.length,
-        activeAssessments: activeAssessments.length,
-        vendorsAssessed: uniqueVendors.size,
-        averageScore: Math.round(averageScore * 100) / 100
-      };
-
-      cacheService.set(cacheKey, stats, 10);
-      return stats;
     } catch (error) {
-      console.error('Error getting statistics:', error);
-      return {
-        totalAssessments: 0,
-        activeAssessments: 0,
-        vendorsAssessed: 0,
-        averageScore: 0
-      };
+      console.error('Error fetching forms:', error);
+      throw error;
     }
   },
 
-  async clearAssessmentCaches(vdCode?: string): Promise<void> {
-    if (vdCode) {
-      // แก้ไข: ใช้ cacheService.clear() แทน cacheService.delete() ที่ไม่มี
-      cacheService.clear();
-    } else {
-      await cacheService.clear();
+  /**
+   * Get form by code
+   */
+  async getByFormCode(formCode: string): Promise<CSMFormDoc | null> {
+    if (!isValidString(formCode)) {
+      return null;
     }
-  },
 
-  // แก้ไข: ปรับ return type ให้ตรงกับ method ใน class
-  getCircuitBreakerMetrics(): CircuitBreakerMetrics {
-    return firestoreCircuitBreaker.getMetrics();
+    try {
+      const forms = await this.getAll();
+      return forms.find(form => form.formCode === formCode) || null;
+    } catch (error) {
+      console.error('Error fetching form by code:', error);
+      return null;
+    }
   }
 };
 
-// Main export object
-export default {
-  vendors: vendorsService,
-  forms: formsService,
-  assessments: csmAssessmentsService
+// =================== ASSESSMENTS SERVICE ===================
+export const assessmentsService = {
+  /**
+   * Get all assessments from Firestore
+   */
+  async getAll(): Promise<CSMAssessmentDoc[]> {
+    try {
+      const querySnapshot = await getDocs(
+        query(
+          collection(db, COLLECTIONS.CSM_ASSESSMENTS),
+          orderBy('createdAt', 'desc')
+        )
+      );
+      
+      return querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      } as CSMAssessmentDoc));
+      
+    } catch (error) {
+      console.error('Error fetching assessments:', error);
+      return [];
+    }
+  },
+
+  /**
+   * Get assessment by vendor code
+   */
+  async getByVdCode(vdCode: string): Promise<CSMAssessmentDoc[]> {
+    if (!isValidString(vdCode)) {
+      return [];
+    }
+
+    try {
+      const querySnapshot = await getDocs(
+        query(
+          collection(db, COLLECTIONS.CSM_ASSESSMENTS),
+          where('vdCode', '==', vdCode),
+          orderBy('createdAt', 'desc')
+        )
+      );
+      
+      return querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      } as CSMAssessmentDoc));
+      
+    } catch (error) {
+      console.error('Error fetching assessments by vdCode:', error);
+      return [];
+    }
+  }
 };
+
+// =================== UTILITY FUNCTIONS ===================
+export const calculateAssessmentScore = (answers: CSMAssessmentAnswer[]): {
+  totalScore: number;
+  maxScore: number;
+  avgScore: number;
+  riskLevel: 'Low' | 'Moderate' | 'High';
+} => {
+  const validAnswers = answers.filter(answer => 
+    answer.score && answer.score !== 'n/a' && !isNaN(Number(answer.score))
+  );
+
+  if (validAnswers.length === 0) {
+    return {
+      totalScore: 0,
+      maxScore: 0,
+      avgScore: 0,
+      riskLevel: 'High'
+    };
+  }
+
+  const totalScore = validAnswers.reduce((sum, answer) => {
+    const score = Number(answer.score) || 0;
+    const weight = Number(answer.tScore) || 5;
+    return sum + (score * weight);
+  }, 0);
+
+  const maxScore = validAnswers.reduce((sum, answer) => {
+    const weight = Number(answer.tScore) || 5;
+    return sum + (5 * weight);
+  }, 0);
+
+  const avgScore = maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0;
+
+  let riskLevel: 'Low' | 'Moderate' | 'High';
+  if (avgScore >= 80) {
+    riskLevel = 'Low';
+  } else if (avgScore >= 60) {
+    riskLevel = 'Moderate';
+  } else {
+    riskLevel = 'High';
+  }
+
+  return {
+    totalScore: Math.round(totalScore),
+    maxScore: Math.round(maxScore),
+    avgScore,
+    riskLevel
+  };
+};
+
+// =================== EXPORT DEFAULT SERVICE ===================
+const csmService = {
+  vendors: vendorsService,
+  assessmentSummaries: assessmentSummariesService,
+  forms: formsService,
+  assessments: assessmentsService,
+  utils: {
+    calculateAssessmentScore
+  }
+};
+
+export default csmService;
+//export { vendorsService, assessmentSummariesService, formsService, assessmentsService };

@@ -1,9 +1,8 @@
-// src/hooks/useCSMData.ts (แก้ไข TypeScript Strict)
-// ================================
-
-import { useCallback , useState} from 'react';
+// 📁 src/hooks/useCSMData.ts
+// Strict TypeScript CSM Data hook - Real data only
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { CSMVendor, CSMAssessmentSummary } from '../types/csm';
-//import { vendorsService } from '../services/csmService';
+import { vendorsService, assessmentSummariesService } from '../services/csmService';
 
 interface CSMDataState {
   readonly vendors: readonly CSMVendor[];
@@ -21,7 +20,9 @@ interface CSMDataActions {
   readonly updateAssessmentSummary: (summary: CSMAssessmentSummary) => void;
 }
 
-export const useCSMData = (companyId?: string): CSMDataState & CSMDataActions => {
+type UseCSMDataReturn = CSMDataState & CSMDataActions;
+
+export const useCSMData = (companyId?: string): UseCSMDataReturn => {
   const [state, setState] = useState<CSMDataState>({
     vendors: [],
     assessmentSummaries: [],
@@ -30,37 +31,70 @@ export const useCSMData = (companyId?: string): CSMDataState & CSMDataActions =>
     lastUpdated: null
   });
 
+  const isLoadingRef = useRef<boolean>(false);
+  const isMountedRef = useRef<boolean>(true);
+
+  // Set mounted flag
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
   const loadData = useCallback(async (): Promise<void> => {
+    if (isLoadingRef.current) {
+      console.log('🔄 Already loading data, skipping...');
+      return;
+    }
+
+    isLoadingRef.current = true;
+    
+    if (!isMountedRef.current) return;
+    
     setState(prev => ({ ...prev, loading: true, error: null }));
 
     try {
-      const { enhancedVendorsService, enhancedAssessmentsService } = await import('../services/enhancedCsmService');
-
+      console.log('📡 Loading CSM data from Firestore...');
+      
       const [vendorsData, summariesData] = await Promise.all([
-        enhancedVendorsService.getAll(),
-        companyId ? enhancedAssessmentsService.getSummariesByCompany(companyId) : Promise.resolve([])
+        vendorsService.getAll(),
+        assessmentSummariesService.getAll()
       ]);
+
+      if (!isMountedRef.current) return;
+
+      console.log(`✅ Loaded ${vendorsData.length} vendors and ${summariesData.length} summaries`);
 
       setState(prev => ({
         ...prev,
         vendors: vendorsData,
         assessmentSummaries: summariesData,
         loading: false,
+        error: null,
         lastUpdated: new Date()
       }));
+
     } catch (error) {
-      console.error('Error loading CSM data:', error);
+      console.error('❌ Error loading CSM data:', error);
+      
+      if (!isMountedRef.current) return;
+
+      const errorMessage = error instanceof Error ? error.message : 'เกิดข้อผิดพลาดในการโหลดข้อมูล';
+      
       setState(prev => ({
         ...prev,
         loading: false,
-        error: error instanceof Error ? error.message : 'เกิดข้อผิดพลาดในการโหลดข้อมูล'
+        error: errorMessage
       }));
+    } finally {
+      isLoadingRef.current = false;
     }
   }, [companyId]);
 
   const refreshData = useCallback(async (): Promise<void> => {
-    const { enhancedVendorsService } = await import('../services/enhancedCsmService');
-    enhancedVendorsService.clearCache();
+    console.log('🔄 Refreshing CSM data...');
+    vendorsService.clearCache();
     await loadData();
   }, [loadData]);
 

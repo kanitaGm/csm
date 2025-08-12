@@ -1,10 +1,11 @@
 // 📁 src/components/ui/SkeletonLoader.tsx
+// Strict TypeScript SkeletonLoader with proper props
 import React from 'react';
 
 interface SkeletonLoaderProps {
-  lines?: number;
-  className?: string;
-  animated?: boolean;
+  readonly lines?: number;
+  readonly className?: string;
+  readonly animated?: boolean;
 }
 
 export const SkeletonLoader: React.FC<SkeletonLoaderProps> = ({ 
@@ -14,7 +15,7 @@ export const SkeletonLoader: React.FC<SkeletonLoaderProps> = ({
 }) => {
   return (
     <div className={`space-y-3 ${className}`}>
-      {Array.from({ length: lines }).map((_, i) => (
+      {Array.from({ length: lines }, (_, i) => (
         <div
           key={i}
           className={`h-4 bg-gray-200 dark:bg-gray-700 rounded ${
@@ -41,3 +42,5 @@ export const CardSkeleton: React.FC = () => (
     </div>
   </div>
 );
+
+export default SkeletonLoader;

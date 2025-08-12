@@ -1,13 +1,9 @@
 // 📁 src/components/ui/ToastContainer.tsx 
+// Practical TypeScript without excessive readonly
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CheckCircle, AlertTriangle, Info, X } from 'lucide-react';
-import type { Toast } from '../../hooks/useToast';
-
-interface ToastContainerProps {
-  toasts: Toast[];
-  onRemove: (id: string) => void;
-}
+import type { ToastContainerProps } from '../../types';
 
 export const ToastContainer: React.FC<ToastContainerProps> = ({ toasts, onRemove }) => {
   return (
