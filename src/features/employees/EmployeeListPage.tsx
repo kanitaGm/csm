@@ -11,7 +11,7 @@ import {
   FaUserCircle, FaBuilding,  FaIdCard
 } from 'react-icons/fa';
 import { EmployeeService } from '../../services/employeeService';
-import {  usePagination } from '../../hooks/useVirtualList';
+import {  usePagination } from '../../hooks/usePagination';
 import type {   EmployeeProfile,   EmployeeFilters,    
 } from '../../services/employeeService';
 //import type {PaginationState,ViewModeOption} from '../../types';

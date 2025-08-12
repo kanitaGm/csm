@@ -1,12 +1,7 @@
+// ================================
+// Updated Hooks Index with All Exports
 // ไฟล์: src/hooks/index.ts
 // ================================
-// Re-export existing hooks ที่ไม่ได้แก้ไข
-export { useToast } from './useToast';
-export { useAuth } from '../contexts/AuthContext';
-//export { useApi } from './useApi';
-export { useFormValidation } from './useFormValidation';
-export { usePagination } from './usePagination';
-export { useAccessibility } from './useAccessibility';
 
 // Enhanced CSM-specific hooks (ใหม่/ปรับปรุงแล้ว)
 export { useOptimizedScoreCalculation } from './useOptimizedScore';
@@ -15,27 +10,35 @@ export { useVirtualList } from './useVirtualList';
 export { useDebouncedValue } from './useDebouncedValue';
 export { useCSMData } from './useCSMData';
 
-// Performance and monitoring hooks (ใหม่)
-export { usePerformanceTracking } from '../utils/performanceMonitor';
-
-// Enhanced existing hooks (ปรับปรุงแล้ว)
+// UI และ Interaction hooks
+export { usePagination } from './usePagination';
+export { useDebounce } from './useDebounce';
 export { useKeyboardShortcuts } from './useKeyboardShortcuts';
 export { useLocalStorage } from './useLocalStorage';
 
-// Performance-related hooks and utilities
-export { usePerformanceMonitor } from './usePerformanceMonitor';
+// Performance and monitoring hooks
+export { usePerformanceTracking } from '../utils/performanceMonitor';
 export { useOfflineSync } from './useOfflineSync';
 
+// Re-export existing hooks (backward compatibility)
+export { useToast } from './useToast';
+export { useAuth } from '../contexts/AuthContext';
+//export { useApi } from './useApi';
+export { useFormValidation } from './useFormValidation';
+export { useAccessibility } from './useAccessibility';
+
 // Type exports for better TypeScript integration
-/*
 export type {
   ScoreCalculation,
-  AutoSaveOptions,
-  AutoSaveState,
-  VirtualListOptions,
-  VirtualListResult
-} from './types';
- */
+  //AutoSaveOptions,
+  //AutoSaveState,
+  //VirtualListOptions,
+  //VirtualListResult,
+  //PaginationResult
+} from './useOptimizedScore';
+
+// เพิ่ม type exports สำหรับ pagination
+export type { PaginationResult } from './usePagination';
 
 // Utility functions that work with hooks
 export {

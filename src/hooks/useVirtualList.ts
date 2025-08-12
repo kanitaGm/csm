@@ -263,7 +263,7 @@ export const useEnhancedVirtualList = <T>({
     isNearBottom,
     scrollToTop,
     scrollToBottom,
-    getVisibleRange
+    getVisibleRange 
   };
 };
 
