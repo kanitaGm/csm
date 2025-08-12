@@ -1,7 +1,7 @@
 // 📁 src/components/layout/MainLayout.tsx
-// Fixed MainLayout with proper CSM navigation and Outlet
+// Updated MainLayout with complete CSM navigation
 import React, { useState } from 'react';
-import { Outlet, useLocation } from 'react-router-dom';
+import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { 
   Menu, 
   X, 
@@ -12,21 +12,43 @@ import {
   Bell, 
   Search,
   ChevronDown,
+  ChevronUp,
   LogOut,
   Activity,
   BarChart3,
   Users,
   FileText,
   Calendar,
-  Building2
+  Building2,
+  Plus,
+  History,
+  TrendingUp,
+  CheckSquare
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
+
+interface SubMenuItem {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  href: string;
+  active: boolean;
+}
+
+interface MenuItem {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  href: string;
+  active: boolean;
+  submenu?: SubMenuItem[];
+}
 
 const MainLayout: React.FC = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const [expandedMenus, setExpandedMenus] = useState<string[]>(['csm']); // CSM เปิดอยู่ตอนเริ่มต้น
   const { user, logout } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
 
   if (!user) return null;
 
@@ -34,15 +56,62 @@ const MainLayout: React.FC = () => {
     ? `${user.profile.firstName} ${user.profile.lastName}`
     : String(user.profile.displayName ?? '');
 
-  // สร้าง sidebar items พร้อม CSM
-  const sidebarItems = [
-    { icon: Home, label: 'Dashboard', href: '/dashboard', active: location.pathname === '/dashboard' },
-    { icon: Building2, label: 'CSM Management', href: '/csm', active: location.pathname.startsWith('/csm') },
-    { icon: Users, label: 'Employees', href: '/employees', active: location.pathname.startsWith('/employees') },
-    { icon: Activity, label: 'Safety Reports', href: '/reports', active: location.pathname.startsWith('/reports') },
-    { icon: BarChart3, label: 'Analytics', href: '/analytics', active: location.pathname.startsWith('/analytics') },
-    { icon: FileText, label: 'Documents', href: '/documents', active: location.pathname.startsWith('/documents') },
-    { icon: Calendar, label: 'Schedule', href: '/schedule', active: location.pathname.startsWith('/schedule') },
+  // สร้าง CSM submenu
+  const csmSubmenu: SubMenuItem[] = [
+    { icon: Building2, label: 'รายการผู้รับเหมา', href: '/csm', active: location.pathname === '/csm' },
+    { icon: Plus, label: 'เพิ่มผู้รับเหมา', href: '/csm/vendors/add', active: location.pathname === '/csm/vendors/add' },
+    { icon: CheckSquare, label: 'ประเมิน CSM', href: '/csm/assessments', active: location.pathname.startsWith('/csm/e/') },
+    { icon: History, label: 'ประวัติการประเมิน', href: '/csm/assessments/history', active: location.pathname.includes('/assessments/history') },
+    { icon: BarChart3, label: 'รายงาน CSM', href: '/csm/reports', active: location.pathname === '/csm/reports' },
+    { icon: TrendingUp, label: 'วิเคราะห์ข้อมูล', href: '/csm/analytics', active: location.pathname === '/csm/analytics' },
+    { icon: Settings, label: 'ตั้งค่า CSM', href: '/csm/settings', active: location.pathname === '/csm/settings' },
+  ];
+
+  // สร้าง sidebar items พร้อม submenu
+  const sidebarItems: MenuItem[] = [
+    { 
+      icon: Home, 
+      label: 'Dashboard', 
+      href: '/dashboard', 
+      active: location.pathname === '/dashboard' 
+    },
+    { 
+      icon: Building2, 
+      label: 'CSM Management', 
+      href: '/csm', 
+      active: location.pathname.startsWith('/csm'),
+      submenu: csmSubmenu
+    },
+    { 
+      icon: Users, 
+      label: 'Employees', 
+      href: '/employees', 
+      active: location.pathname.startsWith('/employees') 
+    },
+    { 
+      icon: Activity, 
+      label: 'Safety Reports', 
+      href: '/reports', 
+      active: location.pathname.startsWith('/reports') && !location.pathname.startsWith('/reports') 
+    },
+    { 
+      icon: BarChart3, 
+      label: 'Analytics', 
+      href: '/analytics', 
+      active: location.pathname.startsWith('/analytics') && !location.pathname.includes('/csm/')
+    },
+    { 
+      icon: FileText, 
+      label: 'Documents', 
+      href: '/documents', 
+      active: location.pathname.startsWith('/documents') 
+    },
+    { 
+      icon: Calendar, 
+      label: 'Schedule', 
+      href: '/schedule', 
+      active: location.pathname.startsWith('/schedule') 
+    },
   ];
 
   // เพิ่ม admin panel สำหรับ admin/superadmin
@@ -60,8 +129,20 @@ const MainLayout: React.FC = () => {
     icon: Settings, 
     label: 'Settings', 
     href: '/settings', 
-    active: location.pathname.startsWith('/settings')
+    active: location.pathname.startsWith('/settings') && !location.pathname.includes('/csm/')
   });
+
+  const toggleMenu = (menuKey: string) => {
+    setExpandedMenus(prev => 
+      prev.includes(menuKey) 
+        ? prev.filter(key => key !== menuKey)
+        : [...prev, menuKey]
+    );
+  };
+
+  const handleNavigation = (href: string) => {
+    navigate(href);
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100">
@@ -74,84 +155,77 @@ const MainLayout: React.FC = () => {
               onClick={() => setIsSidebarOpen(!isSidebarOpen)}
               className="p-2 text-white transition-all duration-200 shadow-lg rounded-xl bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 hover:shadow-xl"
             >
-              {isSidebarOpen ? <X size={20} /> : <Menu size={20} />}
+              {isSidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
             </button>
-            <div className="flex items-center space-x-2">
-              <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-r from-green-500 to-emerald-500">
-                <Shield className="w-5 h-5 text-white" />
+            
+            <div className="flex items-center space-x-3">
+              <div className="flex items-center justify-center w-10 h-10 text-white rounded-xl bg-gradient-to-r from-blue-600 to-purple-600">
+                <Shield className="w-6 h-6" />
               </div>
-              <h1 className="text-2xl font-bold text-transparent bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text">
-                INSEE Safety
-              </h1>
+              <div>
+                <h1 className="text-xl font-bold text-gray-900">Safety System</h1>
+                <p className="text-sm text-gray-500">CSM Management Platform</p>
+              </div>
             </div>
           </div>
 
-          {/* Center - Search bar */}
-          <div className="flex-1 hidden max-w-lg mx-8 md:flex">
+          {/* Center - Search */}
+          <div className="flex-1 hidden max-w-md mx-8 md:flex">
             <div className="relative w-full">
-              <Search className="absolute w-5 h-5 text-gray-400 transform -translate-y-1/2 left-3 top-1/2" />
+              <Search className="absolute w-4 h-4 text-gray-400 transform -translate-y-1/2 left-3 top-1/2" />
               <input
                 type="text"
-                placeholder="ค้นหารายงาน, เอกสาร, หรือผู้ใช้..."
-                className="w-full pl-10 pr-4 py-2.5 bg-gray-50/80 backdrop-blur-sm border border-gray-200/50 rounded-xl focus:ring-2 focus:ring-green-500/20 focus:border-green-500 transition-all duration-200"
+                placeholder="ค้นหา..."
+                className="w-full py-2 pl-10 pr-4 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white/70 backdrop-blur-sm"
               />
             </div>
           </div>
 
-          {/* Right side - Notifications and user menu */}
+          {/* Right side - Notifications and User menu */}
           <div className="flex items-center space-x-4">
             {/* Notifications */}
-            <button className="relative p-2.5 text-gray-600 hover:text-green-600 hover:bg-green-50 rounded-xl transition-all duration-200">
-              <Bell size={20} />
-              <span className="absolute flex items-center justify-center w-5 h-5 text-xs text-white bg-red-500 rounded-full -top-1 -right-1">
-                3
-              </span>
+            <button className="relative p-2 text-gray-600 transition-colors hover:text-blue-600 hover:bg-blue-50 rounded-xl">
+              <Bell className="w-5 h-5" />
+              <span className="absolute w-2 h-2 bg-red-500 rounded-full top-1 right-1"></span>
             </button>
 
-            {/* User menu */}
+            {/* User Menu */}
             <div className="relative">
               <button
                 onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-                className="flex items-center p-2 space-x-3 transition-all duration-200 rounded-xl hover:bg-gray-50/80"
+                className="flex items-center p-2 space-x-3 transition-all duration-200 rounded-xl hover:bg-white/50 backdrop-blur-sm"
               >
-                <img
-                  src={`https://ui-avatars.com/api/?name=${encodeURIComponent(profileName)}&background=10b981&color=ffffff`}
-                  alt={profileName}
-                  className="object-cover w-10 h-10 rounded-full ring-2 ring-green-500/20"
-                />
-                <div className="hidden text-left md:block">
-                  <p className="text-sm font-semibold text-gray-900">{profileName}</p>
-                  <p className="text-xs text-gray-500 capitalize">{user.role}</p>
+                <div className="flex items-center justify-center w-8 h-8 text-white rounded-lg bg-gradient-to-r from-purple-500 to-pink-500">
+                  <User className="w-4 h-4" />
                 </div>
-                <ChevronDown size={16} className="text-gray-400" />
+                <div className="hidden text-left md:block">
+                  <p className="text-sm font-medium text-gray-900">{profileName}</p>
+                  <p className="text-xs text-gray-500">{user.role}</p>
+                </div>
+                <ChevronDown className="w-4 h-4 text-gray-500" />
               </button>
 
-              {/* User dropdown menu */}
+              {/* User Dropdown */}
               {isUserMenuOpen && (
-                <div className="absolute right-0 z-50 w-56 py-2 mt-2 border shadow-xl top-full bg-white/95 backdrop-blur-md rounded-xl border-white/20">
-                  <div className="px-4 py-3 border-b border-gray-100">
-                    <p className="text-sm font-semibold text-gray-900">{profileName}</p>
-                    <p className="text-xs text-gray-500">{user.empId}</p>
+                <div className="absolute right-0 z-50 w-48 mt-2 bg-white border border-gray-200 shadow-lg rounded-xl">
+                  <div className="py-1">
+                    <button className="flex items-center w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
+                      <User className="w-4 h-4 mr-3" />
+                      โปรไฟล์
+                    </button>
+                    <button className="flex items-center w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
+                      <Settings className="w-4 h-4 mr-3" />
+                      ตั้งค่า
+                    </button>
+                    <hr className="my-1" />
+                    <button
+                      onClick={logout}
+                      className="flex items-center w-full px-4 py-2 text-sm text-red-700 hover:bg-red-50"
+                    >
+                      <LogOut className="w-4 h-4 mr-3" />
+                      ออกจากระบบ
+                    </button>
                   </div>
-                  <a 
-                    href={`/profile/${user.empId || ''}`} 
-                    className="flex items-center px-4 py-2 text-sm text-gray-700 transition-colors hover:bg-green-50 hover:text-green-600"
-                  >
-                    <User size={16} className="mr-3" />
-                    โปรไฟล์
-                  </a>
-                  <a href="/settings" className="flex items-center px-4 py-2 text-sm text-gray-700 transition-colors hover:bg-green-50 hover:text-green-600">
-                    <Settings size={16} className="mr-3" />
-                    การตั้งค่า
-                  </a>
-                  <hr className="my-2 border-gray-100" />
-                  <button 
-                    onClick={logout}
-                    className="flex items-center w-full px-4 py-2 text-sm text-red-600 transition-colors hover:bg-red-50"
-                  >
-                    <LogOut size={16} className="mr-3" />
-                    ออกจากระบบ
-                  </button>
                 </div>
               )}
             </div>
@@ -161,37 +235,105 @@ const MainLayout: React.FC = () => {
 
       <div className="flex">
         {/* Sidebar */}
-        <aside className={`${
-          isSidebarOpen ? 'w-72' : 'w-20'
-        } bg-white/70 backdrop-blur-md shadow-xl border-r border-white/20 transition-all duration-300 min-h-[calc(100vh-80px)]`}>
-          <nav className="p-4 space-y-2">
-            {sidebarItems.map((item, index) => (
-              <a
-                key={index}
-                href={item.href}
-                className={`flex items-center space-x-3 px-4 py-3 rounded-xl transition-all duration-200 group ${
-                  item.active 
-                    ? 'bg-gradient-to-r from-green-500 to-emerald-500 text-white shadow-lg' 
-                    : 'text-gray-600 hover:bg-green-50 hover:text-green-600'
-                }`}
-              >
-                <item.icon size={20} className={`${item.active ? 'text-white' : 'group-hover:scale-110 transition-transform'}`} />
-                {isSidebarOpen && (
-                  <span className="text-sm font-medium">{item.label}</span>
-                )}
-              </a>
-            ))}
-          </nav>
+        <aside className={`
+          fixed inset-y-0 left-0 z-40 w-64 bg-white/90 backdrop-blur-md border-r border-gray-200 shadow-lg transform transition-transform duration-300 ease-in-out
+          ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}
+          lg:translate-x-0 lg:static lg:inset-0
+        `}>
+          <div className="flex flex-col h-full pt-20">
+            <nav className="flex-1 px-4 py-6 overflow-y-auto">
+              <div className="space-y-2">
+                {sidebarItems.map((item) => (
+                  <div key={item.href}>
+                    <button
+                      onClick={() => {
+                        if (item.submenu) {
+                          toggleMenu(item.href);
+                        } else {
+                          handleNavigation(item.href);
+                        }
+                      }}
+                      className={`
+                        flex items-center justify-between w-full px-4 py-3 text-left text-sm font-medium rounded-xl transition-all duration-200
+                        ${item.active 
+                          ? 'bg-gradient-to-r from-blue-500 to-purple-500 text-white shadow-lg' 
+                          : 'text-gray-700 hover:bg-gray-100 hover:text-blue-600'
+                        }
+                      `}
+                    >
+                      <div className="flex items-center">
+                        <item.icon className="w-5 h-5 mr-3" />
+                        {item.label}
+                      </div>
+                      {item.submenu && (
+                        expandedMenus.includes(item.href) 
+                          ? <ChevronUp className="w-4 h-4" />
+                          : <ChevronDown className="w-4 h-4" />
+                      )}
+                    </button>
+
+                    {/* Submenu */}
+                    {item.submenu && expandedMenus.includes(item.href) && (
+                      <div className="mt-2 ml-4 space-y-1">
+                        {item.submenu.map((subItem) => (
+                          <button
+                            key={subItem.href}
+                            onClick={() => handleNavigation(subItem.href)}
+                            className={`
+                              flex items-center w-full px-4 py-2 text-left text-sm rounded-lg transition-all duration-200
+                              ${subItem.active 
+                                ? 'bg-blue-50 text-blue-700 border-l-4 border-blue-500' 
+                                : 'text-gray-600 hover:bg-gray-50 hover:text-blue-600'
+                              }
+                            `}
+                          >
+                            <subItem.icon className="w-4 h-4 mr-3" />
+                            {subItem.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </nav>
+
+            {/* Sidebar Footer */}
+            <div className="p-4 border-t border-gray-200">
+              <div className="flex items-center space-x-3">
+                <div className="flex items-center justify-center w-8 h-8 text-white rounded-lg bg-gradient-to-r from-green-500 to-emerald-500">
+                  <Shield className="w-4 h-4" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium text-gray-900 truncate">Safety Management</p>
+                  <p className="text-xs text-gray-500">v2.0.0</p>
+                </div>
+              </div>
+            </div>
+          </div>
         </aside>
 
-        {/* Main Content Area - ใช้ Outlet แทน hardcode content */}
-        <main className="flex-1">
-          <div className="w-full">
-            {/* Outlet จะ render route components ตาม path */}
-            <Outlet />
+        {/* Main Content */}
+        <main className={`
+          flex-1 transition-all duration-300 ease-in-out
+          ${isSidebarOpen ? 'lg:ml-0' : 'lg:ml-0'}
+        `}>
+          <div className="min-h-screen bg-transparent">
+            {/* Content wrapper with padding */}
+            <div className="h-full">
+              <Outlet />
+            </div>
           </div>
         </main>
       </div>
+
+      {/* Overlay for mobile */}
+      {isSidebarOpen && (
+        <div 
+          className="fixed inset-0 z-30 bg-black bg-opacity-50 lg:hidden"
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
     </div>
   );
 };
