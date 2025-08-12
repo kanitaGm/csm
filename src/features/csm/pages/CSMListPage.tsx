@@ -158,7 +158,7 @@ const CSMListPage: React.FC<CSMListPageProps> = ({ onSelectVendor }) => {
     if (onSelectVendor) {
       onSelectVendor(vendor);
     }
-    window.location.href = `/csm/evaluate/${vendor.vdCode}`;
+    window.location.href = `/csm/e/${vendor.vdCode}`;
   }, [onSelectVendor]);
 
   const handleFilterChange = useCallback((key: keyof CSMFilterOptions, value: string): void => {
@@ -234,7 +234,7 @@ const CSMListPage: React.FC<CSMListPageProps> = ({ onSelectVendor }) => {
             ไม่พบข้อมูลผู้รับเหมา
           </h3>
           <p className="mb-6 text-gray-500 dark:text-gray-400">
-            ยังไม่มีข้อมูลผู้รับเหมาในระบบ กรุณาเพิ่มข้อมูลใหม่
+            ยังไม่มีข้อมูลผู้รับเหมาในระบบ CSM Vendor List กรุณาเพิ่มข้อมูลใหม่
           </p>
           <button
             onClick={() => handleNavigate('/csm/vendors/add')}
@@ -280,7 +280,7 @@ const CSMListPage: React.FC<CSMListPageProps> = ({ onSelectVendor }) => {
               className="flex items-center gap-2 px-4 py-2 text-sm text-white bg-blue-600 rounded-lg hover:bg-blue-700"
             >
               <Plus className="w-4 h-4" />
-              เพิ่มผู้รับเหมา
+              เพิ่มผู้รับเหมาเข้าระบบ
             </button>
           </div>
         </div>

@@ -1,4 +1,7 @@
+// 📁 src/components/layout/MainLayout.tsx
+// Fixed MainLayout with proper CSM navigation and Outlet
 import React, { useState } from 'react';
+import { Outlet, useLocation } from 'react-router-dom';
 import { 
   Menu, 
   X, 
@@ -14,15 +17,16 @@ import {
   BarChart3,
   Users,
   FileText,
-  Calendar
+  Calendar,
+  Building2
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
-//import { profile } from 'console';
 
 const MainLayout: React.FC = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const { user, logout } = useAuth();
+  const location = useLocation();
 
   if (!user) return null;
 
@@ -30,19 +34,34 @@ const MainLayout: React.FC = () => {
     ? `${user.profile.firstName} ${user.profile.lastName}`
     : String(user.profile.displayName ?? '');
 
+  // สร้าง sidebar items พร้อม CSM
   const sidebarItems = [
-    { icon: Home, label: 'Dashboard', href: '/dashboard', active: true },
-    { icon: Activity, label: 'Safety Reports', href: '/reports' },
-    { icon: BarChart3, label: 'Analytics', href: '/analytics' },
-    { icon: Users, label: 'Team', href: '/team' },
-    { icon: FileText, label: 'Documents', href: '/documents' },
-    { icon: Calendar, label: 'Schedule', href: '/schedule' },
-    { icon: Settings, label: 'Settings', href: '/settings' },
+    { icon: Home, label: 'Dashboard', href: '/dashboard', active: location.pathname === '/dashboard' },
+    { icon: Building2, label: 'CSM Management', href: '/csm', active: location.pathname.startsWith('/csm') },
+    { icon: Users, label: 'Employees', href: '/employees', active: location.pathname.startsWith('/employees') },
+    { icon: Activity, label: 'Safety Reports', href: '/reports', active: location.pathname.startsWith('/reports') },
+    { icon: BarChart3, label: 'Analytics', href: '/analytics', active: location.pathname.startsWith('/analytics') },
+    { icon: FileText, label: 'Documents', href: '/documents', active: location.pathname.startsWith('/documents') },
+    { icon: Calendar, label: 'Schedule', href: '/schedule', active: location.pathname.startsWith('/schedule') },
   ];
 
+  // เพิ่ม admin panel สำหรับ admin/superadmin
   if (user.role === 'superadmin' || user.role === 'admin') {
-    sidebarItems.splice(-1, 0, { icon: Shield, label: 'Admin Panel', href: '/admin' });
+    sidebarItems.push({ 
+      icon: Shield, 
+      label: 'Admin Panel', 
+      href: '/admin', 
+      active: location.pathname.startsWith('/admin')
+    });
   }
+
+  // เพิ่ม settings ท้ายสุด
+  sidebarItems.push({
+    icon: Settings, 
+    label: 'Settings', 
+    href: '/settings', 
+    active: location.pathname.startsWith('/settings')
+  });
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100">
@@ -165,152 +184,14 @@ const MainLayout: React.FC = () => {
           </nav>
         </aside>
 
-        {/* Main Content */}
-        <main className="flex-1 p-6">
-          <div className="mx-auto max-w-7xl">
-            {/* Welcome section */}
-            <div className="p-8 mb-6 text-white shadow-xl bg-gradient-to-r from-green-500 to-emerald-500 rounded-2xl">
-              <h2 className="mb-2 text-3xl font-bold">สวัสดี, {profileName}! 👋</h2>
-              <p className="text-lg text-green-100">ยินดีต้อนรับสู่ระบบ INSEE Safety Dashboard</p>
-            </div>
-
-            {/* Stats cards */}
-            <div className="grid grid-cols-1 gap-6 mb-6 md:grid-cols-2 lg:grid-cols-4">
-              {[
-                { title: 'รายงานความปลอดภัย', value: '24', change: '+12%', color: 'blue' },
-                { title: 'เหตุการณ์สำคัญ', value: '3', change: '-8%', color: 'red' },
-                { title: 'การตรวจสอบ', value: '156', change: '+5%', color: 'green' },
-                { title: 'การฝึกอบรม', value: '89%', change: '+2%', color: 'purple' },
-              ].map((stat, index) => (
-                <div key={index} className="p-6 transition-all duration-200 border shadow-lg bg-white/80 backdrop-blur-sm rounded-2xl border-white/20 hover:shadow-xl">
-                  <h3 className="mb-2 text-sm font-medium text-gray-600">{stat.title}</h3>
-                  <div className="flex items-end justify-between">
-                    <div>
-                      <p className="text-3xl font-bold text-gray-900">{stat.value}</p>
-                      <p className={`text-sm font-medium ${
-                        stat.change.startsWith('+') ? 'text-green-600' : 'text-red-600'
-                      }`}>
-                        {stat.change} จากเดือนที่แล้ว
-                      </p>
-                    </div>
-                    <div className={`w-12 h-12 rounded-xl bg-gradient-to-r ${
-                      stat.color === 'blue' ? 'from-blue-500 to-cyan-500' :
-                      stat.color === 'red' ? 'from-red-500 to-pink-500' :
-                      stat.color === 'green' ? 'from-green-500 to-emerald-500' :
-                      'from-purple-500 to-indigo-500'
-                    } flex items-center justify-center`}>
-                      <Activity className="w-6 h-6 text-white" />
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* Main content area */}
-            <div className="p-8 border shadow-lg bg-white/80 backdrop-blur-sm rounded-2xl border-white/20">
-              <h3 className="mb-6 text-2xl font-bold text-gray-900">แดชบอร์ดหลัก</h3>
-              <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-                <div className="space-y-4">
-                  <h4 className="text-lg font-semibold text-gray-800">รายงานล่าสุด</h4>
-                  {[1, 2, 3].map((item) => (
-                    <div key={item} className="flex items-center p-4 space-x-4 border bg-gray-50/50 rounded-xl border-gray-200/50">
-                      <div className="flex items-center justify-center w-10 h-10 bg-green-100 rounded-full">
-                        <FileText className="w-5 h-5 text-green-600" />
-                      </div>
-                      <div className="flex-1">
-                        <p className="font-medium text-gray-900">รายงานความปลอดภัย #{item}</p>
-                        <p className="text-sm text-gray-500">อัปเดตเมื่อ 2 ชั่วโมงที่แล้ว</p>
-                      </div>
-                      <span className="px-3 py-1 text-xs font-medium text-green-800 bg-green-100 rounded-full">
-                        เสร็จสิ้น
-                      </span>
-                    </div>
-                  ))}
-                </div>
-                <div className="space-y-4">
-                  <h4 className="text-lg font-semibold text-gray-800">กิจกรรมทีม</h4>
-                  {[1, 2, 3].map((item) => (
-                    <div key={item} className="flex items-center p-4 space-x-4 border bg-gray-50/50 rounded-xl border-gray-200/50">
-                      <div className="flex items-center justify-center w-10 h-10 bg-blue-100 rounded-full">
-                        <Users className="w-5 h-5 text-blue-600" />
-                      </div>
-                      <div className="flex-1">
-                        <p className="font-medium text-gray-900">การประชุมทีม Safety #{item}</p>
-                        <p className="text-sm text-gray-500">กำหนดการ: วันนี้ 14:00 น.</p>
-                      </div>
-                      <span className="px-3 py-1 text-xs font-medium text-blue-800 bg-blue-100 rounded-full">
-                        รอการเข้าร่วม
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
+        {/* Main Content Area - ใช้ Outlet แทน hardcode content */}
+        <main className="flex-1">
+          <div className="w-full">
+            {/* Outlet จะ render route components ตาม path */}
+            <Outlet />
           </div>
         </main>
       </div>
-
-      {/* Footer */}
-      <footer className="mt-12 text-white bg-gradient-to-r from-gray-900 to-gray-800">
-        <div className="px-6 py-12 mx-auto max-w-7xl">
-          <div className="grid grid-cols-1 gap-8 md:grid-cols-4">
-            <div className="space-y-4">
-              <div className="flex items-center space-x-2">
-                <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-r from-green-500 to-emerald-500">
-                  <Shield className="w-5 h-5 text-white" />
-                </div>
-                <h3 className="text-xl font-bold">INSEE Safety</h3>
-              </div>
-              <p className="text-sm leading-relaxed text-gray-400">
-                ระบบจัดการความปลอดภัยที่ทันสมัยและครอบคลุม เพื่อสร้างสภาพแวดล้อมการทำงานที่ปลอดภัยสำหรับทุกคน
-              </p>
-            </div>
-            
-            <div>
-              <h4 className="mb-4 text-lg font-semibold text-white">เมนูหลัก</h4>
-              <ul className="space-y-2 text-gray-400">
-                <li><a href="/dashboard" className="transition-colors hover:text-green-400">แดชบอร์ด</a></li>
-                <li><a href="/reports" className="transition-colors hover:text-green-400">รายงาน</a></li>
-                <li><a href="/analytics" className="transition-colors hover:text-green-400">การวิเคราะห์</a></li>
-                <li><a href="/team" className="transition-colors hover:text-green-400">ทีมงาน</a></li>
-              </ul>
-            </div>
-            
-            <div>
-              <h4 className="mb-4 text-lg font-semibold text-white">ช่วยเหลือ</h4>
-              <ul className="space-y-2 text-gray-400">
-                <li><a href="/support" className="transition-colors hover:text-green-400">ศูนย์ช่วยเหลือ</a></li>
-                <li><a href="/docs" className="transition-colors hover:text-green-400">เอกสารประกอบ</a></li>
-                <li><a href="/training" className="transition-colors hover:text-green-400">การฝึกอบรม</a></li>
-                <li><a href="/contact" className="transition-colors hover:text-green-400">ติดต่อเรา</a></li>
-              </ul>
-            </div>
-            
-            <div>
-              <h4 className="mb-4 text-lg font-semibold text-white">ติดต่อ</h4>
-              <div className="space-y-2 text-gray-400">
-                <p>บริษัท อินทรีซีเมนต์ จำกัด</p>
-                <p>โทร: 02-123-4567</p>
-                <p>อีเมล: safety@insee.co.th</p>
-              </div>
-            </div>
-          </div>
-          
-          <div className="flex flex-col items-center justify-between pt-8 mt-8 border-t border-gray-700 md:flex-row">
-            <p className="text-sm text-gray-400">
-              © 2024 INSEE Safety. สงวนลิขสิทธิ์
-            </p>
-            <div className="flex mt-4 space-x-6 md:mt-0">
-              <a href="/privacy" className="text-sm text-gray-400 transition-colors hover:text-green-400">
-                นโยบายความเป็นส่วนตัว
-              </a>
-              <a href="/terms" className="text-sm text-gray-400 transition-colors hover:text-green-400">
-                เงื่อนไขการใช้งาน
-              </a>
-            </div>
-          </div>
-        </div>
-      </footer>
     </div>
   );
 };
