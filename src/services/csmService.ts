@@ -1,13 +1,13 @@
 // 📁 src/services/csmService.ts - Complete Rebuild Fixed
 import { 
-  collection, doc, getDocs, getDoc, addDoc,  
+  collection, doc, getDocs, getDoc, addDoc, updateDoc,  
   query, where, orderBy, limit, Timestamp, runTransaction
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import type { 
   CSMFormDoc, CSMAssessment, CSMAssessmentSummary, 
   CSMVendor, CSMAssessmentAnswer,
-  DateInput
+  DateInput, Company
 } from '../types';
 import { cacheService } from './cacheService';
 
@@ -659,6 +659,28 @@ export const assessmentsService = {
       
       throw new Error(`Failed to save assessment: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
+  },
+
+  /**
+   * Delete assessment by ID
+   */
+  async delete(assessmentId: string): Promise<void> {
+    if (!isValidString(assessmentId)) {
+      throw new Error('Invalid assessment ID');
+    }
+
+    try {
+      const docRef = doc(db, COLLECTIONS.CSM_ASSESSMENTS, assessmentId);
+      await updateDoc(docRef, {
+        isActive: false,
+        updatedAt: new Date()
+      });
+      
+      console.log('✅ Assessment deleted (soft delete):', assessmentId);
+    } catch (error) {
+      console.error('❌ Error deleting assessment:', error);
+      throw error;
+    }
   }
 };
 
@@ -712,16 +734,65 @@ export const calculateAssessmentScore = (answers: CSMAssessmentAnswer[]): {
   };
 };
 
+// =================== COMPANIES SERVICE ===================
+export const companiesService = {
+  /**
+   * Get company by vendor code
+   */
+  async getByVdCode(vdCode: string): Promise<Company | null> {
+    if (!isValidString(vdCode)) {
+      return null;
+    }
+
+    try {
+      // First get vendor to find company ID
+      const vendor = await vendorsService.getByVdCode(vdCode);
+      if (!vendor) {
+        return null;
+      }
+
+      // Then get company by ID
+      const docSnap = await getDoc(doc(db, COLLECTIONS.COMPANIES, vendor.companyId));
+      
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        return {
+          id: docSnap.id,
+          companyId: data.code,
+          name: data.name || '',
+          type: data.type || '',
+          code: data.code || '',
+          contactPerson: data.contactPerson || '',
+          email: data.email || '',
+          phone: data.phone || '',
+          address: data.address || '',
+          isActive: data.isActive || true,
+          createdAt: data.createdAt,
+          updatedAt: data.updatedAt,
+          lastUpdatedBy: isValidString(data.lastUpdatedBy) ? data.lastUpdatedBy : '',
+          workingArea: data.workingArea || [],
+        } as Company;
+      }
+      
+      return null;
+    } catch (error) {
+      console.error('Error fetching company by vdCode:', error);
+      return null;
+    }
+  }
+};
+
 // =================== EXPORT DEFAULT SERVICE ===================
 const csmService = {
   vendors: vendorsService,
   assessmentSummaries: assessmentSummariesService,
   forms: formsService,
   assessments: assessmentsService,
+  companies: companiesService, // ✅ Add companies service
   utils: {
     calculateAssessmentScore
   }
 };
 
 export default csmService;
-//export { vendorsService, assessmentSummariesService, formsService, assessmentsService };
+//export { vendorsService, assessmentSummariesService, formsService, assessmentsService, companiesService };

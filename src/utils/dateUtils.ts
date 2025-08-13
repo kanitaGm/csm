@@ -6,6 +6,19 @@ import { format, parseISO, isValid } from 'date-fns';
 // Type definitions
 export type DateInput = Timestamp | Date | string | null | undefined | { seconds: number; nanoseconds?: number };
 
+/**
+ * Safely convert various date inputs to Date object
+ */
+export const convertToDate = (value: DateInput): Date => {
+  if (value instanceof Date) return value;
+  if (value instanceof Timestamp) return value.toDate();
+  if (typeof value === 'string') return new Date(value);
+  if (value && typeof value === 'object' && 'seconds' in value) {
+    return new Date(value.seconds * 1000);
+  }
+  return new Date();
+};
+
 // ฟังก์ชันแปลง DateInput เป็น Date object
 export const parseDate = (dateInput: DateInput): Date | null => {
   if (!dateInput) return null;
@@ -74,7 +87,7 @@ export const parseDate = (dateInput: DateInput): Date | null => {
 };
 
 // ฟังก์ชันจัดรูปแบบวันที่แบบสากล (YYYY-MM-DD)
-export const formatDate = (dateInput: DateInput): string => {
+export const formatDateLong = (dateInput: DateInput): string => {
   const date = parseDate(dateInput);
   if (!date) return 'ไม่ระบุ';
 
@@ -84,6 +97,34 @@ export const formatDate = (dateInput: DateInput): string => {
     console.warn('Error formatting date:', error, dateInput);
     return 'รูปแบบวันที่ไม่ถูกต้อง';
   }
+};
+
+
+/**
+ * Format date for Thai locale
+ */
+export const formatDate = (date: DateInput, options?: Intl.DateTimeFormatOptions): string => {
+  try {
+    const dateObj = convertToDate(date);
+    return dateObj.toLocaleDateString('th-TH', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      ...options
+    });
+  } catch (error) {
+    console.error('Error formatting date:', error);
+    return '';
+  }
+};
+
+export const safeDate = (value: DateInput): Date => {
+  if (!value) return new Date();
+  return convertToDate(value);
+};
+export const displayDate = (date: DateInput, fallback = '-'): string => {
+  if (!date) return fallback;
+  return formatDate(date); 
 };
 
 // ฟังก์ชันจัดรูปแบบวันที่แบบไทย (DD MMM YYYY) พร้อม debugging
@@ -285,7 +326,11 @@ export const getExpiryStatistics = <T extends { expiryDate?: DateInput }>(record
 // Export สำหรับความสะดวกในการใช้งาน
 export default {
   parseDate,
+  safeDate,
+  displayDate,
+  convertToDate,
   formatDate,
+  formatDateLong,
   formatDateThai,
   formatDateShort,
   isDateExpired,
