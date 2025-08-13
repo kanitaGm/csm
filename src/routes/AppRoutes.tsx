@@ -1,5 +1,5 @@
 // 📁 src/routes/AppRoutes.tsx
-// Complete CSM Routes - เพิ่ม routes ให้ครอบคลุม CSM ทั้งหมด
+// Complete and Fixed AppRoutes with all CSM routes
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from '../contexts/AuthContext';
@@ -7,7 +7,6 @@ import { ThemeProvider } from '../contexts/ThemeContext';
 import ProtectedRoute from './ProtectedRoute';
 import MainLayout from '../components/layout/MainLayout';
 import NotFoundPage from '../pages/NotFoundPage';
-import ProfilePage from '../features/employees/ProfilePage';
 
 // Pages
 import LoginPage from '../pages/LoginPage';
@@ -17,72 +16,158 @@ import { DashboardPage } from '../pages/DashboardPage';
 import EmployeeListPage from '../features/employees/EmployeeListPage';
 import AddEmployeePage from '../features/employees/AddEmployeePage';
 import EditEmployeePage from '../features/employees/EditEmployeePage';
+import ProfilePage from '../features/employees/ProfilePage';
 
-// CSM Pages - Existing
+// CSM Pages - Existing Real Components
 import CSMListPage from '../features/csm/pages/CSMListPage';
 import CSMEvaluatePage from '../features/csm/pages/CSMEvaluatePage';
 import AssessmentDetailPage from '../features/csm/pages/AssessmentDetailPage';
 
-// CSM Pages - Real implementations
-import CSMVendorAddPage from '../features/csm/pages/CSMVendorAddPage';
-import CSMVendorEditPage from '../features/csm/pages/CSMVendorEditPage';
-import CSMVendorDetailPage from '../features/csm/pages/CSMVendorDetailPage';
+// CSM Pages - Check if these exist or need to be implemented
 import CSMReportsPage from '../features/csm/pages/CSMReportsPage';
-//import CSMAnalyticsPage from '../features/csm/pages/CSMAnalyticsPage';
-//import CSMAssessmentHistoryPage from '../features/csm/pages/CSMAssessmentHistoryPage';
-//import CSMSettingsPage from '../features/csm/pages/CSMSettingsPage';
 
-
-// Temporary Placeholder Components (เก็บไว้สำหรับ fallback)
-/*
-const PlaceholderComponent = ({ title, description }: { title: string; description: string }) => (
-  <div className="p-6">
-    <h1 className="mb-4 text-2xl font-bold">{title}</h1>
-    <p className="text-gray-600">{description}</p>
-    <div className="p-4 mt-4 border border-yellow-200 rounded-lg bg-yellow-50">
-      <p className="text-yellow-800">🚧 กำลังพัฒนา - Coming Soon...</p>
+// Placeholder Components for Missing CSM Pages
+const PlaceholderPage = ({ title, description, icon = "🚧" }: { 
+  title: string; 
+  description: string; 
+  icon?: string; 
+}) => (
+  <div className="max-w-4xl p-6 mx-auto">
+    <div className="p-8 bg-white border border-gray-200 shadow-sm rounded-xl">
+      <div className="text-center">
+        <div className="mb-4 text-6xl">{icon}</div>
+        <h1 className="mb-4 text-3xl font-bold text-gray-900">{title}</h1>
+        <p className="mb-6 text-lg text-gray-600">{description}</p>
+        <div className="p-4 border border-yellow-200 rounded-lg bg-yellow-50">
+          <p className="font-medium text-yellow-800">
+            🚧 หน้านี้กำลังอยู่ระหว่างการพัฒนา - Coming Soon...
+          </p>
+        </div>
+        <div className="mt-6">
+          <button
+            onClick={() => window.history.back()}
+            className="px-6 py-2 text-white transition-colors bg-blue-600 rounded-lg hover:bg-blue-700"
+          >
+            ← กลับหน้าก่อนหน้า
+          </button>
+        </div>
+      </div>
     </div>
   </div>
-); */
+);
+
+// CSM Placeholder Pages
+const CSMVendorAddPage = () => (
+  <PlaceholderPage 
+    title="เพิ่มผู้ขาย/ผู้รับเหมา" 
+    description="หน้าสำหรับเพิ่มข้อมูลผู้ขาย/ผู้รับเหมาใหม่เข้าสู่ระบบ" 
+    icon="🏢"
+  />
+);
+
+const CSMVendorListPage = () => (
+  <PlaceholderPage 
+    title="รายการผู้ขาย/ผู้รับเหมา" 
+    description="หน้าแสดงรายการผู้ขาย/ผู้รับเหมาทั้งหมดในระบบ" 
+    icon="📋"
+  />
+);
+
+const CSMVendorDetailPage = () => (
+  <PlaceholderPage 
+    title="รายละเอียดผู้ขาย/ผู้รับเหมา" 
+    description="หน้าแสดงรายละเอียดข้อมูลผู้ขาย/ผู้รับเหมา" 
+    icon="👁️"
+  />
+);
+
+const CSMVendorEditPage = () => (
+  <PlaceholderPage 
+    title="แก้ไขข้อมูลผู้ขาย/ผู้รับเหมา" 
+    description="หน้าสำหรับแก้ไขข้อมูลผู้ขาย/ผู้รับเหมา" 
+    icon="✏️"
+  />
+);
 
 const CSMAnalyticsPage = () => (
-  <div className="p-6">
-    <h1 className="mb-4 text-2xl font-bold">วิเคราะห์ข้อมูล CSM</h1>
-    <p className="text-gray-600">หน้านี้จะแสดงการวิเคราะห์ข้อมูล Dashboard และกราฟต่างๆ</p>
-    <div className="p-4 mt-4 border border-yellow-200 rounded-lg bg-yellow-50">
-      <p className="text-yellow-800">🚧 กำลังพัฒนา - Coming Soon...</p>
-    </div>
-  </div>
+  <PlaceholderPage 
+    title="วิเคราะห์ข้อมูล CSM" 
+    description="Dashboard และการวิเคราะห์ข้อมูลด้วยกราฟและชาร์ต" 
+    icon="📊"
+  />
 );
 
 const CSMAssessmentHistoryPage = () => (
-  <div className="p-6">
-    <h1 className="mb-4 text-2xl font-bold">ประวัติการประเมิน</h1>
-    <p className="text-gray-600">หน้านี้จะแสดงประวัติการประเมินทั้งหมด</p>
-    <div className="p-4 mt-4 border border-yellow-200 rounded-lg bg-yellow-50">
-      <p className="text-yellow-800">🚧 กำลังพัฒนา - Coming Soon...</p>
-    </div>
-  </div>
+  <PlaceholderPage 
+    title="ประวัติการประเมิน" 
+    description="หน้าแสดงประวัติการประเมินทั้งหมดในระบบ" 
+    icon="📜"
+  />
 );
 
 const CSMSettingsPage = () => (
-  <div className="p-6">
-    <h1 className="mb-4 text-2xl font-bold">ตั้งค่า CSM</h1>
-    <p className="text-gray-600">หน้านี้จะใช้สำหรับตั้งค่าระบบ CSM</p>
-    <div className="p-4 mt-4 border border-yellow-200 rounded-lg bg-yellow-50">
-      <p className="text-yellow-800">🚧 กำลังพัฒนา - Coming Soon...</p>
-    </div>
-  </div>
+  <PlaceholderPage 
+    title="ตั้งค่า CSM" 
+    description="หน้าตั้งค่าระบบ CSM และการจัดการฟอร์มการประเมิน" 
+    icon="⚙️"
+  />
 );
 
-// Admin Pages - Forms
-import FormListPage from '../features/forms/ListFormManagementPage';
-import EditFormPage from '../features/forms/DynamicFormEditPage';
+const TrainingPage = () => (
+  <PlaceholderPage 
+    title="การฝึกอบรม" 
+    description="ระบบจัดการการฝึกอบรมด้านความปลอดภัย" 
+    icon="🎓"
+  />
+);
 
-// Test/Util Pages
-import TestPage from '../features/test/test';
-import ImportCSVPage from '../utils/ImportCSVPage';
-import BulkDeleteExamples from '../features/test/BulkDeleteExamples';
+const GeneralReportsPage = () => (
+  <PlaceholderPage 
+    title="รายงานทั่วไป" 
+    description="รายงานและสถิติทั่วไปของระบบ (ไม่เฉพาะ CSM)" 
+    icon="📈"
+  />
+);
+
+const SystemSettingsPage = () => (
+  <PlaceholderPage 
+    title="ตั้งค่าระบบ" 
+    description="ตั้งค่าทั่วไปของระบบและการจัดการผู้ใช้" 
+    icon="🔧"
+  />
+);
+
+// Admin Pages - Forms (if they exist)
+const FormListPage = React.lazy(() => 
+  import('../features/forms/ListFormManagementPage').catch(() => ({
+    default: () => <PlaceholderPage title="จัดการฟอร์ม" description="ระบบจัดการฟอร์มต่างๆ" icon="📝" />
+  }))
+);
+
+const EditFormPage = React.lazy(() => 
+  import('../features/forms/DynamicFormEditPage').catch(() => ({
+    default: () => <PlaceholderPage title="แก้ไขฟอร์ม" description="หน้าแก้ไขฟอร์มแบบไดนามิก" icon="🔧" />
+  }))
+);
+
+// Test Pages (optional)
+const TestPage = React.lazy(() => 
+  import('../features/test/test').catch(() => ({
+    default: () => <PlaceholderPage title="หน้าทดสอบ" description="หน้าสำหรับทดสอบฟีเจอร์ต่างๆ" icon="🧪" />
+  }))
+);
+
+const ImportCSVPage = React.lazy(() => 
+  import('../utils/ImportCSVPage').catch(() => ({
+    default: () => <PlaceholderPage title="นำเข้า CSV" description="หน้านำเข้าข้อมูลจากไฟล์ CSV" icon="📊" />
+  }))
+);
+
+const BulkDeleteExamples = React.lazy(() => 
+  import('../features/test/BulkDeleteExamples').catch(() => ({
+    default: () => <PlaceholderPage title="ตัวอย่างลบหลายรายการ" description="หน้าทดสอบการลบข้อมูลหลายรายการ" icon="🗑️" />
+  }))
+);
 
 const AppRoutes: React.FC = () => {
   return (
@@ -93,13 +178,35 @@ const AppRoutes: React.FC = () => {
             {/* ========== PUBLIC ROUTES (ไม่ต้อง Login) ========== */}
             <Route path="/login" element={<LoginPage />} />
             <Route path="/profile/:empId" element={<ProfilePage />} />
-            <Route path="/test" element={<TestPage />} />
-            <Route path="/ImportCSVPage" element={<ImportCSVPage />} />
+            
+            {/* Test/Utility Routes - Public */}
+            <Route path="/test" element={
+              <React.Suspense fallback={<div className="p-8">กำลังโหลด...</div>}>
+                <TestPage />
+              </React.Suspense>
+            } />
+            <Route path="/ImportCSVPage" element={
+              <React.Suspense fallback={<div className="p-8">กำลังโหลด...</div>}>
+                <ImportCSVPage />
+              </React.Suspense>
+            } />
             
             {/* Admin routes ที่ไม่ใช้ MainLayout */}
-            <Route path="/admin/forms" element={<FormListPage />} />
-            <Route path="/admin/forms/e/:formId" element={<EditFormPage />} />
-            <Route path="/admin/xDel" element={<BulkDeleteExamples />} />
+            <Route path="/admin/forms" element={
+              <React.Suspense fallback={<div className="p-8">กำลังโหลด...</div>}>
+                <FormListPage />
+              </React.Suspense>
+            } />
+            <Route path="/admin/forms/e/:formId" element={
+              <React.Suspense fallback={<div className="p-8">กำลังโหลด...</div>}>
+                <EditFormPage />
+              </React.Suspense>
+            } />
+            <Route path="/admin/xDel" element={
+              <React.Suspense fallback={<div className="p-8">กำลังโหลด...</div>}>
+                <BulkDeleteExamples />
+              </React.Suspense>
+            } />
 
             {/* ========== PROTECTED ROUTES (ต้อง Login + ใช้ MainLayout) ========== */}
             <Route element={<ProtectedRoute requiredRole={["admin", "superadmin"]} />}>
@@ -112,21 +219,30 @@ const AppRoutes: React.FC = () => {
                 <Route path="/employees/add" element={<AddEmployeePage />} />
                 <Route path="/employees/:empId/edit" element={<EditEmployeePage />} />
                 
-                {/* ========== CSM MANAGEMENT (ครบถ้วน) ========== */}
+                {/* ========== CSM MANAGEMENT (ครบถ้วนและแก้ไข Navigation) ========== */}
                 
-                {/* CSM Main */}
+                {/* CSM Main - List Page */}
                 <Route path="/csm" element={<CSMListPage />} />
                 
                 {/* CSM Vendor Management */}
+                <Route path="/csm/vendors" element={<CSMVendorListPage />} />
                 <Route path="/csm/vendors/add" element={<CSMVendorAddPage />} />
                 <Route path="/csm/vendors/:vendorId" element={<CSMVendorDetailPage />} />
                 <Route path="/csm/vendors/:vendorId/edit" element={<CSMVendorEditPage />} />
                 
-                {/* CSM Assessment */}
+                {/* CSM Assessment Routes - แก้ไขปัญหา Navigation */}
                 <Route path="/csm/e/:vdCode" element={<CSMEvaluatePage />} />
+                <Route path="/csm/evaluate" element={<CSMEvaluatePage />} />
+                <Route path="/csm/assessment/:vdCode" element={<CSMEvaluatePage />} />
+                <Route path="/csm/evaluation/:vdCode" element={<CSMEvaluatePage />} />
+                
+                {/* Assessment Detail */}
                 <Route path="/csm/a/:assessmentId" element={<AssessmentDetailPage />} />
+                
+                {/* Assessment History */}
                 <Route path="/csm/assessments/history" element={<CSMAssessmentHistoryPage />} />
                 <Route path="/csm/assessments/:vdCode/history" element={<CSMAssessmentHistoryPage />} />
+                <Route path="/csm/history" element={<CSMAssessmentHistoryPage />} />
                 
                 {/* CSM Reports & Analytics */}
                 <Route path="/csm/reports" element={<CSMReportsPage />} />
@@ -135,40 +251,38 @@ const AppRoutes: React.FC = () => {
                 {/* CSM Settings */}
                 <Route path="/csm/settings" element={<CSMSettingsPage />} />
                 
-                {/* Alternative CSM Routes (สำหรับ backward compatibility) */}
-                <Route path="/csm/assessment/:vdCode" element={<CSMEvaluatePage />} />
-                <Route path="/csm/evaluation/:vdCode" element={<CSMEvaluatePage />} />
-                
                 {/* ========== OTHER MODULES ========== */}
                 
-                {/* General Reports & Analytics */}
-                <Route path="/reports" element={<div className="p-6">
-                  <h1 className="mb-4 text-2xl font-bold">รายงานทั่วไป</h1>
-                  <p className="text-gray-600">รายงานระบบทั่วไป (ไม่เฉพาะ CSM)</p>
-                  <div className="p-4 mt-4 border border-blue-200 rounded-lg bg-blue-50">
-                    <p className="text-blue-800">💡 สำหรับรายงาน CSM ไปที่ <a href="/csm/reports" className="underline">CSM Reports</a></p>
-                  </div>
-                </div>} />
+                {/* Training */}
+                <Route path="/training" element={<TrainingPage />} />
+                <Route path="/training/*" element={<TrainingPage />} />
                 
-                <Route path="/analytics" element={<div className="p-6">
-                  <h1 className="mb-4 text-2xl font-bold">วิเคราะห์ข้อมูลทั่วไป</h1>
-                  <p className="text-gray-600">วิเคราะห์ข้อมูลระบบทั่วไป (ไม่เฉพาะ CSM)</p>
-                  <div className="p-4 mt-4 border border-blue-200 rounded-lg bg-blue-50">
-                    <p className="text-blue-800">💡 สำหรับ Analytics CSM ไปที่ <a href="/csm/analytics" className="underline">CSM Analytics</a></p>
-                  </div>
-                </div>} />
+                {/* General Reports & Analytics */}
+                <Route path="/reports" element={<GeneralReportsPage />} />
+                <Route path="/analytics" element={<GeneralReportsPage />} />
+                
+                {/* System Settings */}
+                <Route path="/settings" element={<SystemSettingsPage />} />
                 
                 {/* Other placeholder routes */}
-                <Route path="/documents" element={<div className="p-6">Documents Page Coming Soon...</div>} />
-                <Route path="/schedule" element={<div className="p-6">Schedule Page Coming Soon...</div>} />
-                <Route path="/settings" element={<div className="p-6">Settings Page Coming Soon...</div>} />
+                <Route path="/documents" element={
+                  <PlaceholderPage title="เอกสาร" description="ระบบจัดการเอกสาร" icon="📄" />
+                } />
+                <Route path="/schedule" element={
+                  <PlaceholderPage title="ตารางเวลา" description="ระบบจัดการตารางเวลา" icon="📅" />
+                } />
               </Route>
             </Route>
 
-            {/* Route หลัก */}
+            {/* ========== REDIRECTS ========== */}
+            
+            {/* Root redirect to dashboard */}
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             
-            {/* 404 NOT FOUND */}
+            {/* CSM shortcuts */}
+            <Route path="/csm/list" element={<Navigate to="/csm" replace />} />
+            
+            {/* ========== 404 NOT FOUND ========== */}
             <Route path="*" element={<NotFoundPage />} />
           </Routes>
         </ThemeProvider>

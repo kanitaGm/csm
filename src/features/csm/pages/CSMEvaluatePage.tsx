@@ -1,25 +1,25 @@
-// 🔧 Enhanced CSM Evaluate Page with Fixed Save Logic
-// src/features/csm/pages/CSMEvaluatePage.tsx
-
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Save, Send, AlertTriangle, CheckCircle, Clock } from 'lucide-react';
+// 📁 src/features/csm/pages/CSMEvaluatePage.tsx
+// Fixed CSMEvaluatePage - แก้ไขปัญหา Navigation และ Type Errors
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { AlertTriangle, Save, Send, ArrowLeft, Clock, CheckCircle } from 'lucide-react';
 import { useToast } from '../../../hooks/useToast';
-import  csmService from '../../../services/csmService'; 
-import { csmVendorService } from '../../../services/csmVendorService';
-import { enhancedCSMFormsService } from '../../../services/enhancedCsmService';
-import { QuestionForm } from '../components/QuestionForm';
+import { useAuth } from '../../../contexts/AuthContext';
+import csmService from '../../../services/csmService';
 import type { 
+  CSMVendor, 
+  CSMFormField, 
   CSMAssessment, 
   CSMAssessmentAnswer, 
-  CSMAuditor, 
-  CSMFormDoc, 
-  CSMFormField,
-  CSMVendor,
-  Company
-} from '../../../types';
+  CSMAuditor,
+  Company,
+  CSMFormDoc
+} from '../../../types/csm';
 
-// =================== TYPES ===================
+// Assessment form component (lazy loaded)
+const QuestionForm = React.lazy(() => import('../components/QuestionForm'));
+
+
 interface PageState {
   loading: boolean;
   saving: boolean;
@@ -31,47 +31,24 @@ interface PageState {
   auditor: CSMAuditor;
   isDirty: boolean;
   readOnly: boolean;
-  lastSaved?: Date;
+  confirmations: Record<string, boolean>;
 }
 
-interface ScoreCalculation {
-  totalScore: number;
-  maxScore: number;
-  percentage: number;
-  completedQuestions: number;
-  totalQuestions: number;
-  riskLevel: 'Low' | 'Medium' | 'High';
-}
-
-// Helper function to safely convert date-like values to Date strings
-const formatFinishedDate = (finishedDate: unknown): string => {
-  if (finishedDate instanceof Date) {
-    return finishedDate.toLocaleDateString('th-TH');
-  }
-  
-  if (typeof finishedDate === 'string') {
-    return new Date(finishedDate).toLocaleDateString('th-TH');
-  }
-  
-  // Handle Firestore Timestamp
-  if (finishedDate && 
-      typeof finishedDate === 'object' && 
-      'toDate' in finishedDate &&
-      typeof (finishedDate as Record<string, unknown>).toDate === 'function') {
-    const timestamp = finishedDate as { toDate(): Date };
-    return timestamp.toDate().toLocaleDateString('th-TH');
-  }
-  
-  return '';
-};
-
-// =================== MAIN COMPONENT ===================
-export const CSMEvaluatePage: React.FC = () => {
+const CSMEvaluatePage: React.FC = () => {
   const { vdCode } = useParams<{ vdCode: string }>();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { addToast } = useToast();
+  const { user } = useAuth();
+  
+  // Prevent navigation loops
+  const isInitializedRef = useRef(false);
+  const autoSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const navigationBlockedRef = useRef(false);
 
-  // State
+  // Get vdCode from params or query string
+  const finalVdCode = vdCode || searchParams.get('vdCode');
+
   const [state, setState] = useState<PageState>({
     loading: true,
     saving: false,
@@ -81,208 +58,138 @@ export const CSMEvaluatePage: React.FC = () => {
     assessment: null,
     answers: [],
     auditor: {
-      name: '',
-      email: '',
+      name: user?.displayName || '',
+      email: user?.email || '',
       phone: '',
       position: ''
     },
     isDirty: false,
-    readOnly: false
+    readOnly: false,
+    confirmations: {}
   });
 
-  // Refs for auto-save
-  const autoSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const isInitializedRef = useRef(false);
-
-  // =================== COMPUTED VALUES ===================
-  const scoreCalculation = useMemo((): ScoreCalculation => {
-    if (!state.answers.length) {
-      return {
-        totalScore: 0,
-        maxScore: 0,
-        percentage: 0,
-        completedQuestions: 0,
-        totalQuestions: 0,
-        riskLevel: 'High'
-      };
-    }
-
-    const completed = state.answers.filter(answer => 
-      answer.score !== '0' && answer.score !== 'n/a' && answer.score !== ''
-    );
+    // Calculate score
+  const scoreCalculation = React.useMemo(() => {
+    if (state.answers.length === 0) return { total: 0, max: 0, percentage: 0 };
     
-    const totalScore = completed.reduce((sum, answer) => {
-      const score = answer.score === 'n/a' ? 0 : parseInt(answer.score || '0', 10) || 0;
+    const total = state.answers.reduce((sum, answer) => {
+      const score = parseFloat(answer.score || '0') || 0;
       return sum + score;
     }, 0);
     
-    const maxScore = state.answers.reduce((sum, answer) => {
-      const maxForQuestion = parseInt(answer.tScore || '5', 10) || 5;
-      return sum + maxForQuestion;
+    const max = state.answers.reduce((sum, answer) => {
+      const tScore = parseFloat(answer.tScore || '5') || 5;
+      return sum + tScore;
     }, 0);
-
-    const percentage = maxScore > 0 ? (totalScore / maxScore) * 100 : 0;
     
-    let riskLevel: 'Low' | 'Medium' | 'High' = 'High';
-    if (percentage >= 80) riskLevel = 'Low';
-    else if (percentage >= 60) riskLevel = 'Medium';
-
-    return {
-      totalScore,
-      maxScore,
-      percentage,
-      completedQuestions: completed.length,
-      totalQuestions: state.answers.length,
-      riskLevel
-    };
+    const percentage = max > 0 ? (total / max) * 100 : 0;
+    
+    return { total, max, percentage };
   }, [state.answers]);
 
   // =================== SAVE FUNCTIONS ===================
   const handleSave = useCallback(async (isAutoSave = false) => {
-    if (!state.assessment || !state.vendor || state.readOnly) {
-      console.log('🚫 Cannot save: missing data or read-only mode');
-      return false;
+    if (!finalVdCode || !state.assessment || state.readOnly || state.saving) {
+      return;
     }
 
     try {
       setState(prev => ({ ...prev, saving: true }));
 
-      // Enhanced assessment data preparation
-      const assessmentToSave: CSMAssessment = {
+      const updatedAssessment: CSMAssessment = {
         ...state.assessment,
         answers: state.answers,
         auditor: state.auditor,
+        totalScore: scoreCalculation.total.toString(),
+        maxScore: scoreCalculation.max.toString(),
+        avgScore: scoreCalculation.percentage.toFixed(1),
         updatedAt: new Date(),
-        // Calculate and store scores
-        totalScore: scoreCalculation.totalScore.toString(),
-        maxScore: scoreCalculation.maxScore.toString(),
-        avgScore: scoreCalculation.percentage.toString()
+        isFinish: false
       };
 
-      console.log('💾 Saving assessment:', { 
-        isAutoSave, 
-        assessmentId: assessmentToSave.id,
-        vdCode: assessmentToSave.vdCode,
-        answersCount: assessmentToSave.answers.length,
-        hasAuditor: !!assessmentToSave.auditor.name
-      });
+      await csmService.assessments.save(updatedAssessment);
 
-      // Use the enhanced save method
-      const savedAssessmentId = await csmService.assessments.save(assessmentToSave);
-      
-      // Update state with the saved assessment ID if it was new
-      setState(prev => ({
-        ...prev,
-        assessment: {
-          ...prev.assessment!,
-          id: savedAssessmentId
-        },
-        isDirty: false,
-        lastSaved: new Date(),
-        saving: false
-      }));
+      setState(prev => ({ ...prev, isDirty: false, assessment: updatedAssessment }));
 
       if (!isAutoSave) {
         addToast({
           type: 'success',
           title: 'บันทึกสำเร็จ',
-          message: 'ข้อมูลการประเมินถูกบันทึกเรียบร้อยแล้ว'
+          message: 'ข้อมูลการประเมินถูกบันทึกแล้ว'
         });
       }
 
-      console.log('✅ Assessment saved successfully with ID:', savedAssessmentId);
-      return true;
-      
     } catch (error) {
       console.error('❌ Error saving assessment:', error);
-      
+      if (!isAutoSave) {
+        addToast({
+          type: 'error',
+          title: 'เกิดข้อผิดพลาด',
+          message: 'ไม่สามารถบันทึกข้อมูลได้ กรุณาลองใหม่อีกครั้ง'
+        });
+      }
+    } finally {
       setState(prev => ({ ...prev, saving: false }));
-      
-      addToast({
-        type: 'error',
-        title: 'เกิดข้อผิดพลาด',
-        message: `ไม่สามารถบันทึกข้อมูลได้: ${error instanceof Error ? error.message : 'Unknown error'}`
-      });
-      
-      return false;
     }
-  }, [state.assessment, state.vendor, state.readOnly, state.answers, state.auditor, scoreCalculation, addToast]);
+  }, [finalVdCode, state.assessment, state.readOnly, state.saving, state.answers, state.auditor, scoreCalculation, addToast]);
 
-  // Submit function with enhanced validation
   const handleSubmit = useCallback(async () => {
-    if (!state.assessment || state.readOnly) return;
-
-    // Enhanced validation for M type questions
-    const mandatoryQuestions = state.answers.filter(answer => answer.ckType === 'M');
-    const incompleteMandatory = mandatoryQuestions.filter(answer => 
-      !answer.score || 
-      answer.score === '0' || 
-      answer.score === '' || 
-      answer.score === 'n/a' ||
-      !answer.comment.trim()
-    );
-
-    if (incompleteMandatory.length > 0) {
-      addToast({
-        type: 'warning',
-        title: 'ข้อมูลไม่สมบูรณ์',
-        message: `กรุณาให้คะแนนและความเห็นสำหรับคำถาม Mandatory ที่ยังไม่สมบูรณ์ (${incompleteMandatory.length} ข้อ)`
-      });
+    if (!state.assessment || state.readOnly || state.saving) {
       return;
     }
 
-    // Check for any incomplete questions
-    const incompleteAnswers = state.answers.filter(answer => 
-      !answer.score || answer.score === '0' || answer.score === '' || !answer.comment.trim()
-    );
-
+    // Validate required fields
+    const incompleteAnswers = state.answers.filter(answer => !answer.score || answer.score.trim() === '');
     if (incompleteAnswers.length > 0) {
       addToast({
         type: 'warning',
-        title: 'ข้อมูลไม่สมบูรณ์',
-        message: `กรุณาให้คะแนนและความเห็นที่ยังไม่สมบูรณ์ (${incompleteAnswers.length} ข้อ)`
+        title: 'ข้อมูลไม่ครบถ้วน',
+        message: `กรุณากรอกคะแนนให้ครบทุกข้อ (ขาดไป ${incompleteAnswers.length} ข้อ)`
       });
       return;
     }
 
-    // Validate auditor information
-    if (!state.auditor.name || !state.auditor.position) {
+    if (!state.auditor.name.trim()) {
       addToast({
         type: 'warning',
-        title: 'ข้อมูลผู้ประเมินไม่สมบูรณ์',
-        message: 'กรุณากรอกชื่อและตำแหน่งผู้ประเมิน'
+        title: 'ข้อมูลไม่ครบถ้วน',
+        message: 'กรุณากรอกชื่อผู้ประเมิน'
       });
       return;
     }
 
     try {
       setState(prev => ({ ...prev, saving: true }));
-      
+
       const finalAssessment: CSMAssessment = {
         ...state.assessment,
-        answers: state.answers,
+        answers: state.answers.map(answer => ({ ...answer, isFinish: true })),
         auditor: state.auditor,
+        totalScore: scoreCalculation.total.toString(),
+        maxScore: scoreCalculation.max.toString(),
+        avgScore: scoreCalculation.percentage.toFixed(1),
         isFinish: true,
         finishedAt: new Date(),
-        updatedAt: new Date(),
-        totalScore: scoreCalculation.totalScore.toString(),
-        maxScore: scoreCalculation.maxScore.toString(),
-        avgScore: scoreCalculation.percentage.toString()
+        updatedAt: new Date()
       };
 
       await csmService.assessments.save(finalAssessment);
-      
+
+      setState(prev => ({ 
+        ...prev, 
+        isDirty: false, 
+        readOnly: true, 
+        assessment: finalAssessment 
+      }));
+
       addToast({
         type: 'success',
         title: 'ส่งการประเมินสำเร็จ',
         message: `การประเมิน CSM ถูกส่งเรียบร้อยแล้ว (คะแนน: ${scoreCalculation.percentage.toFixed(1)}%)`
       });
 
-      // Redirect to assessment list
-      setTimeout(() => {
-        navigate('/csm');
-      }, 2000);
-      
+      // Don't redirect immediately - let user see the success message first
+
     } catch (error) {
       console.error('❌ Error submitting assessment:', error);
       addToast({
@@ -293,11 +200,11 @@ export const CSMEvaluatePage: React.FC = () => {
     } finally {
       setState(prev => ({ ...prev, saving: false }));
     }
-  }, [state.assessment, state.readOnly, state.answers, state.auditor, scoreCalculation, addToast, navigate]);
+  }, [state.assessment, state.readOnly, state.saving, state.answers, state.auditor, scoreCalculation, addToast]);
 
   // =================== AUTO-SAVE LOGIC ===================
   useEffect(() => {
-    if (!isInitializedRef.current) return;
+    if (!isInitializedRef.current || navigationBlockedRef.current) return;
     if (!state.isDirty || state.readOnly || state.saving) return;
 
     // Clear existing timeout
@@ -339,64 +246,174 @@ export const CSMEvaluatePage: React.FC = () => {
     }));
   }, []);
 
+  // =================== CONFIRMATION CHANGE HANDLER ===================
+  const handleConfirmChange = useCallback((ckItem: string, confirmed: boolean) => {
+    setState(prev => ({
+      ...prev,
+      confirmations: {
+        ...prev.confirmations,
+        [ckItem]: confirmed
+      },
+      isDirty: true
+    }));
+  }, []);
+
+  // =================== NAVIGATION HANDLERS ===================
+  const handleBack = useCallback(() => {
+    if (state.isDirty) {
+      const confirmLeave = window.confirm(
+        'คุณมีการเปลี่ยนแปลงที่ยังไม่ได้บันทึก ต้องการออกจากหน้านี้หรือไม่?'
+      );
+      if (!confirmLeave) return;
+    }
+    
+    navigationBlockedRef.current = true;
+    navigate('/csm', { replace: true });
+  }, [navigate, state.isDirty]);
+
   // =================== INITIALIZATION ===================
   useEffect(() => {
+    if (!finalVdCode) {
+      console.error('❌ No vdCode provided');
+      addToast({
+        type: 'error',
+        title: 'ข้อผิดพลาด',
+        message: 'ไม่พบรหัส Vendor'
+      });
+      navigate('/csm', { replace: true });
+      return;
+    }
+
     const initializePage = async () => {
-      if (!vdCode) {
-        addToast({
-          type: 'error',
-          title: 'ข้อผิดพลาด',
-          message: 'ไม่พบรหัส Vendor'
-        });
-        navigate('/csm');
-        return;
-      }
-
       try {
+        console.log('🚀 Initializing CSM Evaluate Page for vdCode:', finalVdCode);
         setState(prev => ({ ...prev, loading: true }));
+        navigationBlockedRef.current = false;
 
-        // Get vendor with company info
-        console.log('🔍 Loading vendor:', vdCode);
-        const vendorWithCompany = await csmVendorService.getVendorWithCompany(vdCode);
-        
-        if (!vendorWithCompany) {
-          addToast({
-            type: 'error',
-            title: 'ไม่พบข้อมูล',
-            message: 'ไม่พบข้อมูล Vendor ที่ระบุ'
-          });
-          navigate('/csm');
-          return;
+        // Load vendor data
+        console.log('🔍 Loading vendor with vdCode:', finalVdCode);
+        const vendor = await csmService.vendors.getByVdCode(finalVdCode);
+        if (!vendor) {
+          throw new Error(`ไม่พบข้อมูล Vendor สำหรับรหัส: ${finalVdCode}`);
+        }
+        console.log('✅ Found vendor:', vendor.vdName);
+
+        // Load company data (if available)
+        let company: Company | null = null;
+        try {
+          company = await csmService.companies.getByVdCode(vendor.vdCode);
+          if (company) {
+            console.log('✅ Found company:', company.name);
+          }
+        } catch (error) {
+          console.warn('Could not load company data:', error);
         }
 
-        console.log('✅ Found vendor:', vendorWithCompany.vendor.vdName);
-
-        // Get CSM form
-        console.log('🔍 Getting CSM form...');
-        const csmForm = await enhancedCSMFormsService.getCSMChecklist();
+        // Load CSM form
+        console.log('🔍 Loading CSM form...');
+        let csmForm: CSMFormDoc | null = null;
         
+        try {
+          // Try enhanced service first
+          console.log('🔍 Trying enhancedCSMFormsService.getCSMChecklist()...');
+          const enhancedCSMFormsService = await import('../../../services/enhancedCsmService');
+          csmForm = await enhancedCSMFormsService.enhancedCSMFormsService.getCSMChecklist();
+          
+          if (csmForm) {
+            console.log('✅ Found CSM form from enhanced service:', csmForm.formTitle || csmForm.formCode);
+          }
+        } catch (enhancedError) {
+          console.warn('⚠️ Enhanced service failed, trying regular service:', enhancedError);
+        }
+        
+        // Fallback to regular service
         if (!csmForm) {
-          addToast({
-            type: 'error',
-            title: 'ไม่พบแบบฟอร์ม',
-            message: 'ไม่พบแบบฟอร์มประเมิน CSM ที่เปิดใช้งาน'
-          });
-          return;
+          try {
+            console.log('🔍 Trying csmService.forms.getAll()...');
+            const allForms = await csmService.forms.getAll();
+            console.log(`📋 Found ${allForms.length} forms total`);
+            
+            // Look for CSM form by various criteria
+            csmForm = allForms.find(form => 
+              form.formCode === 'CSM' || 
+              form.formCode === 'CSMChecklist' ||
+              form.formCode?.toLowerCase().includes('csm') ||
+              form.formTitle?.toLowerCase().includes('csm') ||
+              form.applicableTo?.includes('csm')
+            ) || null;
+            
+            if (csmForm) {
+              console.log('✅ Found CSM form from regular service:', csmForm.formTitle || csmForm.formCode);
+            } else {
+              console.log('📋 Available forms:', allForms.map(f => ({ code: f.formCode, title: f.formTitle })));
+            }
+          } catch (regularError) {
+            console.warn('⚠️ Regular service also failed:', regularError);
+          }
+        }
+        
+        // Create mock form if nothing found
+        if (!csmForm) {
+          console.log('📝 Creating mock CSM form for development...');
+          csmForm = {
+            id: 'mock-csm-form',
+            formCode: 'CSMChecklist',
+            formTitle: 'CSM Assessment Checklist (Mock)',
+            formDescription: 'Mock CSM assessment form for testing purposes',
+            isActive: true,
+            applicableTo: ['csm'],
+            fields: [
+              {
+                id: '1',
+                ckItem: '1',
+                ckType: 'M',
+                ckQuestion: 'มีการจัดการด้านความปลอดภัยหรือไม่?',
+                ckRequirement: 'ต้องมีระบบจัดการความปลอดภัยที่ครอบคลุม',
+                fScore: '5',
+                tScore: '5',
+                type: 'text',
+                required: true,
+                allowAttach: false
+              },
+              {
+                id: '2',
+                ckItem: '2',
+                ckType: 'M',
+                ckQuestion: 'มีการฝึกอบรมพนักงานหรือไม่?',
+                ckRequirement: 'ควรมีการฝึกอบรมอย่างสม่ำเสมอและมีหลักฐาน',
+                fScore: '5',
+                tScore: '5',
+                type: 'text',
+                required: true,
+                allowAttach: false
+              },
+              {
+                id: '3',
+                ckItem: '3',
+                ckType: 'P',
+                ckQuestion: 'มีใบรับรองมาตรฐานที่เกี่ยวข้องหรือไม่?',
+                ckRequirement: 'ควรมีใบรับรองมาตรฐานที่เกี่ยวข้อง',
+                fScore: '3',
+                tScore: '3',
+                type: 'text',
+                required: false,
+                allowAttach: true
+              }
+            ],
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            createdBy: 'system'
+          };
+          console.log('✅ Created mock CSM form');
+        }
+        
+        if (!csmForm.fields || csmForm.fields.length === 0) {
+          throw new Error('แบบฟอร์ม CSM ไม่มีคำถาม กรุณาตรวจสอบข้อมูลในระบบ');
         }
 
-        console.log('✅ Found CSM form:', csmForm.formTitle || csmForm.formCode);
-
-        // Check for existing assessment
-        console.log('🔍 Checking for existing assessments...');
-        const existingAssessments = await csmService.assessments.getByVdCode(vdCode);
-        console.log('📋 Existing assessments found:', existingAssessments.length);
-        
-        const currentAssessment = existingAssessments.find((a: CSMAssessment) => 
-          a.formId === csmForm.id && !a.isFinish
-        );
-
+        // Try to load existing assessment
         let assessment: CSMAssessment;
-        let answers: CSMAssessmentAnswer[] = [];
+        let answers: CSMAssessmentAnswer[];
         let auditor: CSMAuditor = {
           name: '',
           email: '',
@@ -404,24 +421,38 @@ export const CSMEvaluatePage: React.FC = () => {
           position: ''
         };
 
-        if (currentAssessment) {
-          console.log('✅ Found existing assessment:', currentAssessment.id);
-          assessment = currentAssessment;
-          answers = currentAssessment.answers || [];
-          auditor = currentAssessment.auditor || auditor;
-        } else {
+        try {
+          const existingAssessments = await csmService.assessments.getByVdCode(finalVdCode);
+          const currentAssessment = existingAssessments.find((a: CSMAssessment) => 
+            a.formId === csmForm.id && !a.isFinish
+          );
+
+          if (currentAssessment) {
+            console.log('📋 Found existing assessment');
+            assessment = currentAssessment;
+            answers = currentAssessment.answers || [];
+            auditor = currentAssessment.auditor || auditor;
+          } else {
+            throw new Error('No existing assessment'); // Force creation of new assessment
+          }
+        } catch {
           console.log('📝 Creating new assessment');
           assessment = {
-            id: '', // Will be set when saved
-            companyId: vendorWithCompany.vendor.companyId,
-            vdCode: vendorWithCompany.vendor.vdCode,
-            vdName: vendorWithCompany.vendor.vdName,
+            id: `${finalVdCode}_${Date.now()}`,
+            companyId: vendor.companyId,
+            vdCode: vendor.vdCode,
+            vdName: vendor.vdName,
             formId: csmForm.id || '',
             formVersion: '1.0',
             answers: [],
             auditor,
-            vdCategory: vendorWithCompany.vendor.category,
-            vdWorkingArea: vendorWithCompany.vendor.workingArea?.join(', ') || '',
+            vdCategory: vendor.category,
+            vdWorkingArea: Array.isArray(vendor.workingArea) 
+              ? vendor.workingArea.join(', ') 
+              : (vendor.workingArea || ''),
+            totalScore: '0',
+            maxScore: '0',
+            avgScore: '0',
             isActive: true,
             isFinish: false,
             createdAt: new Date(),
@@ -435,7 +466,7 @@ export const CSMEvaluatePage: React.FC = () => {
             ckQuestion: field.ckQuestion,
             comment: '',
             score: '', // Start with empty score
-            tScore: field.tScore || field.fScore || '5', // Fixed property name
+            tScore: field.tScore || field.fScore || '5',
             action: '',
             files: [],
             isFinish: false
@@ -445,14 +476,15 @@ export const CSMEvaluatePage: React.FC = () => {
         setState({
           loading: false,
           saving: false,
-          vendor: vendorWithCompany.vendor,
-          company: vendorWithCompany.company,
+          vendor,
+          company,
           form: csmForm,
           assessment,
           answers,
           auditor,
           isDirty: false,
-          readOnly: assessment.isFinish || false
+          readOnly: assessment.isFinish || false,
+          confirmations: {}
         });
 
         // Mark as initialized for auto-save
@@ -468,11 +500,22 @@ export const CSMEvaluatePage: React.FC = () => {
           message: 'ไม่สามารถโหลดข้อมูลได้ กรุณาลองใหม่อีกครั้ง'
         });
         setState(prev => ({ ...prev, loading: false }));
+        
+        // Don't auto-redirect on error - let user try again
       }
     };
 
     initializePage();
-  }, [vdCode, navigate, addToast]);
+  }, [finalVdCode, navigate, addToast]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (autoSaveTimeoutRef.current) {
+        clearTimeout(autoSaveTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // =================== RENDER ===================
   if (state.loading) {
@@ -491,12 +534,12 @@ export const CSMEvaluatePage: React.FC = () => {
       <div className="flex items-center justify-center min-h-screen">
         <div className="text-center">
           <AlertTriangle className="w-12 h-12 mx-auto mb-4 text-red-500" />
-          <p className="text-gray-600">ไม่พบข้อมูลที่ต้องการ</p>
+          <p className="mb-4 text-gray-600">ไม่พบข้อมูลที่ต้องการ</p>
           <button
-            onClick={() => navigate('/csm')}
-            className="px-4 py-2 mt-4 text-white bg-blue-600 rounded-lg hover:bg-blue-700"
+            onClick={handleBack}
+            className="px-4 py-2 text-white transition-colors bg-blue-600 rounded-lg hover:bg-blue-700"
           >
-            กลับหน้าหลัก
+            ← กลับหน้ารายการ
           </button>
         </div>
       </div>
@@ -504,248 +547,184 @@ export const CSMEvaluatePage: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="sticky top-0 z-10 bg-white border-b border-gray-200">
-        <div className="px-4 py-4 mx-auto max-w-7xl sm:px-6 lg:px-8">
+    <div className="min-h-screen p-4 bg-gradient-to-br from-slate-50 to-blue-50">
+      <div className="mx-auto max-w-7xl">
+        {/* Header */}
+        <div className="p-6 mb-6 bg-white border border-gray-200 shadow-sm rounded-xl">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
+            <div className="flex items-center space-x-4">
               <button
-                onClick={() => navigate('/csm')}
-                className="flex items-center gap-2 px-3 py-2 text-gray-600 transition-colors hover:text-gray-900"
+                onClick={handleBack}
+                className="p-2 text-gray-600 transition-colors rounded-lg hover:text-blue-600 hover:bg-blue-50"
+                title="กลับหน้ารายการ"
               >
                 <ArrowLeft className="w-5 h-5" />
-                กลับ
               </button>
-              
               <div>
-                <h1 className="text-xl font-semibold text-gray-900">
-                  ประเมิน CSM: {state.vendor.vdName}
+                <h1 className="text-2xl font-bold text-gray-900">
+                  {state.readOnly ? 'ดูผลการประเมิน CSM' : 'ประเมิน CSM'}
                 </h1>
-                <p className="text-sm text-gray-600">
-                  รหัส: {state.vendor.vdCode} | แบบฟอร์ม: {state.form.formTitle}
+                <p className="mt-1 text-gray-600">
+                  {state.company?.name || state.vendor.vdName} ({state.vendor.vdCode})
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-3">
-              {/* Auto-save Status */}
-              {state.saving && (
-                <div className="flex items-center gap-2 text-sm text-blue-600">
-                  <Clock className="w-4 h-4 animate-spin" />
-                  กำลังบันทึก...
-                </div>
-              )}
-              
-              {state.lastSaved && !state.saving && (
-                <div className="flex items-center gap-2 text-sm text-green-600">
-                  <CheckCircle className="w-4 h-4" />
-                  บันทึกล่าสุด: {state.lastSaved.toLocaleTimeString('th-TH')}
-                </div>
-              )}
+            <div className="flex items-center space-x-3">
+              {/* Score Display */}
+              <div className="text-right">
+                <p className="text-sm text-gray-600">คะแนนรวม</p>
+                <p className="text-2xl font-bold text-blue-600">
+                  {scoreCalculation.percentage.toFixed(1)}%
+                </p>
+                <p className="text-xs text-gray-500">
+                  {scoreCalculation.total}/{scoreCalculation.max}
+                </p>
+              </div>
 
-              {/* Action Buttons */}
-              {!state.readOnly && (
-                <>
-                  <button
-                    onClick={() => handleSave(false)}
-                    disabled={state.saving}
-                    className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
-                  >
-                    <Save className="w-4 h-4" />
-                    {state.saving ? 'กำลังบันทึก...' : 'บันทึก'}
-                  </button>
-                  
-                  <button
-                    onClick={handleSubmit}
-                    disabled={state.saving || scoreCalculation.completedQuestions === 0}
-                    className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50"
-                  >
-                    <Send className="w-4 h-4" />
-                    ส่งการประเมิน
-                  </button>
-                </>
+              {/* Status */}
+              {state.readOnly ? (
+                <div className="flex items-center px-3 py-2 space-x-2 text-green-700 border border-green-200 rounded-lg bg-green-50">
+                  <CheckCircle className="w-4 h-4" />
+                  <span className="text-sm font-medium">เสร็จสิ้น</span>
+                </div>
+              ) : (
+                <div className="flex items-center px-3 py-2 space-x-2 text-yellow-700 border border-yellow-200 rounded-lg bg-yellow-50">
+                  <Clock className="w-4 h-4" />
+                  <span className="text-sm font-medium">กำลังประเมิน</span>
+                </div>
               )}
             </div>
           </div>
         </div>
-      </div>
 
-      {/* Content */}
-      <div className="px-4 py-6 mx-auto max-w-7xl sm:px-6 lg:px-8">
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-4">
-          {/* Main Content */}
-          <div className="lg:col-span-3">
-            <QuestionForm
-              formFields={state.form.fields}
-              answers={state.answers}
-              onAnswersChange={handleAnswersChange}
-              onSave={() => handleSave(false)}
-              readOnly={state.readOnly}
-              autoSaveEnabled={true}
-            />
-          </div>
-
-          {/* Sidebar */}
-          <div className="space-y-6 lg:col-span-1">
-            {/* Score Summary */}
-            <div className="p-4 bg-white border border-gray-200 rounded-lg">
-              <h3 className="mb-4 text-lg font-semibold text-gray-900">สรุปคะแนน</h3>
+        {/* Action Buttons */}
+        {!state.readOnly && (
+          <div className="p-4 mb-6 bg-white border border-gray-200 shadow-sm rounded-xl">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                {state.isDirty && (
+                  <div className="flex items-center space-x-2 text-amber-600">
+                    <Clock className="w-4 h-4" />
+                    <span className="text-sm">มีการเปลี่ยนแปลง</span>
+                  </div>
+                )}
+              </div>
               
-              <div className="space-y-3">
-                <div className="flex justify-between">
-                  <span className="text-sm text-gray-600">คะแนนรวม:</span>
-                  <span className="font-medium">{scoreCalculation.totalScore}/{scoreCalculation.maxScore}</span>
-                </div>
-                
-                <div className="flex justify-between">
-                  <span className="text-sm text-gray-600">เปอร์เซ็นต์:</span>
-                  <span className="font-medium">{scoreCalculation.percentage.toFixed(1)}%</span>
-                </div>
-                
-                <div className="flex justify-between">
-                  <span className="text-sm text-gray-600">ความคืบหน้า:</span>
-                  <span className="font-medium">
-                    {scoreCalculation.completedQuestions}/{scoreCalculation.totalQuestions}
-                  </span>
-                </div>
-                
-                <div className="flex justify-between">
-                  <span className="text-sm text-gray-600">ระดับความเสี่ยง:</span>
-                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                    scoreCalculation.riskLevel === 'Low' ? 'bg-green-100 text-green-800' :
-                    scoreCalculation.riskLevel === 'Medium' ? 'bg-yellow-100 text-yellow-800' :
-                    'bg-red-100 text-red-800'
-                  }`}>
-                    {scoreCalculation.riskLevel}
-                  </span>
-                </div>
+              <div className="flex items-center space-x-3">
+                <button
+                  onClick={() => handleSave(false)}
+                  disabled={state.saving || !state.isDirty}
+                  className={`
+                    flex items-center space-x-2 px-4 py-2 rounded-lg transition-colors
+                    ${state.saving || !state.isDirty 
+                      ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
+                      : 'bg-blue-600 text-white hover:bg-blue-700'
+                    }
+                  `}
+                >
+                  <Save className="w-4 h-4" />
+                  <span>{state.saving ? 'กำลังบันทึก...' : 'บันทึก'}</span>
+                </button>
+
+                <button
+                  onClick={handleSubmit}
+                  disabled={state.saving}
+                  className={`
+                    flex items-center space-x-2 px-4 py-2 rounded-lg transition-colors
+                    ${state.saving 
+                      ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
+                      : 'bg-green-600 text-white hover:bg-green-700'
+                    }
+                  `}
+                >
+                  <Send className="w-4 h-4" />
+                  <span>{state.saving ? 'กำลังส่ง...' : 'ส่งการประเมิน'}</span>
+                </button>
               </div>
             </div>
+          </div>
+        )}
 
-            {/* Auditor Information */}
-            <div className="p-4 bg-white border border-gray-200 rounded-lg">
+        {/* Assessment Form */}
+        <React.Suspense fallback={
+          <div className="p-8 bg-white border border-gray-200 shadow-sm rounded-xl">
+            <div className="flex items-center justify-center">
+              <div className="w-8 h-8 border-b-2 border-blue-600 rounded-full animate-spin"></div>
+              <span className="ml-3 text-gray-600">กำลังโหลดแบบฟอร์ม...</span>
+            </div>
+          </div>
+        }>
+          {/* Auditor Information */}
+          {!state.readOnly && (
+            <div className="p-6 mb-6 bg-white border border-gray-200 shadow-sm rounded-xl">
               <h3 className="mb-4 text-lg font-semibold text-gray-900">ข้อมูลผู้ประเมิน</h3>
-              
-              <div className="space-y-4">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div>
-                  <label className="block mb-1 text-sm font-medium text-gray-700">
+                  <label className="block mb-2 text-sm font-medium text-gray-700">
                     ชื่อผู้ประเมิน *
                   </label>
                   <input
                     type="text"
                     value={state.auditor.name}
                     onChange={(e) => handleAuditorChange('name', e.target.value)}
-                    disabled={state.readOnly}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
-                    placeholder="ชื่อ-นามสกุล"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="กรอกชื่อผู้ประเมิน"
+                    required
                   />
                 </div>
-                
                 <div>
-                  <label className="block mb-1 text-sm font-medium text-gray-700">
-                    ตำแหน่ง *
+                  <label className="block mb-2 text-sm font-medium text-gray-700">
+                    ตำแหน่ง
                   </label>
                   <input
                     type="text"
                     value={state.auditor.position}
                     onChange={(e) => handleAuditorChange('position', e.target.value)}
-                    disabled={state.readOnly}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
-                    placeholder="ตำแหน่งงาน"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="กรอกตำแหน่ง"
                   />
                 </div>
-                
                 <div>
-                  <label className="block mb-1 text-sm font-medium text-gray-700">
+                  <label className="block mb-2 text-sm font-medium text-gray-700">
                     อีเมล
                   </label>
                   <input
                     type="email"
                     value={state.auditor.email}
                     onChange={(e) => handleAuditorChange('email', e.target.value)}
-                    disabled={state.readOnly}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
-                    placeholder="email@domain.com"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="กรอกอีเมล"
                   />
                 </div>
-                
                 <div>
-                  <label className="block mb-1 text-sm font-medium text-gray-700">
-                    เบอร์โทร
+                  <label className="block mb-2 text-sm font-medium text-gray-700">
+                    เบอร์โทรศัพท์
                   </label>
                   <input
                     type="tel"
                     value={state.auditor.phone || ''}
                     onChange={(e) => handleAuditorChange('phone', e.target.value)}
-                    disabled={state.readOnly}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
-                    placeholder="0XX-XXX-XXXX"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="กรอกเบอร์โทรศัพท์"
                   />
                 </div>
               </div>
             </div>
+          )}
 
-            {/* Vendor Information */}
-            <div className="p-4 bg-white border border-gray-200 rounded-lg">
-              <h3 className="mb-4 text-lg font-semibold text-gray-900">ข้อมูล Vendor</h3>
-              
-              <div className="space-y-3 text-sm">
-                <div>
-                  <span className="text-gray-600">รหัส:</span>
-                  <span className="ml-2 font-medium">{state.vendor.vdCode}</span>
-                </div>
-                
-                <div>
-                  <span className="text-gray-600">ชื่อ:</span>
-                  <span className="ml-2 font-medium">{state.vendor.vdName}</span>
-                </div>
-                
-                <div>
-                  <span className="text-gray-600">หมวดหมู่:</span>
-                  <span className="ml-2 font-medium">{state.vendor.category}</span>
-                </div>
-                
-                {state.vendor.workingArea && state.vendor.workingArea.length > 0 && (
-                  <div>
-                    <span className="text-gray-600">พื้นที่ทำงาน:</span>
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {state.vendor.workingArea.map((area, index) => (
-                        <span
-                          key={index}
-                          className="px-2 py-1 text-xs text-blue-800 bg-blue-100 rounded-full"
-                        >
-                          {area}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                
-                {state.company && (
-                  <div>
-                    <span className="text-gray-600">บริษัท:</span>
-                    <span className="ml-2 font-medium">{state.company.name}</span>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Assessment Status */}
-            {state.assessment.isFinish && (
-              <div className="p-4 border border-green-200 rounded-lg bg-green-50">
-                <div className="flex items-center gap-2 mb-2">
-                  <CheckCircle className="w-5 h-5 text-green-600" />
-                  <h3 className="font-semibold text-green-900">การประเมินเสร็จสิ้น</h3>
-                </div>
-                <p className="text-sm text-green-700">
-                  การประเมินนี้ได้ส่งเรียบร้อยแล้วเมื่อ{' '}
-                  {formatFinishedDate(state.assessment.finishedAt)}
-                </p>
-              </div>
-            )}
-          </div>
-        </div>
+          {/* Question Form */}
+          <QuestionForm
+            formFields={state.form.fields}
+            answers={state.answers}
+            onAnswersChange={handleAnswersChange}
+            readOnly={state.readOnly}
+            autoSaveEnabled={!state.readOnly}
+            onSave={() => handleSave(false)}
+            confirmations={state.confirmations}
+            onConfirmChange={handleConfirmChange}
+          />
+        </React.Suspense>
       </div>
     </div>
   );

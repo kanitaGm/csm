@@ -1,6 +1,6 @@
 // 📁 src/components/layout/MainLayout.tsx
-// Optimized MainLayout with performance improvements and mobile support
-import React, { useState, useCallback, useMemo, Suspense } from 'react';
+// YouTube-style Collapsible Sidebar with Performance Optimization
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { 
   Menu, 
@@ -23,12 +23,10 @@ import {
   Plus,
   History,
   TrendingUp,
-  CheckSquare
+  CheckSquare,
+  Sidebar as SidebarIcon
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
-
-// Lazy load components for better performance
-//const SkeletonLoader = lazy(() => import('../ui/SkeletonLoader'));
 
 interface SubMenuItem {
   icon: React.ComponentType<{ className?: string }>;
@@ -46,14 +44,34 @@ interface MenuItem {
 }
 
 const MainLayout: React.FC = () => {
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false); // Default closed on mobile
+  // YouTube-style sidebar states: expanded, collapsed, hidden
+  const [sidebarMode, setSidebarMode] = useState<'expanded' | 'collapsed' | 'hidden'>('expanded');
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
-  const [expandedMenus, setExpandedMenus] = useState<string[]>(['dashboard']); // Start with dashboard
+  const [expandedMenus, setExpandedMenus] = useState<string[]>(['csm']);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 1024);
   
   const { user, logout } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
+
+  // Detect mobile/desktop
+  useEffect(() => {
+    const handleResize = () => {
+      const mobile = window.innerWidth < 1024;
+      setIsMobile(mobile);
+      
+      // Auto-adjust sidebar mode based on screen size
+      if (mobile && sidebarMode === 'expanded') {
+        setSidebarMode('hidden');
+      } else if (!mobile && sidebarMode === 'hidden') {
+        setSidebarMode('expanded');
+      }
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [sidebarMode]);
 
   // Memoized profile name calculation
   const profileName = useMemo(() => {
@@ -80,8 +98,8 @@ const MainLayout: React.FC = () => {
         {
           icon: FileText,
           label: 'รายการประเมิน',
-          href: '/csm/list',
-          active: location.pathname === '/csm/list'
+          href: '/csm',
+          active: location.pathname === '/csm'
         },
         {
           icon: Plus,
@@ -116,8 +134,8 @@ const MainLayout: React.FC = () => {
         {
           icon: History,
           label: 'ประวัติการประเมิน',
-          href: '/csm/history',
-          active: location.pathname === '/csm/history'
+          href: '/csm/assessments/history',
+          active: location.pathname === '/csm/assessments/history'
         }
       ]
     },
@@ -161,14 +179,24 @@ const MainLayout: React.FC = () => {
     }
   ], [location.pathname]);
 
-  // Optimized callbacks with useCallback
+  // Optimized callbacks
   const toggleSidebar = useCallback(() => {
-    setIsSidebarOpen(prev => !prev);
-  }, []);
+    if (isMobile) {
+      setSidebarMode(prev => prev === 'hidden' ? 'expanded' : 'hidden');
+    } else {
+      setSidebarMode(prev => {
+        if (prev === 'expanded') return 'collapsed';
+        if (prev === 'collapsed') return 'expanded';
+        return 'expanded';
+      });
+    }
+  }, [isMobile]);
 
   const closeSidebar = useCallback(() => {
-    setIsSidebarOpen(false);
-  }, []);
+    if (isMobile) {
+      setSidebarMode('hidden');
+    }
+  }, [isMobile]);
 
   const toggleUserMenu = useCallback(() => {
     setIsUserMenuOpen(prev => !prev);
@@ -184,11 +212,11 @@ const MainLayout: React.FC = () => {
 
   const handleNavigation = useCallback((href: string) => {
     navigate(href);
-    if (window.innerWidth < 1024) { // Close sidebar on mobile after navigation
-      setIsSidebarOpen(false);
+    if (isMobile) {
+      setSidebarMode('hidden');
     }
     setIsUserMenuOpen(false);
-  }, [navigate]);
+  }, [navigate, isMobile]);
 
   const handleLogout = useCallback(async () => {
     try {
@@ -207,6 +235,34 @@ const MainLayout: React.FC = () => {
     }
   }, []);
 
+  // Calculate sidebar width classes
+  const getSidebarClasses = () => {
+    const baseClasses = "fixed inset-y-0 left-0 z-40 bg-white/95 backdrop-blur-md border-r border-gray-200 shadow-lg transform transition-all duration-300 ease-in-out";
+    
+    if (isMobile) {
+      return `${baseClasses} w-64 ${sidebarMode === 'hidden' ? '-translate-x-full' : 'translate-x-0'}`;
+    }
+    
+    // Desktop modes
+    if (sidebarMode === 'expanded') {
+      return `${baseClasses} w-64 translate-x-0`;
+    } else if (sidebarMode === 'collapsed') {
+      return `${baseClasses} w-16 translate-x-0`;
+    } else {
+      return `${baseClasses} w-0 -translate-x-full`;
+    }
+  };
+
+  const getMainContentClasses = () => {
+    if (isMobile || sidebarMode === 'hidden') {
+      return "flex-1 transition-all duration-300 ease-in-out ml-0";
+    }
+    
+    return sidebarMode === 'expanded' 
+      ? "flex-1 transition-all duration-300 ease-in-out ml-64"
+      : "flex-1 transition-all duration-300 ease-in-out ml-16";
+  };
+
   if (!user) return null;
 
   return (
@@ -218,10 +274,15 @@ const MainLayout: React.FC = () => {
           <div className="flex items-center space-x-4">
             <button
               onClick={toggleSidebar}
-              className="p-2 text-gray-600 transition-colors hover:text-blue-600 hover:bg-blue-50 rounded-xl lg:hidden"
+              className="p-2 text-gray-600 transition-colors hover:text-blue-600 hover:bg-blue-50 rounded-xl"
               aria-label="Toggle sidebar"
+              title={isMobile ? "เปิด/ปิดเมนู" : sidebarMode === 'expanded' ? "ย่อเมนู" : "ขยายเมนู"}
             >
-              {isSidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+              {isMobile ? (
+                sidebarMode === 'hidden' ? <Menu className="w-5 h-5" /> : <X className="w-5 h-5" />
+              ) : (
+                <SidebarIcon className="w-5 h-5" />
+              )}
             </button>
             
             {/* Logo */}
@@ -333,63 +394,44 @@ const MainLayout: React.FC = () => {
       </header>
 
       <div className="flex pt-16">
-        {/* Desktop Sidebar Toggle Button */}
-        <button
-          onClick={toggleSidebar}
-          className={`
-            hidden lg:block fixed top-20 z-50 p-2 bg-white shadow-lg rounded-r-lg border border-l-0 border-gray-200 transition-all duration-300
-            ${isSidebarOpen ? 'left-64' : 'left-0'}
-            hover:bg-blue-50 hover:text-blue-600 text-gray-600
-          `}
-          aria-label="Toggle sidebar"
-        >
-          {isSidebarOpen ? <ChevronDown className="w-4 h-4 rotate-90" /> : <ChevronUp className="w-4 h-4 rotate-90" />}
-        </button>
-
-        {/* Sidebar */}
-        <aside 
-          className={`
-            fixed inset-y-0 left-0 z-40 w-64 bg-white/95 backdrop-blur-md border-r border-gray-200 shadow-lg transform transition-transform duration-300 ease-in-out
-            ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}
-            lg:static lg:translate-x-0
-            ${!isSidebarOpen ? 'lg:-translate-x-full lg:w-0' : 'lg:translate-x-0 lg:w-64'}
-          `}
-          data-sidebar
-        >
+        {/* YouTube-style Sidebar */}
+        <aside className={getSidebarClasses()} data-sidebar>
           <div className="flex flex-col h-full pt-4">
-            <nav className="flex-1 px-4 py-6 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent">
+            <nav className="flex-1 px-2 py-6 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent">
               <div className="space-y-2">
                 {sidebarItems.map((item) => (
                   <div key={item.href}>
                     <button
                       onClick={() => {
-                        if (item.submenu) {
+                        if (item.submenu && sidebarMode === 'expanded') {
                           toggleMenu(item.href);
                         } else {
                           handleNavigation(item.href);
                         }
                       }}
                       className={`
-                        flex items-center justify-between w-full px-4 py-3 text-left text-sm font-medium rounded-xl transition-all duration-200
+                        flex items-center justify-between w-full px-3 py-3 text-left text-sm font-medium rounded-xl transition-all duration-200 group
                         ${item.active 
-                          ? 'bg-gradient-to-r from-blue-500 to-purple-500 text-white shadow-lg transform scale-[1.02]' 
-                          : 'text-gray-700 hover:bg-gray-100 hover:text-blue-600 hover:translate-x-1'
+                          ? 'bg-gradient-to-r from-blue-500 to-purple-500 text-white shadow-lg' 
+                          : 'text-gray-700 hover:bg-gray-100 hover:text-blue-600'
                         }
+                        ${sidebarMode === 'collapsed' ? 'justify-center px-2' : ''}
                       `}
+                      title={sidebarMode === 'collapsed' ? item.label : undefined}
                     >
                       <div className="flex items-center">
-                        <item.icon className="flex-shrink-0 w-5 h-5 mr-3" />
-                        <span className="truncate">{item.label}</span>
+                        <item.icon className={`flex-shrink-0 ${sidebarMode === 'collapsed' ? 'w-5 h-5' : 'w-5 h-5 mr-3'}`} />
+                        {sidebarMode === 'expanded' && <span className="truncate">{item.label}</span>}
                       </div>
-                      {item.submenu && (
+                      {item.submenu && sidebarMode === 'expanded' && (
                         <ChevronUp className={`w-4 h-4 transition-transform flex-shrink-0 ${
                           expandedMenus.includes(item.href) ? 'rotate-180' : ''
                         }`} />
                       )}
                     </button>
 
-                    {/* Submenu */}
-                    {item.submenu && expandedMenus.includes(item.href) && (
+                    {/* Submenu - only show in expanded mode */}
+                    {item.submenu && expandedMenus.includes(item.href) && sidebarMode === 'expanded' && (
                       <div className="mt-2 ml-4 space-y-1 animate-in slide-in-from-top-2">
                         {item.submenu.map((subItem) => (
                           <button
@@ -398,7 +440,7 @@ const MainLayout: React.FC = () => {
                             className={`
                               flex items-center w-full px-4 py-2 text-left text-sm rounded-lg transition-all duration-200
                               ${subItem.active 
-                                ? 'bg-blue-50 text-blue-700 border-l-4 border-blue-500 transform translate-x-1' 
+                                ? 'bg-blue-50 text-blue-700 border-l-4 border-blue-500' 
                                 : 'text-gray-600 hover:bg-gray-50 hover:text-blue-600 hover:translate-x-1'
                               }
                             `}
@@ -415,41 +457,40 @@ const MainLayout: React.FC = () => {
             </nav>
 
             {/* Sidebar Footer */}
-            <div className="p-4 border-t border-gray-200 bg-gradient-to-r from-green-50 to-emerald-50">
-              <div className="flex items-center space-x-3">
-                <div className="flex items-center justify-center w-8 h-8 text-white rounded-lg bg-gradient-to-r from-green-500 to-emerald-500">
-                  <Shield className="w-4 h-4" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-medium text-gray-900 truncate">Safety Management</p>
-                  <p className="text-xs text-gray-500">v2.1.0</p>
+            {sidebarMode === 'expanded' && (
+              <div className="p-4 border-t border-gray-200 bg-gradient-to-r from-green-50 to-emerald-50">
+                <div className="flex items-center space-x-3">
+                  <div className="flex items-center justify-center w-8 h-8 text-white rounded-lg bg-gradient-to-r from-green-500 to-emerald-500">
+                    <Shield className="w-4 h-4" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium text-gray-900 truncate">Safety Management</p>
+                    <p className="text-xs text-gray-500">v2.1.0</p>
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
           </div>
         </aside>
 
         {/* Main Content */}
-        <main className={`
-          flex-1 transition-all duration-300 ease-in-out min-h-screen
-          ${isSidebarOpen && window.innerWidth >= 1024 ? 'lg:ml-0' : 'lg:ml-0'}
-        `}>
+        <main className={getMainContentClasses()}>
           <div className="min-h-full bg-transparent">
-            <Suspense fallback={
+            <React.Suspense fallback={
               <div className="flex items-center justify-center h-64">
                 <div className="w-8 h-8 border-b-2 border-blue-600 rounded-full animate-spin"></div>
               </div>
             }>
               <Outlet />
-            </Suspense>
+            </React.Suspense>
           </div>
         </main>
       </div>
 
       {/* Mobile Overlay */}
-      {isSidebarOpen && (
+      {isMobile && sidebarMode === 'expanded' && (
         <div 
-          className="fixed inset-0 z-30 bg-black bg-opacity-50 lg:hidden backdrop-blur-sm"
+          className="fixed inset-0 z-30 bg-black bg-opacity-50 backdrop-blur-sm"
           onClick={closeSidebar}
           aria-hidden="true"
         />
