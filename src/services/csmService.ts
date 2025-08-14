@@ -14,7 +14,7 @@ import { cacheService } from './cacheService';
 // =================== CONSTANTS ===================
 const COLLECTIONS = {
   CSM_VENDORS: 'csmVendors',
-  CSM_FORMS: 'csmForms', 
+  CSM_FORMS: 'forms', 
   CSM_ASSESSMENTS: 'csmAssessments', 
   COMPANIES: 'companies',
   CSM_SUMMARIES: 'csmAssessmentSummaries'
@@ -550,7 +550,7 @@ export const assessmentsService = {
       });
 
       // Validate required fields
-      if (!assessment.vdCode || !assessment.formId) {
+      if (!assessment.vdCode ) {
         throw new Error('Missing required fields: vdCode or formId');
       }
 

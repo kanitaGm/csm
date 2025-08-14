@@ -1,730 +1,833 @@
 // 📁 src/features/csm/pages/CSMEvaluatePage.tsx
-// Fixed CSMEvaluatePage - แก้ไขปัญหา Navigation และ Type Errors
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+// Complete Fixed CSM Evaluation Page
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { AlertTriangle, Save, Send, ArrowLeft, Clock, CheckCircle } from 'lucide-react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { 
+  ArrowLeft, Save, Send, Clock, CheckCircle, AlertTriangle, 
+  FileText, Camera, Trash2, ChevronLeft, ChevronRight,
+  Building2, User, MapPin
+} from 'lucide-react';
 import { useToast } from '../../../hooks/useToast';
 import { useAuth } from '../../../contexts/AuthContext';
-import csmService from '../../../services/csmService';
+import { useDebouncedAutoSave } from '../../../hooks/useDebouncedAutoSave';
+import { enhancedCSMService } from '../../../services/enhancedCsmService';
 import type { 
-  CSMVendor, 
   CSMFormField, 
   CSMAssessment, 
   CSMAssessmentAnswer, 
   CSMAuditor,
-  Company,
-  CSMFormDoc
+  Score
 } from '../../../types/csm';
 
-// Assessment form component (lazy loaded)
-const QuestionForm = React.lazy(() => import('../components/QuestionForm'));
-
-
-interface PageState {
-  loading: boolean;
-  saving: boolean;
-  vendor: CSMVendor | null;
-  company: Company | null;
-  form: CSMFormDoc | null;
-  assessment: CSMAssessment | null;
-  answers: CSMAssessmentAnswer[];
-  auditor: CSMAuditor;
-  isDirty: boolean;
-  readOnly: boolean;
-  confirmations: Record<string, boolean>;
+// Types
+interface QuestionProgress {
+  completed: number;
+  total: number;
+  percentage: number;
 }
 
+interface ScoreOption {
+  value: Score;
+  label: string;
+  description: string;
+  color: string;
+}
+
+// Constants
+const SCORE_OPTIONS: ScoreOption[] = [
+  { value: '5', label: '5', description: 'ดีเยี่ยม', color: 'bg-green-500' },
+  { value: '4', label: '4', description: 'ดี', color: 'bg-green-400' },
+  { value: '3', label: '3', description: 'พอใช้', color: 'bg-yellow-500' },
+  { value: '2', label: '2', description: 'ต้องปรับปรุง', color: 'bg-orange-500' },
+  { value: '1', label: '1', description: 'ไม่ดี', color: 'bg-red-500' },
+  { value: '0', label: '0', description: 'ไม่มี', color: 'bg-red-600' },
+  { value: 'n/a', label: 'N/A', description: 'ไม่เกี่ยวข้อง', color: 'bg-gray-500' }
+];
+
+// Components
+const ProgressBar: React.FC<{ progress: QuestionProgress }> = ({ progress }) => (
+  <div className="w-full bg-gray-200 rounded-full h-2">
+    <div 
+      className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+      style={{ width: `${progress.percentage}%` }}
+    />
+  </div>
+);
+
+const QuestionSidebar: React.FC<{
+  questions: CSMFormField[];
+  answers: CSMAssessmentAnswer[];
+  selectedIndex: number;
+  onQuestionSelect: (index: number) => void;
+}> = ({ questions, answers, selectedIndex, onQuestionSelect }) => {
+  const getQuestionStatus = (index: number) => {
+    const answer = answers[index];
+    if (!answer || !answer.score) return 'incomplete';
+    if (answer.isFinish) return 'complete';
+    return 'in-progress';
+  };
+
+  const progress = useMemo((): QuestionProgress => {
+    const completed = answers.filter(a => a.score && a.score !== '').length;
+    const total = questions.length;
+    return {
+      completed,
+      total,
+      percentage: total > 0 ? (completed / total) * 100 : 0
+    };
+  }, [answers, questions.length]);
+
+  return (
+    <div className="w-80 bg-white shadow-lg border-r overflow-y-auto flex flex-col h-full">
+      {/* Header */}
+      <div className="p-4 border-b bg-blue-50">
+        <h2 className="font-semibold text-gray-900 mb-2">รายการคำถาม</h2>
+        <div className="text-sm text-gray-600 mb-2">
+          ตอบแล้ว {progress.completed}/{progress.total} ข้อ
+        </div>
+        <ProgressBar progress={progress} />
+      </div>
+      
+      {/* Questions List */}
+      <div className="flex-1 p-2 overflow-y-auto">
+        {questions.map((question, index) => {
+          const status = getQuestionStatus(index);
+          const isSelected = selectedIndex === index;
+          const answer = answers[index];
+          
+          return (
+            <button
+              key={question.id}
+              onClick={() => onQuestionSelect(index)}
+              className={`w-full text-left p-3 mb-2 rounded-lg border transition-all ${
+                isSelected
+                  ? 'bg-blue-50 border-blue-200 shadow-sm ring-2 ring-blue-200'
+                  : 'bg-gray-50 border-gray-200 hover:bg-gray-100 hover:border-gray-300'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center space-x-2">
+                  <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium ${
+                    question.ckType === 'M' 
+                      ? 'bg-red-100 text-red-800 border border-red-200' 
+                      : 'bg-yellow-100 text-yellow-800 border border-yellow-200'
+                  }`}>
+                    {question.ckType}
+                  </span>
+                  <span className="text-sm font-medium">ข้อ {question.ckItem}</span>
+                </div>
+                <div className="flex items-center space-x-1">
+                  {status === 'complete' && (
+                    <CheckCircle className="w-4 h-4 text-green-500" />
+                  )}
+                  {status === 'in-progress' && (
+                    <Clock className="w-4 h-4 text-yellow-500" />
+                  )}
+                  {question.required && (
+                    <span className="text-red-500 text-xs font-bold">*</span>
+                  )}
+                </div>
+              </div>
+              <p className="text-xs text-gray-600 line-clamp-3 mb-1">
+                {question.ckQuestion}
+              </p>
+              {answer?.score && (
+                <div className="flex items-center mt-2">
+                  <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
+                    คะแนน: {answer.score}
+                  </span>
+                </div>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+const ScoreSelector: React.FC<{
+  value: Score | '';
+  onChange: (score: Score) => void;
+  disabled?: boolean;
+  allowNA?: boolean;
+}> = ({ value, onChange, disabled = false, allowNA = true }) => {
+  const options = allowNA ? SCORE_OPTIONS : SCORE_OPTIONS.filter(opt => opt.value !== 'n/a');
+  
+  return (
+    <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-7">
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          disabled={disabled}
+          onClick={() => onChange(option.value)}
+          className={`relative p-3 rounded-lg border-2 transition-all duration-200 ${
+            value === option.value
+              ? `${option.color} text-white border-gray-900 ring-2 ring-offset-2 ring-gray-900`
+              : `border-gray-300 hover:border-gray-400 hover:shadow-md ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`
+          }`}
+        >
+          <div className="text-center">
+            <div className={`text-lg font-bold ${value === option.value ? 'text-white' : 'text-gray-900'}`}>
+              {option.label}
+            </div>
+            <div className={`text-xs mt-1 ${value === option.value ? 'text-white' : 'text-gray-600'}`}>
+              {option.description}
+            </div>
+          </div>
+        </button>
+      ))}
+    </div>
+  );
+};
+
+const QuestionForm: React.FC<{
+  question: CSMFormField;
+  answer: CSMAssessmentAnswer;
+  onChange: (answer: Partial<CSMAssessmentAnswer>) => void;
+  onNext: () => void;
+  onPrev: () => void;
+  hasNext: boolean;
+  hasPrev: boolean;
+  questionNumber: number;
+  totalQuestions: number;
+}> = ({ 
+  question, 
+  answer, 
+  onChange, 
+  onNext, 
+  onPrev, 
+  hasNext, 
+  hasPrev,
+  questionNumber,
+  totalQuestions
+}) => {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleScoreChange = (score: Score) => {
+    // Calculate tScore
+    const fScore = parseFloat(question.fScore || '0') || 0;
+    let tScore = '0';
+    
+    if (score !== 'n/a') {
+      const scoreValue = parseFloat(score) || 0;
+      tScore = (fScore * scoreValue / 5).toString(); // Assuming max score is 5
+    }
+    
+    onChange({ 
+      score, 
+      tScore,
+      isFinish: true
+    });
+  };
+
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (files && files.length > 0) {
+      // Handle file upload logic here
+      const fileNames = Array.from(files).map(file => file.name);
+      onChange({ 
+        files: [...(answer.files || []), ...fileNames]
+      });
+    }
+  };
+
+  const removeFile = (index: number) => {
+    const newFiles = [...(answer.files || [])];
+    newFiles.splice(index, 1);
+    onChange({ files: newFiles });
+  };
+
+  return (
+    <div className="max-w-4xl mx-auto">
+      {/* Question Header */}
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center space-x-3">
+            <span className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold text-white ${
+              question.ckType === 'M' ? 'bg-red-500' : 'bg-yellow-500'
+            }`}>
+              {question.ckType}
+            </span>
+            <div>
+              <h2 className="text-xl font-semibold text-gray-900">
+                ข้อ {question.ckItem} จาก {totalQuestions}
+              </h2>
+              <div className="flex items-center mt-1 space-x-2">
+                {question.required && (
+                  <span className="text-xs bg-red-100 text-red-800 px-2 py-1 rounded">
+                    บังคับ
+                  </span>
+                )}
+                <span className="text-xs bg-gray-100 text-gray-800 px-2 py-1 rounded">
+                  คะแนนเต็ม: {question.fScore || '0'}
+                </span>
+              </div>
+            </div>
+          </div>
+          <div className="text-sm text-gray-500">
+            ข้อ {questionNumber} / {totalQuestions}
+          </div>
+        </div>
+        
+        <div className="space-y-4">
+          <div>
+            <h3 className="text-lg font-medium text-gray-900 mb-2">คำถาม</h3>
+            <p className="text-gray-700 leading-relaxed">{question.ckQuestion}</p>
+          </div>
+          
+          {question.ckRequirement && (
+            <div>
+              <h4 className="text-sm font-medium text-gray-900 mb-1">ข้อกำหนด</h4>
+              <p className="text-sm text-gray-600 bg-gray-50 p-3 rounded-md">
+                {question.ckRequirement}
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Answer Form */}
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+        <div className="space-y-6">
+          {/* Score Selection */}
+          <div>
+            <label className="block text-sm font-medium text-gray-900 mb-3">
+              คะแนน {question.required && <span className="text-red-500">*</span>}
+            </label>
+            <ScoreSelector
+              value={answer.score as Score || ''}
+              onChange={handleScoreChange}
+              allowNA={question.ckType !== 'M'} // M type cannot be N/A
+            />
+            {answer.score && answer.tScore && (
+              <div className="mt-2 text-sm text-gray-600">
+                คะแนนที่ได้: {answer.tScore} / {question.fScore || '0'}
+              </div>
+            )}
+          </div>
+
+          {/* Comment */}
+          <div>
+            <label className="block text-sm font-medium text-gray-900 mb-2">
+              ความคิดเห็น / รายละเอียดเพิ่มเติม
+            </label>
+            <textarea
+              rows={4}
+              value={answer.comment || ''}
+              onChange={(e) => onChange({ comment: e.target.value })}
+              placeholder="บันทึกข้อสังเกต หรือข้อเสนอแนะ..."
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+            />
+          </div>
+
+          {/* File Attachments */}
+          {question.allowAttach && (
+            <div>
+              <label className="block text-sm font-medium text-gray-900 mb-2">
+                ไฟล์แนบ (รูปภาพ, เอกสาร)
+              </label>
+              
+              <div className="space-y-3">
+                {/* Upload Button */}
+                <div>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    accept="image/*,.pdf,.doc,.docx"
+                    onChange={handleFileUpload}
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                  >
+                    <Camera className="w-4 h-4 mr-2" />
+                    แนบไฟล์
+                  </button>
+                </div>
+                
+                {/* File List */}
+                {answer.files && answer.files.length > 0 && (
+                  <div className="space-y-2">
+                    {answer.files.map((file, index) => (
+                      <div key={index} className="flex items-center justify-between p-2 bg-gray-50 rounded-md">
+                        <span className="text-sm text-gray-700 truncate">{file}</span>
+                        <button
+                          type="button"
+                          onClick={() => removeFile(index)}
+                          className="text-red-500 hover:text-red-700"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Navigation */}
+      <div className="flex justify-between items-center">
+        <button
+          onClick={onPrev}
+          disabled={!hasPrev}
+          className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <ChevronLeft className="w-4 h-4 mr-1" />
+          ข้อก่อนหน้า
+        </button>
+        
+        <div className="text-sm text-gray-500">
+          ข้อ {questionNumber} จาก {totalQuestions}
+        </div>
+        
+        <button
+          onClick={onNext}
+          disabled={!hasNext}
+          className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          ข้อถัดไป
+          <ChevronRight className="w-4 h-4 ml-1" />
+        </button>
+      </div>
+    </div>
+  );
+};
+
+// Main Component
 const CSMEvaluatePage: React.FC = () => {
   const { vdCode } = useParams<{ vdCode: string }>();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { addToast } = useToast();
   const { user } = useAuth();
+  const queryClient = useQueryClient();
   
-  // Prevent navigation loops
-  const isInitializedRef = useRef(false);
-  const autoSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const navigationBlockedRef = useRef(false);
-
-  // Get vdCode from params or query string
-  const finalVdCode = vdCode || searchParams.get('vdCode');
-
-  const [state, setState] = useState<PageState>({
-    loading: true,
-    saving: false,
-    vendor: null,
-    company: null,
-    form: null,
-    assessment: null,
-    answers: [],
-    auditor: {
-      name: user?.displayName || '',
-      email: user?.email || '',
-      phone: '',
-      position: ''
-    },
-    isDirty: false,
-    readOnly: false,
-    confirmations: {}
+  // State
+  const [selectedQuestionIndex, setSelectedQuestionIndex] = useState(0);
+  const [answers, setAnswers] = useState<CSMAssessmentAnswer[]>([]);
+  const [auditor] = useState<CSMAuditor>({
+    name: user?.displayName || '',
+    email: user?.email || '',
+    phone: '',
+    position: ''
   });
-
-    // Calculate score
-  const scoreCalculation = React.useMemo(() => {
-    if (state.answers.length === 0) return { total: 0, max: 0, percentage: 0 };
-    
-    const total = state.answers.reduce((sum, answer) => {
-      const score = parseFloat(answer.score || '0') || 0;
-      return sum + score;
-    }, 0);
-    
-    const max = state.answers.reduce((sum, answer) => {
-      const tScore = parseFloat(answer.tScore || '5') || 5;
-      return sum + tScore;
-    }, 0);
-    
-    const percentage = max > 0 ? (total / max) * 100 : 0;
-    
-    return { total, max, percentage };
-  }, [state.answers]);
-
-  // =================== SAVE FUNCTIONS ===================
-  const handleSave = useCallback(async (isAutoSave = false) => {
-    if (!finalVdCode || !state.assessment || state.readOnly || state.saving) {
-      return;
-    }
-
-    try {
-      setState(prev => ({ ...prev, saving: true }));
-
-      const updatedAssessment: CSMAssessment = {
-        ...state.assessment,
-        answers: state.answers,
-        auditor: state.auditor,
-        totalScore: scoreCalculation.total.toString(),
-        maxScore: scoreCalculation.max.toString(),
-        avgScore: scoreCalculation.percentage.toFixed(1),
-        updatedAt: new Date(),
+  
+  const finalVdCode = vdCode || searchParams.get('vdCode');
+  
+  // Data fetching
+  const { data: vendor, isLoading: vendorLoading } = useQuery({
+    queryKey: ['csm-vendor', finalVdCode],
+    queryFn: () => finalVdCode ? enhancedCSMService.vendors.getByVdCode(finalVdCode) : null,
+    enabled: !!finalVdCode,
+  });
+  
+  const { data: company } = useQuery({
+    queryKey: ['company', vendor?.companyId],
+    queryFn: () => vendor?.companyId ? enhancedCSMService.companies.getByVdCode(vendor.vdCode) : null,
+    enabled: !!vendor?.companyId,
+  });
+  
+  const { data: form, isLoading: formLoading } = useQuery({
+    queryKey: ['csm-form', 'CSMChecklist'],
+    queryFn: () => enhancedCSMService.forms.getCSMChecklist(),
+  });
+  
+  const { data: existingAssessment } = useQuery({
+    queryKey: ['csm-assessment', finalVdCode],
+    queryFn: async () => {
+      if (!finalVdCode || !form?.id) return null;
+      const assessments = await enhancedCSMService.assessments.getByVdCode(finalVdCode);
+      return assessments.find(a => a.id && !a.isFinish) || null;
+    },
+    enabled: !!finalVdCode && !!form?.id,
+  });
+  
+  // Initialize answers when form loads
+  useEffect(() => {
+    if (form?.fields && answers.length === 0) {
+      const initialAnswers: CSMAssessmentAnswer[] = form.fields.map(field => ({
+        ckItem: field.ckItem,
+        ckType: field.ckType,
+        ckQuestion: field.ckQuestion,
+        comment: '',
+        score: '',
+        tScore: '0',
+        files: [],
         isFinish: false
-      };
-
-      await csmService.assessments.save(updatedAssessment);
-
-      setState(prev => ({ ...prev, isDirty: false, assessment: updatedAssessment }));
-
-      if (!isAutoSave) {
-        addToast({
-          type: 'success',
-          title: 'บันทึกสำเร็จ',
-          message: 'ข้อมูลการประเมินถูกบันทึกแล้ว'
-        });
-      }
-
-    } catch (error) {
-      console.error('❌ Error saving assessment:', error);
-      if (!isAutoSave) {
-        addToast({
-          type: 'error',
-          title: 'เกิดข้อผิดพลาด',
-          message: 'ไม่สามารถบันทึกข้อมูลได้ กรุณาลองใหม่อีกครั้ง'
-        });
-      }
-    } finally {
-      setState(prev => ({ ...prev, saving: false }));
-    }
-  }, [finalVdCode, state.assessment, state.readOnly, state.saving, state.answers, state.auditor, scoreCalculation, addToast]);
-
-  const handleSubmit = useCallback(async () => {
-    if (!state.assessment || state.readOnly || state.saving) {
-      return;
-    }
-
-    // Validate required fields
-    const incompleteAnswers = state.answers.filter(answer => !answer.score || answer.score.trim() === '');
-    if (incompleteAnswers.length > 0) {
-      addToast({
-        type: 'warning',
-        title: 'ข้อมูลไม่ครบถ้วน',
-        message: `กรุณากรอกคะแนนให้ครบทุกข้อ (ขาดไป ${incompleteAnswers.length} ข้อ)`
-      });
-      return;
-    }
-
-    if (!state.auditor.name.trim()) {
-      addToast({
-        type: 'warning',
-        title: 'ข้อมูลไม่ครบถ้วน',
-        message: 'กรุณากรอกชื่อผู้ประเมิน'
-      });
-      return;
-    }
-
-    try {
-      setState(prev => ({ ...prev, saving: true }));
-
-      const finalAssessment: CSMAssessment = {
-        ...state.assessment,
-        answers: state.answers.map(answer => ({ ...answer, isFinish: true })),
-        auditor: state.auditor,
-        totalScore: scoreCalculation.total.toString(),
-        maxScore: scoreCalculation.max.toString(),
-        avgScore: scoreCalculation.percentage.toFixed(1),
-        isFinish: true,
-        finishedAt: new Date(),
-        updatedAt: new Date()
-      };
-
-      await csmService.assessments.save(finalAssessment);
-
-      setState(prev => ({ 
-        ...prev, 
-        isDirty: false, 
-        readOnly: true, 
-        assessment: finalAssessment 
       }));
-
+      
+      // Load existing answers if available
+      if (existingAssessment?.answers) {
+        existingAssessment.answers.forEach((existingAnswer, index) => {
+          if (initialAnswers[index]) {
+            initialAnswers[index] = { ...initialAnswers[index], ...existingAnswer };
+          }
+        });
+      }
+      
+      setAnswers(initialAnswers);
+    }
+  }, [form?.fields, existingAssessment?.answers, answers.length]);
+  
+  // Calculation functions
+  const calculateTotalScore = useCallback((answers: CSMAssessmentAnswer[]): number => {
+    return answers.reduce((total, answer) => {
+      const score = parseFloat(answer.tScore || '0') || 0;
+      return total + score;
+    }, 0);
+  }, []);
+  
+  const calculateMaxScore = useCallback((fields: CSMFormField[]): number => {
+    return fields.reduce((total, field) => {
+      const fScore = parseFloat(field.fScore || '0') || 0;
+      return total + fScore;
+    }, 0);
+  }, []);
+  
+  const calculateAvgScore = useCallback((answers: CSMAssessmentAnswer[], fields: CSMFormField[]): number => {
+    const totalScore = calculateTotalScore(answers);
+    const maxScore = calculateMaxScore(fields);
+    return maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0;
+  }, [calculateTotalScore, calculateMaxScore]);
+  
+  const calculateRiskLevel = useCallback((answers: CSMAssessmentAnswer[], fields: CSMFormField[]): string => {
+    const avgScore = calculateAvgScore(answers, fields);
+    if (avgScore >= 80) return 'Low';
+    if (avgScore >= 60) return 'Medium';
+    return 'High';
+  }, [calculateAvgScore]);
+  
+  // Auto-save functionality
+  const saveAssessment = useCallback(async (assessmentData: Partial<CSMAssessment>) => {
+    if (!vendor || !form) return;
+    
+    // ✅ Fix assessment object structure - match CSMAssessment type exactly
+    const assessmentToSave = {
+      companyId: vendor.companyId,
+      vdCode: vendor.vdCode,
+      vdName: vendor.vdName,
+      docReference: vendor.vdCode, // ✅ Add required field
+      formCode: 'CSMChecklist', // ✅ Add required field as string
+      formVersion: '1.0',
+      vdWorkingArea: Array.isArray(vendor.workingArea) ? vendor.workingArea.join(', ') : vendor.workingArea || '',
+      vdCategory: vendor.category,
+      answers,
+      auditor,
+      riskLevel: calculateRiskLevel(answers, form.fields),
+      totalScore: calculateTotalScore(answers).toString(),
+      maxScore: calculateMaxScore(form.fields).toString(),
+      avgScore: calculateAvgScore(answers, form.fields).toString(),
+      isActive: true,
+      isFinish: false,
+      createdAt: existingAssessment?.createdAt || new Date(),
+      updatedAt: new Date(),
+      ...assessmentData
+    };
+    
+    if (existingAssessment?.id) {
+      await enhancedCSMService.assessments.update(existingAssessment.id, assessmentToSave);
+    } else {
+      await enhancedCSMService.assessments.create(assessmentToSave);
+    }
+    
+    queryClient.invalidateQueries({ queryKey: ['csm-assessment', finalVdCode] });
+  }, [vendor, form, answers, auditor, existingAssessment, finalVdCode, queryClient, calculateRiskLevel, calculateTotalScore, calculateMaxScore, calculateAvgScore]);
+  
+  // ✅ Fix auto-save options
+  const { isSaving, lastSaved } = useDebouncedAutoSave(
+    { answers, auditor },
+    saveAssessment,
+    { delay: 60000 }
+  );
+  
+  // Mutations
+  const finishAssessmentMutation = useMutation({
+    mutationFn: async () => {
+      await saveAssessment({ 
+        isFinish: true, 
+        finishedAt: new Date()
+      });
+    },
+    onSuccess: () => {
       addToast({
         type: 'success',
-        title: 'ส่งการประเมินสำเร็จ',
-        message: `การประเมิน CSM ถูกส่งเรียบร้อยแล้ว (คะแนน: ${scoreCalculation.percentage.toFixed(1)}%)`
+        title: 'บันทึกสำเร็จ',
+        message: 'การประเมินได้รับการบันทึกเรียบร้อยแล้ว'
       });
-
-      // Don't redirect immediately - let user see the success message first
-
-    } catch (error) {
-      console.error('❌ Error submitting assessment:', error);
+      navigate('/csm');
+    },
+    onError: () => {
       addToast({
         type: 'error',
         title: 'เกิดข้อผิดพลาด',
-        message: 'ไม่สามารถส่งการประเมินได้ กรุณาลองใหม่อีกครั้ง'
+        message: 'ไม่สามารถบันทึกการประเมินได้'
       });
-    } finally {
-      setState(prev => ({ ...prev, saving: false }));
     }
-  }, [state.assessment, state.readOnly, state.saving, state.answers, state.auditor, scoreCalculation, addToast]);
-
-  // =================== AUTO-SAVE LOGIC ===================
-  useEffect(() => {
-    if (!isInitializedRef.current || navigationBlockedRef.current) return;
-    if (!state.isDirty || state.readOnly || state.saving) return;
-
-    // Clear existing timeout
-    if (autoSaveTimeoutRef.current) {
-      clearTimeout(autoSaveTimeoutRef.current);
+  });
+  
+  // Event handlers
+  const handleAnswerChange = useCallback((index: number, changes: Partial<CSMAssessmentAnswer>) => {
+    setAnswers(prev => {
+      const newAnswers = [...prev];
+      newAnswers[index] = { ...newAnswers[index], ...changes };
+      return newAnswers;
+    });
+  }, []);
+  
+  const handleQuestionSelect = useCallback((index: number) => {
+    setSelectedQuestionIndex(index);
+  }, []);
+  
+  const handleNext = useCallback(() => {
+    if (form && selectedQuestionIndex < form.fields.length - 1) {
+      setSelectedQuestionIndex(prev => prev + 1);
     }
+  }, [selectedQuestionIndex, form]);
+  
+  const handlePrev = useCallback(() => {
+    if (selectedQuestionIndex > 0) {
+      setSelectedQuestionIndex(prev => prev - 1);
+    }
+  }, [selectedQuestionIndex]);
+  
+  const handleFinishAssessment = useCallback(() => {
+    if (!form) return;
     
-    // Set new timeout for auto-save
-    autoSaveTimeoutRef.current = setTimeout(() => {
-      console.log('🔄 Auto-saving assessment...');
-      handleSave(true);
-    }, 3000); // 3 seconds delay
-
-    return () => {
-      if (autoSaveTimeoutRef.current) {
-        clearTimeout(autoSaveTimeoutRef.current);
-      }
-    };
-  }, [state.isDirty, state.readOnly, state.saving, handleSave]);
-
-  // =================== ANSWERS CHANGE HANDLER ===================
-  const handleAnswersChange = useCallback((newAnswers: CSMAssessmentAnswer[]) => {
-    setState(prev => ({
-      ...prev,
-      answers: newAnswers,
-      isDirty: true
-    }));
-  }, []);
-
-  // =================== AUDITOR CHANGE HANDLERS ===================
-  const handleAuditorChange = useCallback((field: keyof CSMAuditor, value: string) => {
-    setState(prev => ({
-      ...prev,
-      auditor: {
-        ...prev.auditor,
-        [field]: value
-      },
-      isDirty: true
-    }));
-  }, []);
-
-  // =================== CONFIRMATION CHANGE HANDLER ===================
-  const handleConfirmChange = useCallback((ckItem: string, confirmed: boolean) => {
-    setState(prev => ({
-      ...prev,
-      confirmations: {
-        ...prev.confirmations,
-        [ckItem]: confirmed
-      },
-      isDirty: true
-    }));
-  }, []);
-
-  // =================== NAVIGATION HANDLERS ===================
-  const handleBack = useCallback(() => {
-    if (state.isDirty) {
-      const confirmLeave = window.confirm(
-        'คุณมีการเปลี่ยนแปลงที่ยังไม่ได้บันทึก ต้องการออกจากหน้านี้หรือไม่?'
-      );
-      if (!confirmLeave) return;
-    }
+    // Validate required questions
+    const requiredQuestions = form.fields.filter(f => f.required);
+    const missingRequired = requiredQuestions.filter((_, index) => {
+      const answer = answers[index];
+      return !answer || !answer.score || answer.score === '';
+    });
     
-    navigationBlockedRef.current = true;
-    navigate('/csm', { replace: true });
-  }, [navigate, state.isDirty]);
-
-  // =================== INITIALIZATION ===================
-  useEffect(() => {
-    if (!finalVdCode) {
-      console.error('❌ No vdCode provided');
+    if (missingRequired.length > 0) {
       addToast({
         type: 'error',
-        title: 'ข้อผิดพลาด',
-        message: 'ไม่พบรหัส Vendor'
+        title: 'ข้อมูลไม่ครบถ้วน',
+        message: `กรุณาตอบคำถามบังคับ ${missingRequired.length} ข้อที่เหลือ`
       });
-      navigate('/csm', { replace: true });
       return;
     }
+    
+    finishAssessmentMutation.mutate();
+  }, [form, answers, addToast, finishAssessmentMutation]);
+  
+  // Check user permissions  
+  const hasPermission = useMemo(() => {
+    if (!user?.roles) return false;
+    const allowedRoles = ['superAdmin', 'csmAuditor', 'auditor'];
+    if (Array.isArray(user.roles)) {
+      return user.roles.some(role => allowedRoles.includes(role));
+    }
+    return allowedRoles.includes(user.roles);
+  }, [user?.roles]);
 
-    const initializePage = async () => {
-      try {
-        console.log('🚀 Initializing CSM Evaluate Page for vdCode:', finalVdCode);
-        setState(prev => ({ ...prev, loading: true }));
-        navigationBlockedRef.current = false;
 
-        // Load vendor data
-        console.log('🔍 Loading vendor with vdCode:', finalVdCode);
-        const vendor = await csmService.vendors.getByVdCode(finalVdCode);
-        if (!vendor) {
-          throw new Error(`ไม่พบข้อมูล Vendor สำหรับรหัส: ${finalVdCode}`);
-        }
-        console.log('✅ Found vendor:', vendor.vdName);
-
-        // Load company data (if available)
-        let company: Company | null = null;
-        try {
-          company = await csmService.companies.getByVdCode(vendor.vdCode);
-          if (company) {
-            console.log('✅ Found company:', company.name);
-          }
-        } catch (error) {
-          console.warn('Could not load company data:', error);
-        }
-
-        // Load CSM form
-        console.log('🔍 Loading CSM form...');
-        let csmForm: CSMFormDoc | null = null;
-        
-        try {
-          // Try enhanced service first
-          console.log('🔍 Trying enhancedCSMFormsService.getCSMChecklist()...');
-          const enhancedCSMFormsService = await import('../../../services/enhancedCsmService');
-          csmForm = await enhancedCSMFormsService.enhancedCSMFormsService.getCSMChecklist();
-          
-          if (csmForm) {
-            console.log('✅ Found CSM form from enhanced service:', csmForm.formTitle || csmForm.formCode);
-          }
-        } catch (enhancedError) {
-          console.warn('⚠️ Enhanced service failed, trying regular service:', enhancedError);
-        }
-        
-        // Fallback to regular service
-        if (!csmForm) {
-          try {
-            console.log('🔍 Trying csmService.forms.getAll()...');
-            const allForms = await csmService.forms.getAll();
-            console.log(`📋 Found ${allForms.length} forms total`);
-            
-            // Look for CSM form by various criteria
-            csmForm = allForms.find(form => 
-              form.formCode === 'CSM' || 
-              form.formCode === 'CSMChecklist' ||
-              form.formCode?.toLowerCase().includes('csm') ||
-              form.formTitle?.toLowerCase().includes('csm') ||
-              form.applicableTo?.includes('csm')
-            ) || null;
-            
-            if (csmForm) {
-              console.log('✅ Found CSM form from regular service:', csmForm.formTitle || csmForm.formCode);
-            } else {
-              console.log('📋 Available forms:', allForms.map(f => ({ code: f.formCode, title: f.formTitle })));
-            }
-          } catch (regularError) {
-            console.warn('⚠️ Regular service also failed:', regularError);
-          }
-        }
-        
-        // Create mock form if nothing found
-        if (!csmForm) {
-          console.log('📝 Creating mock CSM form for development...');
-          csmForm = {
-            id: 'mock-csm-form',
-            formCode: 'CSMChecklist',
-            formTitle: 'CSM Assessment Checklist (Mock)',
-            formDescription: 'Mock CSM assessment form for testing purposes',
-            isActive: true,
-            applicableTo: ['csm'],
-            fields: [
-              {
-                id: '1',
-                ckItem: '1',
-                ckType: 'M',
-                ckQuestion: 'มีการจัดการด้านความปลอดภัยหรือไม่?',
-                ckRequirement: 'ต้องมีระบบจัดการความปลอดภัยที่ครอบคลุม',
-                fScore: '5',
-                tScore: '5',
-                type: 'text',
-                required: true,
-                allowAttach: false
-              },
-              {
-                id: '2',
-                ckItem: '2',
-                ckType: 'M',
-                ckQuestion: 'มีการฝึกอบรมพนักงานหรือไม่?',
-                ckRequirement: 'ควรมีการฝึกอบรมอย่างสม่ำเสมอและมีหลักฐาน',
-                fScore: '5',
-                tScore: '5',
-                type: 'text',
-                required: true,
-                allowAttach: false
-              },
-              {
-                id: '3',
-                ckItem: '3',
-                ckType: 'P',
-                ckQuestion: 'มีใบรับรองมาตรฐานที่เกี่ยวข้องหรือไม่?',
-                ckRequirement: 'ควรมีใบรับรองมาตรฐานที่เกี่ยวข้อง',
-                fScore: '3',
-                tScore: '3',
-                type: 'text',
-                required: false,
-                allowAttach: true
-              }
-            ],
-            createdAt: new Date(),
-            updatedAt: new Date(),
-            createdBy: 'system'
-          };
-          console.log('✅ Created mock CSM form');
-        }
-        
-        if (!csmForm.fields || csmForm.fields.length === 0) {
-          throw new Error('แบบฟอร์ม CSM ไม่มีคำถาม กรุณาตรวจสอบข้อมูลในระบบ');
-        }
-
-        // Try to load existing assessment
-        let assessment: CSMAssessment;
-        let answers: CSMAssessmentAnswer[];
-        let auditor: CSMAuditor = {
-          name: '',
-          email: '',
-          phone: '',
-          position: ''
-        };
-
-        try {
-          const existingAssessments = await csmService.assessments.getByVdCode(finalVdCode);
-          const currentAssessment = existingAssessments.find((a: CSMAssessment) => 
-            a.formId === csmForm.id && !a.isFinish
-          );
-
-          if (currentAssessment) {
-            console.log('📋 Found existing assessment');
-            assessment = currentAssessment;
-            answers = currentAssessment.answers || [];
-            auditor = currentAssessment.auditor || auditor;
-          } else {
-            throw new Error('No existing assessment'); // Force creation of new assessment
-          }
-        } catch {
-          console.log('📝 Creating new assessment');
-          assessment = {
-            id: `${finalVdCode}_${Date.now()}`,
-            companyId: vendor.companyId,
-            vdCode: vendor.vdCode,
-            vdName: vendor.vdName,
-            formId: csmForm.id || '',
-            formVersion: '1.0',
-            answers: [],
-            auditor,
-            vdCategory: vendor.category,
-            vdWorkingArea: Array.isArray(vendor.workingArea) 
-              ? vendor.workingArea.join(', ') 
-              : (vendor.workingArea || ''),
-            totalScore: '0',
-            maxScore: '0',
-            avgScore: '0',
-            isActive: true,
-            isFinish: false,
-            createdAt: new Date(),
-            updatedAt: new Date()
-          };
-
-          // Initialize answers for all form fields
-          answers = csmForm.fields.map((field: CSMFormField) => ({
-            ckItem: field.ckItem,
-            ckType: field.ckType,
-            ckQuestion: field.ckQuestion,
-            comment: '',
-            score: '', // Start with empty score
-            tScore: field.tScore || field.fScore || '5',
-            action: '',
-            files: [],
-            isFinish: false
-          }));
-        }
-
-        setState({
-          loading: false,
-          saving: false,
-          vendor,
-          company,
-          form: csmForm,
-          assessment,
-          answers,
-          auditor,
-          isDirty: false,
-          readOnly: assessment.isFinish || false,
-          confirmations: {}
-        });
-
-        // Mark as initialized for auto-save
-        isInitializedRef.current = true;
-        
-        console.log('✅ Page initialization complete');
-
-      } catch (error) {
-        console.error('❌ Error initializing page:', error);
-        addToast({
-          type: 'error',
-          title: 'เกิดข้อผิดพลาด',
-          message: 'ไม่สามารถโหลดข้อมูลได้ กรุณาลองใหม่อีกครั้ง'
-        });
-        setState(prev => ({ ...prev, loading: false }));
-        
-        // Don't auto-redirect on error - let user try again
-      }
-    };
-
-    initializePage();
-  }, [finalVdCode, navigate, addToast]);
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (autoSaveTimeoutRef.current) {
-        clearTimeout(autoSaveTimeoutRef.current);
-      }
-    };
-  }, []);
-
-  // =================== RENDER ===================
-  if (state.loading) {
+  
+  // Loading and error states
+  if (!finalVdCode) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
+      <div className="flex items-center justify-center h-64">
         <div className="text-center">
-          <div className="w-12 h-12 mx-auto mb-4 border-b-2 border-blue-600 rounded-full animate-spin"></div>
-          <p className="text-gray-600">กำลังโหลดข้อมูล...</p>
+          <AlertTriangle className="w-12 h-12 text-red-500 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-gray-900">ไม่พบรหัสผู้รับเหมา</h3>
+          <p className="text-gray-500">กรุณาตรวจสอบ URL และลองใหม่อีกครั้ง</p>
         </div>
       </div>
     );
   }
-
-  if (!state.vendor || !state.form || !state.assessment) {
+  
+  if (!hasPermission) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
+      <div className="flex items-center justify-center h-64">
         <div className="text-center">
-          <AlertTriangle className="w-12 h-12 mx-auto mb-4 text-red-500" />
-          <p className="mb-4 text-gray-600">ไม่พบข้อมูลที่ต้องการ</p>
-          <button
-            onClick={handleBack}
-            className="px-4 py-2 text-white transition-colors bg-blue-600 rounded-lg hover:bg-blue-700"
-          >
-            ← กลับหน้ารายการ
-          </button>
+          <AlertTriangle className="w-12 h-12 text-red-500 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-gray-900">ไม่มีสิทธิ์เข้าถึง</h3>
+          <p className="text-gray-500">คุณไม่มีสิทธิ์ในการประเมิน CSM</p>
         </div>
       </div>
     );
   }
-
+  
+  if (vendorLoading || formLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="w-8 h-8 border-b-2 border-blue-600 rounded-full animate-spin"></div>
+      </div>
+    );
+  }
+  
+  if (!vendor) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center">
+          <Building2 className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-gray-900">ไม่พบข้อมูลผู้รับเหมา</h3>
+          <p className="text-gray-500">รหัส: {finalVdCode}</p>
+        </div>
+      </div>
+    );
+  }
+  
+  if (!form || !form.fields || form.fields.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center">
+          <FileText className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-gray-900">ไม่พบแบบฟอร์มการประเมิน</h3>
+          <p className="text-gray-500">ไม่สามารถโหลด CSMChecklist ได้</p>
+        </div>
+      </div>
+    );
+  }
+  
+  // ✅ Calculate scores with null checks
+  const currentQuestion = form.fields[selectedQuestionIndex];
+  const currentAnswer = answers[selectedQuestionIndex];
+  const totalScore = calculateTotalScore(answers);
+  const maxScore = calculateMaxScore(form.fields);
+  const avgScore = calculateAvgScore(answers, form.fields);
+  
   return (
-    <div className="min-h-screen p-4 bg-gradient-to-br from-slate-50 to-blue-50">
-      <div className="mx-auto max-w-7xl">
+    <div className="flex h-screen bg-gray-50">
+      {/* Sidebar - Questions List */}
+      <QuestionSidebar
+        questions={form.fields}
+        answers={answers}
+        selectedIndex={selectedQuestionIndex}
+        onQuestionSelect={handleQuestionSelect}
+      />
+
+      {/* Main Content */}
+      <div className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="p-6 mb-6 bg-white border border-gray-200 shadow-sm rounded-xl">
-          <div className="flex items-center justify-between">
+        <div className="bg-white shadow-sm border-b p-4 flex-shrink-0">
+          <div className="flex justify-between items-start mb-4">
             <div className="flex items-center space-x-4">
               <button
-                onClick={handleBack}
-                className="p-2 text-gray-600 transition-colors rounded-lg hover:text-blue-600 hover:bg-blue-50"
-                title="กลับหน้ารายการ"
+                onClick={() => navigate('/csm')}
+                className="inline-flex items-center text-gray-600 hover:text-gray-900"
               >
-                <ArrowLeft className="w-5 h-5" />
+                <ArrowLeft className="w-5 h-5 mr-1" />
+                กลับ
               </button>
               <div>
-                <h1 className="text-2xl font-bold text-gray-900">
-                  {state.readOnly ? 'ดูผลการประเมิน CSM' : 'ประเมิน CSM'}
+                <h1 className="text-xl font-semibold text-gray-900">
+                  ประเมิน CSM: {vendor.vdName}
                 </h1>
-                <p className="mt-1 text-gray-600">
-                  {state.company?.name || state.vendor.vdName} ({state.vendor.vdCode})
-                </p>
+                <div className="flex items-center space-x-4 mt-1 text-sm text-gray-600">
+                  <span>รหัส: {vendor.vdCode}</span>
+                  <span>•</span>
+                  <span>หมวดหมู่: {vendor.category}</span>
+                  {company && (
+                    <>
+                      <span>•</span>
+                      <span>บริษัท: {company.name}</span>
+                    </>
+                  )}
+                </div>
               </div>
             </div>
-
-            <div className="flex items-center space-x-3">
-              {/* Score Display */}
-              <div className="text-right">
-                <p className="text-sm text-gray-600">คะแนนรวม</p>
-                <p className="text-2xl font-bold text-blue-600">
-                  {scoreCalculation.percentage.toFixed(1)}%
-                </p>
-                <p className="text-xs text-gray-500">
-                  {scoreCalculation.total}/{scoreCalculation.max}
-                </p>
-              </div>
-
-              {/* Status */}
-              {state.readOnly ? (
-                <div className="flex items-center px-3 py-2 space-x-2 text-green-700 border border-green-200 rounded-lg bg-green-50">
-                  <CheckCircle className="w-4 h-4" />
-                  <span className="text-sm font-medium">เสร็จสิ้น</span>
-                </div>
-              ) : (
-                <div className="flex items-center px-3 py-2 space-x-2 text-yellow-700 border border-yellow-200 rounded-lg bg-yellow-50">
-                  <Clock className="w-4 h-4" />
-                  <span className="text-sm font-medium">กำลังประเมิน</span>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Action Buttons */}
-        {!state.readOnly && (
-          <div className="p-4 mb-6 bg-white border border-gray-200 shadow-sm rounded-xl">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-3">
-                {state.isDirty && (
-                  <div className="flex items-center space-x-2 text-amber-600">
-                    <Clock className="w-4 h-4" />
-                    <span className="text-sm">มีการเปลี่ยนแปลง</span>
-                  </div>
+            
+            <div className="flex items-center space-x-4">
+              {/* Auto-save Status */}
+              <div className="text-sm text-gray-500">
+                {isSaving && (
+                  <span className="inline-flex items-center text-blue-600">
+                    <Clock className="w-4 h-4 mr-1 animate-spin" />
+                    กำลังบันทึก...
+                  </span>
+                )}
+                {lastSaved && !isSaving && (
+                  <span className="text-green-600">
+                    บันทึกล่าสุด: {lastSaved.toLocaleTimeString('th-TH')}
+                  </span>
                 )}
               </div>
               
-              <div className="flex items-center space-x-3">
+              {/* Score Display */}
+              <div className="text-sm">
+                <span className="text-gray-600">คะแนน: </span>
+                <span className="font-semibold text-blue-600">
+                  {totalScore.toFixed(1)} / {maxScore} ({avgScore}%)
+                </span>
+              </div>
+              
+              {/* Action Buttons */}
+              <div className="flex space-x-2">
                 <button
-                  onClick={() => handleSave(false)}
-                  disabled={state.saving || !state.isDirty}
-                  className={`
-                    flex items-center space-x-2 px-4 py-2 rounded-lg transition-colors
-                    ${state.saving || !state.isDirty 
-                      ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
-                      : 'bg-blue-600 text-white hover:bg-blue-700'
-                    }
-                  `}
+                  onClick={() => saveAssessment({})}
+                  disabled={isSaving}
+                  className="inline-flex items-center px-3 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
                 >
-                  <Save className="w-4 h-4" />
-                  <span>{state.saving ? 'กำลังบันทึก...' : 'บันทึก'}</span>
+                  <Save className="w-4 h-4 mr-1" />
+                  บันทึก
                 </button>
-
                 <button
-                  onClick={handleSubmit}
-                  disabled={state.saving}
-                  className={`
-                    flex items-center space-x-2 px-4 py-2 rounded-lg transition-colors
-                    ${state.saving 
-                      ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
-                      : 'bg-green-600 text-white hover:bg-green-700'
-                    }
-                  `}
+                  onClick={handleFinishAssessment}
+                  disabled={finishAssessmentMutation.isPending}
+                  className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 disabled:opacity-50"
                 >
-                  <Send className="w-4 h-4" />
-                  <span>{state.saving ? 'กำลังส่ง...' : 'ส่งการประเมิน'}</span>
+                  <Send className="w-4 h-4 mr-1" />
+                  {finishAssessmentMutation.isPending ? 'กำลังบันทึก...' : 'จบการประเมิน'}
                 </button>
               </div>
             </div>
           </div>
-        )}
-
-        {/* Assessment Form */}
-        <React.Suspense fallback={
-          <div className="p-8 bg-white border border-gray-200 shadow-sm rounded-xl">
-            <div className="flex items-center justify-center">
-              <div className="w-8 h-8 border-b-2 border-blue-600 rounded-full animate-spin"></div>
-              <span className="ml-3 text-gray-600">กำลังโหลดแบบฟอร์ม...</span>
-            </div>
-          </div>
-        }>
-          {/* Auditor Information */}
-          {!state.readOnly && (
-            <div className="p-6 mb-6 bg-white border border-gray-200 shadow-sm rounded-xl">
-              <h3 className="mb-4 text-lg font-semibold text-gray-900">ข้อมูลผู้ประเมิน</h3>
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <div>
-                  <label className="block mb-2 text-sm font-medium text-gray-700">
-                    ชื่อผู้ประเมิน *
-                  </label>
-                  <input
-                    type="text"
-                    value={state.auditor.name}
-                    onChange={(e) => handleAuditorChange('name', e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    placeholder="กรอกชื่อผู้ประเมิน"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block mb-2 text-sm font-medium text-gray-700">
-                    ตำแหน่ง
-                  </label>
-                  <input
-                    type="text"
-                    value={state.auditor.position}
-                    onChange={(e) => handleAuditorChange('position', e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    placeholder="กรอกตำแหน่ง"
-                  />
-                </div>
-                <div>
-                  <label className="block mb-2 text-sm font-medium text-gray-700">
-                    อีเมล
-                  </label>
-                  <input
-                    type="email"
-                    value={state.auditor.email}
-                    onChange={(e) => handleAuditorChange('email', e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    placeholder="กรอกอีเมล"
-                  />
-                </div>
-                <div>
-                  <label className="block mb-2 text-sm font-medium text-gray-700">
-                    เบอร์โทรศัพท์
-                  </label>
-                  <input
-                    type="tel"
-                    value={state.auditor.phone || ''}
-                    onChange={(e) => handleAuditorChange('phone', e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    placeholder="กรอกเบอร์โทรศัพท์"
-                  />
-                </div>
+          
+          {/* Vendor Info */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 bg-gray-50 rounded-lg">
+            <div className="flex items-center space-x-3">
+              <Building2 className="w-5 h-5 text-blue-600" />
+              <div>
+                <p className="text-xs text-gray-500">ผู้รับเหมา</p>
+                <p className="text-sm font-medium text-gray-900">{vendor.vdName}</p>
               </div>
             </div>
+            <div className="flex items-center space-x-3">
+              <MapPin className="w-5 h-5 text-green-600" />
+              <div>
+                <p className="text-xs text-gray-500">พื้นที่ทำงาน</p>
+                <p className="text-sm font-medium text-gray-900">
+                  {Array.isArray(vendor.workingArea) ? vendor.workingArea.join(', ') : vendor.workingArea || 'ไม่ระบุ'}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center space-x-3">
+              <User className="w-5 h-5 text-purple-600" />
+              <div>
+                <p className="text-xs text-gray-500">ผู้ประเมิน</p>
+                <p className="text-sm font-medium text-gray-900">{auditor.name}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Question Form */}
+        <div className="flex-1 overflow-y-auto p-6">
+          {currentQuestion && currentAnswer && (
+            <QuestionForm
+              question={currentQuestion}
+              answer={currentAnswer}
+              onChange={(changes) => handleAnswerChange(selectedQuestionIndex, changes)}
+              onNext={handleNext}
+              onPrev={handlePrev}
+              hasNext={selectedQuestionIndex < form.fields.length - 1}
+              hasPrev={selectedQuestionIndex > 0}
+              questionNumber={selectedQuestionIndex + 1}
+              totalQuestions={form.fields.length}
+            />
           )}
-
-          {/* Question Form */}
-          <QuestionForm
-            formFields={state.form.fields}
-            answers={state.answers}
-            onAnswersChange={handleAnswersChange}
-            readOnly={state.readOnly}
-            autoSaveEnabled={!state.readOnly}
-            onSave={() => handleSave(false)}
-            confirmations={state.confirmations}
-            onConfirmChange={handleConfirmChange}
-          />
-        </React.Suspense>
+        </div>
       </div>
     </div>
   );

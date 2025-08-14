@@ -1,711 +1,689 @@
 // 📁 src/features/csm/pages/CSMListPage.tsx
-// Strict TypeScript with Real Firestore Data Only
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+// Enhanced CSM List Page with Performance Optimization
+import React, { useState, useCallback, useMemo, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { 
-  Search, Plus, Building2, Calendar, Star, Filter, 
-  ChevronDown, RefreshCw, Eye, Edit, ArrowRight, MapPin,
-  BarChart3, Users, Clock, AlertTriangle
+  Search,  Grid3X3, List, Download, Plus, 
+  AlertTriangle, Clock, CheckCircle, Building2,
+  Eye,  FileText, 
 } from 'lucide-react';
-import type { CSMVendor, CSMAssessmentSummary } from '../../../types/csm';
-import { useCSMData } from '../../../hooks/useCSMData';
-import { useDebouncedValue } from '../../../hooks/useDebouncedValue';
+import { useDebounce } from '../../../hooks/useDebounce';
 import { useToast } from '../../../hooks/useToast';
-import { ToastContainer } from '../../../components/ui/ToastContainer';
-import { SkeletonLoader } from '../../../components/ui/SkeletonLoader';
-import { getCategoryInfo, CSM_VENDOR_CATEGORIES } from '../../../types/csm';
-import { formatDate } from '../../../utils/dateUtils';
-import { safeWorkingAreaDisplay } from '../../../utils/dataValidation';
+import  csmService  from '../../../services/csmService';
+import  { exportVendorsToExcel } from '../../../utils/exportUtils';
+import type { CSMVendor, CSMAssessmentSummary } from '../../../types/csm';
 
-// =================== TYPES ===================
-interface CSMFilterOptions {
-  readonly search: string;
-  readonly category: string;
-  readonly assessmentStatus: 'all' | 'completed' | 'in-progress' | 'not-assessed' | 'expired';
-  readonly riskLevel: string;
+// Types
+interface FilterState {
+  search: string;
+  category: string;
+  assessmentStatus: 'all' | 'not-assessed' | 'in-progress' | 'completed' | 'overdue' | 'due-soon';
+  riskLevel: 'all' | 'Low' | 'Medium' | 'High';
+  needsAssessment: boolean;
 }
 
-interface CSMListPageProps {
-  readonly onSelectVendor?: (vendor: CSMVendor) => void;
+type ViewMode = 'card' | 'table';
+type AssessmentStatus = 'not-assessed' | 'in-progress' | 'completed' | 'overdue' | 'due-soon';
+
+interface VendorWithStatus extends CSMVendor {
+  assessmentStatus: AssessmentStatus;
+  summary?: CSMAssessmentSummary;
+  daysUntilDue?: number;
+  lastAssessmentDate?: Date;
 }
 
-interface StatisticsData {
-  readonly totalVendors: number;
-  readonly assessedVendors: number;
-  readonly averageScore: number;
-  readonly expiredAssessments: number;
-}
+// Components
+const StatusBadge: React.FC<{ status: AssessmentStatus }> = ({ status }) => {
+  const configs = {
+    'not-assessed': { 
+      color: 'bg-gray-100 text-gray-800', icon: '❓', text: 'ยังไม่ประเมิน', className: 'animate-pulse' },
+    'in-progress': { 
+      color: 'bg-blue-100 text-blue-800', icon: '⏳', text: 'กำลังประเมิน',className: 'animate-pulse' },
+    'completed': { 
+      color: 'bg-green-100 text-green-800', icon: '✅', text: 'เสร็จสิ้น' , className: 'animate-pulse' },
+    'overdue': { 
+      color: 'bg-red-100 text-red-800', icon: '🚨', text: 'เกินกำหนด',   className: 'animate-pulse'  },
+    'due-soon': { 
+      color: 'bg-yellow-100 text-yellow-800', icon: '⚠️', text: 'ใกล้ครบ', className: 'animate-pulse' }
+  };
+  
+  const config = configs[status];
+  
+  return (
+    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${config.color} ${config.className || ''}`}>
+      <span className="mr-1">{config.icon}</span>
+      {config.text}
+    </span>
+  );
+};
 
-type AssessmentStatus = 'completed' | 'in-progress' | 'not-assessed' | 'expired';
+const VendorCard: React.FC<{ 
+  vendor: VendorWithStatus; 
+  onEvaluate: (vdCode: string) => void;
+  onViewDetails: (vendor: CSMVendor) => void;
+}> = ({ vendor, onEvaluate, onViewDetails }) => (
+  <div className="bg-white rounded-lg shadow-md hover:shadow-lg transition-all duration-300 hover:-translate-y-1 p-6 border border-gray-100">
+    <div className="flex justify-between items-start mb-4">
+      <div className="flex-1 min-w-0">
+        <h3 className="text-lg font-semibold text-gray-900 truncate" title={vendor.vdName}>
+          {vendor.vdName}
+        </h3>
+        <p className="text-sm text-gray-500 mt-1">{vendor.vdCode}</p>
+        <p className="text-xs text-gray-400 mt-1">{vendor.category}</p>
+      </div>
+      <div className="ml-4 flex flex-col items-end space-y-2">
+        <StatusBadge status={vendor.assessmentStatus} />
+        {vendor.daysUntilDue !== undefined && vendor.daysUntilDue <= 30 && (
+          <span className="text-xs text-orange-600 font-medium">
+            {vendor.daysUntilDue > 0 ? `${vendor.daysUntilDue} วันเหลือ` : `เกิน ${Math.abs(vendor.daysUntilDue)} วัน`}
+          </span>
+        )}
+      </div>
+    </div>
+    
+    <div className="grid grid-cols-2 gap-4 text-sm mb-4">
+      <div>
+        <span className="text-gray-500">ความถี่:</span>
+        <span className="ml-2 font-medium">{vendor.freqAss || '-'} วัน</span>
+      </div>
+      <div>
+        <span className="text-gray-500">คะแนนล่าสุด:</span>
+        <span className="ml-2 font-medium">
+          {vendor.summary?.avgScore ? `${vendor.summary.avgScore}%` : '-'}
+        </span>
+      </div>
+      <div>
+        <span className="text-gray-500">ระดับเสี่ยง:</span>
+        <span className={`ml-2 font-medium ${
+          vendor.summary?.riskLevel === 'High' ? 'text-red-600' :
+          vendor.summary?.riskLevel === 'Medium' ? 'text-yellow-600' :
+          vendor.summary?.riskLevel === 'Low' ? 'text-green-600' : ''
+        }`}>
+          {vendor.summary?.riskLevel || '-'}
+        </span>
+      </div>
+      <div>
+        <span className="text-gray-500">ประเมินล่าสุด:</span>
+        <span className="ml-2 font-medium">
+          {vendor.lastAssessmentDate ? 
+            vendor.lastAssessmentDate.toLocaleDateString('th-TH') : '-'
+          }
+        </span>
+      </div>
+    </div>
+    
+    <div className="flex space-x-2">
+      <button 
+        onClick={() => onEvaluate(vendor.vdCode)}
+        className="flex-1 bg-blue-600 text-white py-2 px-3 rounded-md hover:bg-blue-700 transition-colors text-sm font-medium flex items-center justify-center"
+      >
+        <FileText className="w-4 h-4 mr-1" />
+        ประเมิน
+      </button>
+      <button 
+        onClick={() => onViewDetails(vendor)}
+        className="flex-1 bg-gray-100 text-gray-700 py-2 px-3 rounded-md hover:bg-gray-200 transition-colors text-sm font-medium flex items-center justify-center"
+      >
+        <Eye className="w-4 h-4 mr-1" />
+        รายละเอียด
+      </button>
+    </div>
+  </div>
+);
 
-// =================== MAIN COMPONENT ===================
-const CSMListPage: React.FC<CSMListPageProps> = ({ onSelectVendor }) => {
-  const [filters, setFilters] = useState<CSMFilterOptions>({
+const VendorTableRow: React.FC<{ 
+  vendor: VendorWithStatus; 
+  onEvaluate: (vdCode: string) => void;
+  onViewDetails: (vendor: CSMVendor) => void;
+}> = ({ vendor, onEvaluate, onViewDetails }) => (
+  <tr className="hover:bg-gray-50 transition-colors">
+    <td className="px-6 py-4 whitespace-nowrap">
+      <div className="flex items-center">
+        <div className="flex-shrink-0 h-10 w-10">
+          <div className="h-10 w-10 rounded-lg bg-blue-100 flex items-center justify-center">
+            <Building2 className="h-5 w-5 text-blue-600" />
+          </div>
+        </div>
+        <div className="ml-4">
+          <div className="text-sm font-medium text-gray-900">{vendor.vdName}</div>
+          <div className="text-sm text-gray-500">{vendor.vdCode}</div>
+        </div>
+      </div>
+    </td>
+    <td className="px-6 py-4 whitespace-nowrap">
+      <span className="text-sm text-gray-900">{vendor.category}</span>
+    </td>
+    <td className="px-6 py-4 whitespace-nowrap">
+      <StatusBadge status={vendor.assessmentStatus} />
+    </td>
+    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+      {vendor.summary?.avgScore ? `${vendor.summary.avgScore}%` : '-'}
+    </td>
+    <td className="px-6 py-4 whitespace-nowrap">
+      <span className={`text-sm font-medium ${
+        vendor.summary?.riskLevel === 'High' ? 'text-red-600' :
+        vendor.summary?.riskLevel === 'Medium' ? 'text-yellow-600' :
+        vendor.summary?.riskLevel === 'Low' ? 'text-green-600' : 'text-gray-500'
+      }`}>
+        {vendor.summary?.riskLevel || '-'}
+      </span>
+    </td>
+    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+      {vendor.lastAssessmentDate ? vendor.lastAssessmentDate.toLocaleDateString('th-TH') : '-'}
+    </td>
+    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+      <div className="flex space-x-2">
+        <button
+          onClick={() => onEvaluate(vendor.vdCode)}
+          className="text-blue-600 hover:text-blue-900 transition-colors"
+          title="ประเมิน"
+        >
+          <FileText className="w-4 h-4" />
+        </button>
+        <button
+          onClick={() => onViewDetails(vendor)}
+          className="text-gray-600 hover:text-gray-900 transition-colors"
+          title="ดูรายละเอียด"
+        >
+          <Eye className="w-4 h-4" />
+        </button>
+      </div>
+    </td>
+  </tr>
+);
+
+// Main Component
+const CSMListPage: React.FC = () => {
+  const navigate = useNavigate();
+  const { addToast } = useToast();
+  const parentRef = useRef<HTMLDivElement>(null);
+  
+  // State
+  const [viewMode, setViewMode] = useState<ViewMode>('card');
+  const [filters, setFilters] = useState<FilterState>({
     search: '',
     category: 'all',
     assessmentStatus: 'all',
-    riskLevel: 'all'
+    riskLevel: 'all',
+    needsAssessment: false
   });
   
-  const [showFilters, setShowFilters] = useState<boolean>(false);
-  const [currentPage, setCurrentPage] = useState<number>(1);
-  const [itemsPerPage, setItemsPerPage] = useState<number>(12);
-
-  const {
-    vendors,
-    assessmentSummaries,
-    loading,
-    error,
-    loadData,
-    refreshData,
-    clearError
-  } = useCSMData();
-
-  const { toasts, addToast, removeToast } = useToast();
-  const debouncedSearch = useDebouncedValue(filters.search, 300);
-
-  // =================== EFFECTS ===================
-  useEffect(() => {
-    void loadData();
-  }, [loadData]);
-
-  useEffect(() => {
-    if (error) {
-      addToast({
-        type: 'error',
-        title: 'เกิดข้อผิดพลาด',
-        message: error
-      });
-      clearError();
-    }
-  }, [error, addToast, clearError]);
-
-  // =================== HELPER FUNCTIONS ===================
-  const getAssessmentSummary = useCallback((vdCode: string): CSMAssessmentSummary | null => {
-    return assessmentSummaries.find(summary => summary.vdCode === vdCode) ?? null;
-  }, [assessmentSummaries]);
-
-  const getAssessmentStatus = useCallback((_vendor: CSMVendor, summary: CSMAssessmentSummary | null): AssessmentStatus => {
+  const debouncedSearch = useDebounce(filters.search, 300);
+  
+  // Data fetching with React Query
+  const { data: vendors = [], isLoading: vendorsLoading } = useQuery({
+    queryKey: ['csm-vendors'],
+    queryFn: () => csmService.vendors.getAll(),
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    refetchInterval: 10 * 60 * 1000, // 10 minutes
+  });
+  
+  const { data: assessmentSummaries = [] } = useQuery({
+    queryKey: ['csm-assessment-summaries'],
+    queryFn: () => csmService.assessmentSummaries.getAll(),
+    staleTime: 2 * 60 * 1000, // 2 minutes
+  });
+  
+  // Calculate assessment status
+  const getAssessmentStatus = useCallback((vendor: CSMVendor, summary: CSMAssessmentSummary | null): AssessmentStatus => {
     if (!summary) return 'not-assessed';
-
-    const daysSinceAssessment = Math.floor((Date.now() - summary.lastAssessmentDate.getTime()) / (1000 * 60 * 60 * 24));
     
-    if (daysSinceAssessment > 365) return 'expired';
-    if (summary.totalScore === 0) return 'in-progress';
+    const now = new Date();
+    const lastDate = new Date(summary.lastAssessmentDate);
+    const daysDiff = Math.floor((now.getTime() - lastDate.getTime()) / (1000 * 60 * 60 * 24));
+    const frequency = parseInt(vendor.freqAss) || 365; // default 1 year
+    
+    if (daysDiff > frequency + 30) return 'overdue';
+    if (daysDiff > frequency - 30 && daysDiff <= frequency) return 'due-soon';
+    if (daysDiff > frequency) return 'overdue';
+    if (!summary.completedQuestions || summary.completedQuestions < summary.totalQuestions) return 'in-progress';
     return 'completed';
   }, []);
-
-  // =================== COMPUTED VALUES ===================
-  const filteredVendors = useMemo((): readonly CSMVendor[] => {
-    return vendors.filter(vendor => {
+  
+  // Process vendors with status
+  const processedVendors = useMemo((): VendorWithStatus[] => {
+    return vendors.map(vendor => {
+      const summary = assessmentSummaries.find(s => s.vdCode === vendor.vdCode);
+      const assessmentStatus = getAssessmentStatus(vendor, summary || null);
+      
+      let daysUntilDue: number | undefined;
+      let lastAssessmentDate: Date | undefined;
+      
+      if (summary) {
+        lastAssessmentDate = new Date(summary.lastAssessmentDate);
+        const now = new Date();
+        const frequency = parseInt(vendor.freqAss) || 365;
+        const nextDueDate = new Date(lastAssessmentDate.getTime() + frequency * 24 * 60 * 60 * 1000);
+        daysUntilDue = Math.floor((nextDueDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+      }
+      
+      return {
+        ...vendor,
+        assessmentStatus,
+        summary: summary || undefined,
+        daysUntilDue,
+        lastAssessmentDate
+      };
+    });
+  }, [vendors, assessmentSummaries, getAssessmentStatus]);
+  
+  // Filtered vendors
+  const filteredVendors = useMemo((): VendorWithStatus[] => {
+    return processedVendors.filter(vendor => {
       const matchesSearch = debouncedSearch === '' || 
         vendor.vdName.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
         vendor.vdCode.toLowerCase().includes(debouncedSearch.toLowerCase());
       
       const matchesCategory = filters.category === 'all' || vendor.category === filters.category;
+      const matchesAssessmentStatus = filters.assessmentStatus === 'all' || vendor.assessmentStatus === filters.assessmentStatus;
+      const matchesRiskLevel = filters.riskLevel === 'all' || vendor.summary?.riskLevel === filters.riskLevel;
+      const matchesNeedsAssessment = !filters.needsAssessment || 
+        ['due-soon', 'overdue', 'not-assessed'].includes(vendor.assessmentStatus);
       
-      const summary = getAssessmentSummary(vendor.vdCode);
-      const assessmentStatus = getAssessmentStatus(vendor, summary);
-      const matchesAssessmentStatus = filters.assessmentStatus === 'all' || assessmentStatus === filters.assessmentStatus;
-      
-      const matchesRiskLevel = filters.riskLevel === 'all' || 
-        summary?.riskLevel?.toLowerCase() === filters.riskLevel?.toLowerCase();
-      
-      return matchesSearch && matchesCategory && matchesAssessmentStatus && matchesRiskLevel;
+      return matchesSearch && matchesCategory && matchesAssessmentStatus && matchesRiskLevel && matchesNeedsAssessment;
     });
-  }, [vendors, debouncedSearch, filters, getAssessmentSummary, getAssessmentStatus]);
-
-  const totalPages = useMemo((): number => {
-    return Math.ceil(filteredVendors.length / itemsPerPage);
-  }, [filteredVendors.length, itemsPerPage]);
-
-  const paginatedVendors = useMemo((): readonly CSMVendor[] => {
-    const startIndex = (currentPage - 1) * itemsPerPage;
-    return filteredVendors.slice(startIndex, startIndex + itemsPerPage);
-  }, [filteredVendors, currentPage, itemsPerPage]);
-
-  const statistics = useMemo((): StatisticsData => {
-    return {
-      totalVendors: vendors.length,
-      assessedVendors: assessmentSummaries.length,
-      averageScore: assessmentSummaries.length > 0 
-        ? Math.round(assessmentSummaries.reduce((acc, s) => acc + s.avgScore, 0) / assessmentSummaries.length)
-        : 0,
-      expiredAssessments: assessmentSummaries.filter(s => 
-        getAssessmentStatus({} as CSMVendor, s) === 'expired'
-      ).length
-    };
-  }, [vendors, assessmentSummaries, getAssessmentStatus]);
-
-  // =================== EVENT HANDLERS ===================
-  const handleRefresh = useCallback(async (): Promise<void> => {
+  }, [processedVendors, debouncedSearch, filters]);
+  
+  // Virtual list for performance
+  const virtualizer = useVirtualizer({
+    count: filteredVendors.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => (viewMode === 'card' ? 200 : 80),
+    overscan: 5,
+  });
+  
+  // Statistics
+  const statistics = useMemo(() => {
+    const total = processedVendors.length;
+    const assessed = processedVendors.filter(v => v.assessmentStatus === 'completed').length;
+    const overdue = processedVendors.filter(v => v.assessmentStatus === 'overdue').length;
+    const dueSoon = processedVendors.filter(v => v.assessmentStatus === 'due-soon').length;
+    const avgScore = assessmentSummaries.length > 0 
+      ? Math.round(assessmentSummaries.reduce((sum, s) => sum + s.avgScore, 0) / assessmentSummaries.length)
+      : 0;
+    
+    return { total, assessed, overdue, dueSoon, avgScore };
+  }, [processedVendors, assessmentSummaries]);
+  
+  // Get unique categories for filter
+  const categories = useMemo(() => {
+    const cats = [...new Set(vendors.map(v => v.category))].filter(Boolean);
+    return cats.sort();
+  }, [vendors]);
+  
+  // Event handlers
+  const handleEvaluate = useCallback((vdCode: string) => {
+    navigate(`/csm/e/${vdCode}`);
+  }, [navigate]);
+  
+  const handleViewDetails = useCallback((vendor: CSMVendor) => {
+    navigate(`/csm/vendors/${vendor.id}`);
+  }, [navigate]);
+  
+  const handleExport = useCallback(() => {
     try {
-      await refreshData();
+      exportVendorsToExcel(filteredVendors, []);
       addToast({
         type: 'success',
-        title: 'รีเฟรชสำเร็จ',
-        message: 'ข้อมูลได้รับการอัปเดตเรียบร้อยแล้ว'
+        title: 'ส่งออกสำเร็จ',
+        message: 'ข้อมูลผู้รับเหมาถูกส่งออกเป็น Excel แล้ว'
       });
-    } catch {
+    } catch (error) {
       addToast({
         type: 'error',
         title: 'เกิดข้อผิดพลาด',
-        message: 'ไม่สามารถรีเฟรชข้อมูลได้'
+        message: 'ไม่สามารถส่งออกข้อมูลได้'
       });
     }
-  }, [refreshData, addToast]);
-
-  const handleVendorClick = useCallback((vendor: CSMVendor): void => {
-    if (onSelectVendor) {
-      onSelectVendor(vendor);
-    }
-    window.location.href = `/csm/e/${vendor.vdCode}`;
-  }, [onSelectVendor]);
-
-  const handleFilterChange = useCallback((key: keyof CSMFilterOptions, value: string): void => {
+  }, [filteredVendors, addToast]);
+  
+  const updateFilter = useCallback((key: keyof FilterState, value: any) => {
     setFilters(prev => ({ ...prev, [key]: value }));
-    setCurrentPage(1);
   }, []);
-
-  const handleNavigate = useCallback((url: string): void => {
-    window.location.href = url;
-  }, []);
-
-  // =================== UTILITY FUNCTIONS ===================
-  const getRiskLevelColor = useCallback((riskLevel: string): string => {
-    switch (riskLevel.toLowerCase()) {
-      case 'low': return 'bg-green-100 text-green-800 border-green-200';
-      case 'moderate': return 'bg-yellow-100 text-yellow-800 border-yellow-200';
-      case 'high': return 'bg-red-100 text-red-800 border-red-200';
-      default: return 'bg-gray-100 text-gray-800 border-gray-200';
-    }
-  }, []);
-
-  const getStatusColor = useCallback((status: string): string => {
-    switch (status) {
-      case 'completed': return 'bg-green-100 text-green-800 border-green-200';
-      case 'in-progress': return 'bg-blue-100 text-blue-800 border-blue-200';
-      case 'not-assessed': return 'bg-gray-100 text-gray-800 border-gray-200';
-      case 'expired': return 'bg-red-100 text-red-800 border-red-200';
-      default: return 'bg-gray-100 text-gray-800 border-gray-200';
-    }
-  }, []);
-
-  const getStatusText = useCallback((status: string): string => {
-    switch (status) {
-      case 'completed': return 'ประเมินแล้ว';
-      case 'in-progress': return 'กำลังประเมิน';
-      case 'not-assessed': return 'ยังไม่ประเมิน';
-      case 'expired': return 'หมดอายุ';
-      default: return 'ไม่ทราบ';
-    }
-  }, []);
-
-  // =================== LOADING STATE ===================
-  if (loading) {
+  
+  if (vendorsLoading) {
     return (
-      <div className="p-6 space-y-6">
-        <div className="flex items-center justify-between">
-          <SkeletonLoader lines={1} className="w-48 h-8" />
-          <SkeletonLoader lines={1} className="w-32 h-10" />
-        </div>
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-          {Array.from({ length: 4 }, (_, i) => (
-            <SkeletonLoader key={i} lines={2} className="w-full h-24" />
-          ))}
-        </div>
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {Array.from({ length: 8 }, (_, i) => (
-            <SkeletonLoader key={i} lines={8} className="w-full h-64" />
-          ))}
-        </div>
+      <div className="flex items-center justify-center h-64">
+        <div className="w-8 h-8 border-b-2 border-blue-600 rounded-full animate-spin"></div>
       </div>
     );
   }
-
-  // =================== EMPTY STATE ===================
-  if (vendors.length === 0 && !loading) {
-    return (
-      <div className="p-6 space-y-6">
-        <ToastContainer toasts={toasts} onRemove={removeToast} />
-        
-        <div className="p-12 text-center bg-white rounded-lg shadow-sm dark:bg-gray-800">
-          <Building2 className="w-16 h-16 mx-auto mb-4 text-gray-400" />
-          <h3 className="mb-2 text-lg font-medium text-gray-900 dark:text-white">
-            ไม่พบข้อมูลผู้รับเหมา
-          </h3>
-          <p className="mb-6 text-gray-500 dark:text-gray-400">
-            ยังไม่มีข้อมูลผู้รับเหมาในระบบ CSM Vendor List กรุณาเพิ่มข้อมูลใหม่
-          </p>
-          <button
-            onClick={() => handleNavigate('/csm/vendors/add')}
-            className="flex items-center gap-2 px-4 py-2 mx-auto text-sm text-white bg-blue-600 rounded-lg hover:bg-blue-700"
-          >
-            <Plus className="w-4 h-4" />
-            เพิ่มผู้รับเหมาใหม่
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // =================== MAIN RENDER ===================
+  
   return (
-    <div className="min-h-screen p-6 space-y-6 bg-gray-50 dark:bg-gray-900">
-      <ToastContainer toasts={toasts} onRemove={removeToast} />
-      
-      {/* Header Section */}
-      <div className="p-6 bg-white rounded-lg shadow-sm dark:bg-gray-800">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+    <div className="p-6 bg-gray-50 min-h-screen">
+      {/* Header */}
+      <div className="mb-6">
+        <div className="flex justify-between items-start mb-4">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-              CSM Vendor Management
-            </h1>
-            <p className="mt-1 text-gray-600 dark:text-gray-400">
-              จัดการและประเมินผู้รับเหมา/คู่ค้า
-            </p>
+            <h1 className="text-2xl font-bold text-gray-900">ผู้รับเหมา CSM</h1>
+            <p className="text-gray-600 mt-1">จัดการและประเมินผู้รับเหมาทั้งหมด</p>
+          </div>
+          <div className="flex space-x-3">
+            <button
+              onClick={handleExport}
+              className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+            >
+              <Download className="w-4 h-4 mr-2" />
+              ส่งออก Excel
+            </button>
+            <button
+              onClick={() => navigate('/csm/vendors/add')}
+              className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              เพิ่มผู้รับเหมา
+            </button>
+          </div>
+        </div>
+        
+        {/* Statistics */}
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
+          <div className="bg-white rounded-lg p-4 border border-gray-200">
+            <div className="flex items-center">
+              <Building2 className="h-8 w-8 text-blue-600" />
+              <div className="ml-3">
+                <p className="text-sm font-medium text-gray-500">ทั้งหมด</p>
+                <p className="text-2xl font-semibold text-gray-900">{statistics.total}</p>
+              </div>
+            </div>
+          </div>
+          <div className="bg-white rounded-lg p-4 border border-gray-200">
+            <div className="flex items-center">
+              <CheckCircle className="h-8 w-8 text-green-600" />
+              <div className="ml-3">
+                <p className="text-sm font-medium text-gray-500">ประเมินแล้ว</p>
+                <p className="text-2xl font-semibold text-gray-900">{statistics.assessed}</p>
+              </div>
+            </div>
+          </div>
+          <div className="bg-white rounded-lg p-4 border border-gray-200">
+            <div className="flex items-center">
+              <Clock className="h-8 w-8 text-yellow-600" />
+              <div className="ml-3">
+                <p className="text-sm font-medium text-gray-500">ใกล้ครบ</p>
+                <p className="text-2xl font-semibold text-gray-900">{statistics.dueSoon}</p>
+              </div>
+            </div>
+          </div>
+          <div className="bg-white rounded-lg p-4 border border-gray-200">
+            <div className="flex items-center">
+              <AlertTriangle className="h-8 w-8 text-red-600" />
+              <div className="ml-3">
+                <p className="text-sm font-medium text-gray-500">เกินกำหนด</p>
+                <p className="text-2xl font-semibold text-gray-900">{statistics.overdue}</p>
+              </div>
+            </div>
+          </div>
+          <div className="bg-white rounded-lg p-4 border border-gray-200">
+            <div className="flex items-center">
+              <FileText className="h-8 w-8 text-purple-600" />
+              <div className="ml-3">
+                <p className="text-sm font-medium text-gray-500">คะแนนเฉลี่ย</p>
+                <p className="text-2xl font-semibold text-gray-900">{statistics.avgScore}%</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      {/* Filters */}
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mb-6">
+        <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
+          {/* Search */}
+          <div className="md:col-span-2">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+              <input
+                type="text"
+                placeholder="ค้นหาชื่อหรือรหัสผู้รับเหมา..."
+                value={filters.search}
+                onChange={(e) => updateFilter('search', e.target.value)}
+                className="pl-10 pr-4 py-2 w-full border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
           </div>
           
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => void handleRefresh()}
-              disabled={loading}
-              className="flex items-center gap-2 px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-700 disabled:opacity-50"
+          {/* Category Filter */}
+          <div>
+            <select
+              value={filters.category}
+              onChange={(e) => updateFilter('category', e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             >
-              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-              รีเฟรช
-            </button>
-            
-            <button
-              onClick={() => handleNavigate('/csm/vendors/add')}
-              className="flex items-center gap-2 px-4 py-2 text-sm text-white bg-blue-600 rounded-lg hover:bg-blue-700"
+              <option value="all">ทุกหมวดหมู่</option>
+              {categories.map(category => (
+                <option key={category} value={category}>{category}</option>
+              ))}
+            </select>
+          </div>
+          
+          {/* Assessment Status Filter */}
+          <div>
+            <select
+              value={filters.assessmentStatus}
+              onChange={(e) => updateFilter('assessmentStatus', e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             >
-              <Plus className="w-4 h-4" />
-              เพิ่มผู้รับเหมาเข้าระบบ
-            </button>
+              <option value="all">ทุกสถานะ</option>
+              <option value="not-assessed">ยังไม่ประเมิน</option>
+              <option value="in-progress">กำลังประเมิน</option>
+              <option value="completed">เสร็จสิ้น</option>
+              <option value="due-soon">ใกล้ครบกำหนด</option>
+              <option value="overdue">เกินกำหนด</option>
+            </select>
           </div>
-        </div>
-      </div>
-
-      {/* Statistics Cards */}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-        <div className="p-6 bg-white rounded-lg shadow-sm dark:bg-gray-800">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600 dark:text-gray-400">ผู้รับเหมาทั้งหมด</p>
-              <p className="text-2xl font-bold text-gray-900 dark:text-white">{statistics.totalVendors}</p>
-            </div>
-            <Users className="w-8 h-8 text-blue-500" />
+          
+          {/* Risk Level Filter */}
+          <div>
+            <select
+              value={filters.riskLevel}
+              onChange={(e) => updateFilter('riskLevel', e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            >
+              <option value="all">ทุกระดับความเสี่ยง</option>
+              <option value="Low">ต่ำ</option>
+              <option value="Medium">กลาง</option>
+              <option value="High">สูง</option>
+            </select>
           </div>
-        </div>
-        
-        <div className="p-6 bg-white rounded-lg shadow-sm dark:bg-gray-800">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600 dark:text-gray-400">ประเมินแล้ว</p>
-              <p className="text-2xl font-bold text-gray-900 dark:text-white">{statistics.assessedVendors}</p>
-            </div>
-            <BarChart3 className="w-8 h-8 text-green-500" />
-          </div>
-        </div>
-        
-        <div className="p-6 bg-white rounded-lg shadow-sm dark:bg-gray-800">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600 dark:text-gray-400">คะแนนเฉลี่ย</p>
-              <p className="text-2xl font-bold text-gray-900 dark:text-white">{statistics.averageScore}%</p>
-            </div>
-            <Star className="w-8 h-8 text-yellow-500" />
-          </div>
-        </div>
-        
-        <div className="p-6 bg-white rounded-lg shadow-sm dark:bg-gray-800">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600 dark:text-gray-400">ต้องประเมินใหม่</p>
-              <p className="text-2xl font-bold text-gray-900 dark:text-white">{statistics.expiredAssessments}</p>
-            </div>
-            <AlertTriangle className="w-8 h-8 text-red-500" />
-          </div>
-        </div>
-      </div>
-
-      {/* Search and Filters */}
-      <div className="p-6 bg-white rounded-lg shadow-sm dark:bg-gray-800">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          {/* Search */}
-          <div className="relative flex-1 max-w-md">
-            <Search className="absolute w-4 h-4 text-gray-400 transform -translate-y-1/2 left-3 top-1/2" />
-            <input
-              type="text"
-              placeholder="ค้นหาชื่อบริษัท หรือรหัส..."
-              value={filters.search}
-              onChange={(e) => handleFilterChange('search', e.target.value)}
-              className="w-full py-2 pl-10 pr-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
-            />
-          </div>
-
-          {/* Filter Toggle */}
-          <button
-            onClick={() => setShowFilters(!showFilters)}
-            className="flex items-center gap-2 px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-700"
-          >
-            <Filter className="w-4 h-4" />
-            ตัวกรอง
-            <ChevronDown className={`w-4 h-4 transition-transform ${showFilters ? 'rotate-180' : ''}`} />
-          </button>
-        </div>
-
-        {/* Advanced Filters */}
-        {showFilters && (
-          <div className="grid grid-cols-1 gap-4 pt-4 mt-4 border-t md:grid-cols-3">
-            {/* Category Filter */}
-            <div>
-              <label className="block mb-2 text-sm font-medium text-gray-700 dark:text-gray-300">
-                หมวดหมู่
-              </label>
-              <select
-                value={filters.category}
-                onChange={(e) => handleFilterChange('category', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg dark:border-gray-600 focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-              >
-                <option value="all">ทั้งหมด</option>
-                {CSM_VENDOR_CATEGORIES.map(category => (
-                  <option key={category.code} value={category.code}>
-                    {category.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Assessment Status Filter */}
-            <div>
-              <label className="block mb-2 text-sm font-medium text-gray-700 dark:text-gray-300">
-                สถานะการประเมิน
-              </label>
-              <select
-                value={filters.assessmentStatus}
-                onChange={(e) => handleFilterChange('assessmentStatus', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg dark:border-gray-600 focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-              >
-                <option value="all">ทั้งหมด</option>
-                <option value="completed">ประเมินแล้ว</option>
-                <option value="in-progress">กำลังประเมิน</option>
-                <option value="not-assessed">ยังไม่ประเมิน</option>
-                <option value="expired">หมดอายุ</option>
-              </select>
-            </div>
-
-            {/* Risk Level Filter */}
-            <div>
-              <label className="block mb-2 text-sm font-medium text-gray-700 dark:text-gray-300">
-                ระดับความเสี่ยง
-              </label>
-              <select
-                value={filters.riskLevel}
-                onChange={(e) => handleFilterChange('riskLevel', e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg dark:border-gray-600 focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-              >
-                <option value="all">ทั้งหมด</option>
-                <option value="low">ต่ำ</option>
-                <option value="moderate">ปานกลาง</option>
-                <option value="high">สูง</option>
-              </select>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Results Info */}
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-gray-600 dark:text-gray-400">
-          แสดง {paginatedVendors.length} จาก {filteredVendors.length} รายการ
-        </p>
-        
-        <div className="flex items-center gap-2">
-          <label className="text-sm text-gray-600 dark:text-gray-400">
-            แสดงต่อหน้า:
-          </label>
-          <select
-            value={itemsPerPage}
-            onChange={(e) => {
-              setItemsPerPage(Number(e.target.value));
-              setCurrentPage(1);
-            }}
-            className="px-2 py-1 text-sm border border-gray-300 rounded dark:border-gray-600 dark:bg-gray-700 dark:text-white"
-          >
-            <option value={12}>12</option>
-            <option value={24}>24</option>
-            <option value={48}>48</option>
-          </select>
-        </div>
-      </div>
-
-      {/* Vendor Cards Grid */}
-      {paginatedVendors.length > 0 ? (
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {paginatedVendors.map((vendor) => {
-            const summary = getAssessmentSummary(vendor.vdCode);
-            const status = getAssessmentStatus(vendor, summary);
-            const categoryInfo = getCategoryInfo(vendor.category);
-            
-            return (
-              <div
-                key={vendor.vdCode}
-                className="transition-shadow bg-white border border-gray-200 rounded-lg shadow-sm cursor-pointer dark:bg-gray-800 dark:border-gray-700 hover:shadow-md"
-                onClick={() => handleVendorClick(vendor)}
-              >
-                {/* Card Header */}
-                <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <h3 className="font-semibold text-gray-900 dark:text-white line-clamp-2">
-                        {vendor.vdName}
-                      </h3>
-                      <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                        รหัส: {vendor.vdCode}
-                      </p>
-                    </div>
-                    
-                    {/* Status Badge */}
-                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${getStatusColor(status)}`}>
-                      {getStatusText(status)}
-                    </span>
-                  </div>
-                  
-                  {/* Category Badge */}
-                  <div className="mt-3">
-                    <span className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium ${categoryInfo?.color ?? 'bg-gray-100 text-gray-800'}`}>
-                      {categoryInfo?.name ?? vendor.category}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Card Body */}
-                <div className="p-4 space-y-3">
-                  {/* Assessment Info */}
-                  {summary ? (
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm text-gray-600 dark:text-gray-400">
-                          คะแนนล่าสุด
-                        </span>
-                        <span className="text-sm font-medium text-gray-900 dark:text-white">
-                          {summary.avgScore}%
-                        </span>
-                      </div>
-                      
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm text-gray-600 dark:text-gray-400">
-                          ความเสี่ยง
-                        </span>
-                        <span className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium ${getRiskLevelColor(summary.riskLevel)}`}>
-                          {summary.riskLevel}
-                        </span>
-                      </div>
-                      
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm text-gray-600 dark:text-gray-400">
-                          ประเมินครั้งล่าสุด
-                        </span>
-                        <span className="text-sm text-gray-900 dark:text-white">
-                          {formatDate(summary.lastAssessmentDate)}
-                        </span>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="py-4 text-center">
-                      <Clock className="w-8 h-8 mx-auto mb-2 text-gray-400" />
-                      <p className="text-sm text-gray-500 dark:text-gray-400">
-                        ยังไม่มีการประเมิน
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Working Area */}
-                  {(() => {
-                    const workingAreaInfo = safeWorkingAreaDisplay(vendor.workingArea, 2);
-                    
-                    return workingAreaInfo.display && (
-                      <div className="flex items-center gap-2">
-                        <MapPin className="w-4 h-4 text-gray-400" />
-                        <span className="text-sm text-gray-600 dark:text-gray-400">
-                          {workingAreaInfo.display}
-                          {workingAreaInfo.hasMore && ` +${workingAreaInfo.totalCount - 2} เพิ่มเติม`}
-                        </span>
-                      </div>
-                    );
-                  })()}
-
-                  {/* Assessment Frequency */}
-                  <div className="flex items-center gap-2">
-                    <Calendar className="w-4 h-4 text-gray-400" />
-                    <span className="text-sm text-gray-600 dark:text-gray-400">
-                      ประเมินทุก {vendor.freqAss === '1year' ? '1 ปี' : 
-                                vendor.freqAss === '2year' ? '2 ปี' : 
-                                vendor.freqAss === '4year' ? '4 ปี' : vendor.freqAss}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Card Footer */}
-                <div className="p-4 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700/50">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleNavigate(`/csm/details/${vendor.vdCode}`);
-                        }}
-                        className="flex items-center gap-1 px-3 py-1.5 text-xs text-blue-600 hover:text-blue-800 border border-blue-200 rounded-md hover:bg-blue-50 dark:text-blue-400 dark:border-blue-400 dark:hover:bg-blue-900/20"
-                      >
-                        <Eye className="w-3 h-3" />
-                        ดูรายละเอียด
-                      </button>
-                      
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleNavigate(`/csm/vendors/edit/${vendor.vdCode}`);
-                        }}
-                        className="flex items-center gap-1 px-3 py-1.5 text-xs text-gray-600 hover:text-gray-800 border border-gray-200 rounded-md hover:bg-gray-50 dark:text-gray-400 dark:border-gray-400 dark:hover:bg-gray-700"
-                      >
-                        <Edit className="w-3 h-3" />
-                        แก้ไข
-                      </button>
-                    </div>
-                    
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleVendorClick(vendor);
-                      }}
-                      className="flex items-center gap-1 px-3 py-1.5 text-xs text-white bg-blue-600 rounded-md hover:bg-blue-700"
-                    >
-                      ประเมิน
-                      <ArrowRight className="w-3 h-3" />
-                    </button>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      ) : (
-        /* Filtered Empty State */
-        <div className="p-12 text-center bg-white rounded-lg shadow-sm dark:bg-gray-800">
-          <Building2 className="w-16 h-16 mx-auto mb-4 text-gray-400" />
-          <h3 className="mb-2 text-lg font-medium text-gray-900 dark:text-white">
-            ไม่พบข้อมูลผู้รับเหมา
-          </h3>
-          <p className="mb-6 text-gray-500 dark:text-gray-400">
-            {filters.search || filters.category !== 'all' ? 
-              'ไม่พบข้อมูลที่ตรงกับเงื่อนไขการค้นหา' : 
-              'ยังไม่มีข้อมูลผู้รับเหมาในระบบ'}
-          </p>
-          <div className="flex items-center justify-center gap-3">
-            {(filters.search || filters.category !== 'all') && (
+          
+          {/* View Mode Toggle */}
+          <div className="flex items-center justify-end space-x-2">
+            <label className="flex items-center">
+              <input
+                type="checkbox"
+                checked={filters.needsAssessment}
+                onChange={(e) => updateFilter('needsAssessment', e.target.checked)}
+                className="mr-2"
+              />
+              <span className="text-sm text-gray-700">ต้องประเมิน</span>
+            </label>
+            <div className="flex border border-gray-300 rounded-md">
               <button
-                onClick={() => {
-                  setFilters({
-                    search: '',
-                    category: 'all',
-                    assessmentStatus: 'all',
-                    riskLevel: 'all'
-                  });
+                onClick={() => setViewMode('card')}
+                className={`p-2 ${viewMode === 'card' ? 'bg-blue-100 text-blue-600' : 'text-gray-600 hover:bg-gray-100'}`}
+              >
+                <Grid3X3 className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => setViewMode('table')}
+                className={`p-2 ${viewMode === 'table' ? 'bg-blue-100 text-blue-600' : 'text-gray-600 hover:bg-gray-100'}`}
+              >
+                <List className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+        
+        {/* Active Filters */}
+        <div className="mt-3 flex flex-wrap gap-2">
+          {filters.search && (
+            <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+              ค้นหา: {filters.search}
+              <button
+                onClick={() => updateFilter('search', '')}
+                className="ml-2 text-blue-600 hover:text-blue-800"
+              >
+                ×
+              </button>
+            </span>
+          )}
+          {filters.category !== 'all' && (
+            <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+              หมวดหมู่: {filters.category}
+              <button
+                onClick={() => updateFilter('category', 'all')}
+                className="ml-2 text-blue-600 hover:text-blue-800"
+              >
+                ×
+              </button>
+            </span>
+          )}
+          {filters.needsAssessment && (
+            <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
+              ต้องประเมิน
+              <button
+                onClick={() => updateFilter('needsAssessment', false)}
+                className="ml-2 text-orange-600 hover:text-orange-800"
+              >
+                ×
+              </button>
+            </span>
+          )}
+        </div>
+      </div>
+      
+      {/* Results */}
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+        <div className="px-4 py-3 border-b border-gray-200">
+          <div className="flex justify-between items-center">
+            <p className="text-sm text-gray-700">
+              แสดง {filteredVendors.length} จาก {processedVendors.length} รายการ
+            </p>
+          </div>
+        </div>
+        
+        <div ref={parentRef} className="h-[600px] overflow-auto">
+          {viewMode === 'card' ? (
+            <div className="p-4">
+              <div 
+                style={{
+                  height: `${virtualizer.getTotalSize()}px`,
+                  width: '100%',
+                  position: 'relative',
                 }}
-                className="px-4 py-2 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50 dark:text-gray-400 dark:border-gray-600 dark:hover:bg-gray-700"
               >
-                ล้างตัวกรอง
-              </button>
-            )}
-            <button
-              onClick={() => handleNavigate('/csm/vendors/add')}
-              className="flex items-center gap-2 px-4 py-2 text-sm text-white bg-blue-600 rounded-lg hover:bg-blue-700"
-            >
-              <Plus className="w-4 h-4" />
-              เพิ่มผู้รับเหมาใหม่
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Pagination */}
-      {totalPages > 1 && (
-        <div className="p-4 bg-white rounded-lg shadow-sm dark:bg-gray-800">
-          <div className="flex items-center justify-between">
-            <div className="text-sm text-gray-700 dark:text-gray-300">
-              แสดงหน้า {currentPage} จาก {totalPages}
-            </div>
-            
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-                disabled={currentPage === 1}
-                className="px-3 py-2 text-sm border rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                ก่อนหน้า
-              </button>
-              
-              <div className="flex items-center gap-1">
-                {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                  let pageNum = i + 1;
-                  
-                  // Show pages around current page
-                  if (totalPages > 5) {
-                    const start = Math.max(1, currentPage - 2);
-                    const end = Math.min(totalPages, start + 4);
-                    pageNum = start + i;
-                    
-                    if (pageNum > end) return null;
-                  }
-                  
+                {virtualizer.getVirtualItems().map((virtualItem) => {
+                  const vendor = filteredVendors[virtualItem.index];
                   return (
-                    <button
-                      key={pageNum}
-                      onClick={() => setCurrentPage(pageNum)}
-                      className={`px-3 py-2 text-sm rounded-md ${
-                        currentPage === pageNum
-                          ? 'bg-blue-600 text-white'
-                          : 'border hover:bg-gray-50 dark:hover:bg-gray-700'
-                      }`}
+                    <div
+                      key={virtualItem.key}
+                      style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        width: '100%',
+                        height: `${virtualItem.size}px`,
+                        transform: `translateY(${virtualItem.start}px)`,
+                      }}
                     >
-                      {pageNum}
-                    </button>
+                      <div className="p-2">
+                        <VendorCard
+                          vendor={vendor}
+                          onEvaluate={handleEvaluate}
+                          onViewDetails={handleViewDetails}
+                        />
+                      </div>
+                    </div>
                   );
                 })}
               </div>
-              
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      ผู้รับเหมา
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      หมวดหมู่
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      สถานะการประเมิน
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      คะแนน
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      ระดับความเสี่ยง
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      ประเมินล่าสุด
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      จัดการ
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  <div
+                    style={{
+                      height: `${virtualizer.getTotalSize()}px`,
+                      width: '100%',
+                      position: 'relative',
+                    }}
+                  >
+                    {virtualizer.getVirtualItems().map((virtualItem) => {
+                      const vendor = filteredVendors[virtualItem.index];
+                      return (
+                        <div
+                          key={virtualItem.key}
+                          style={{
+                            position: 'absolute',
+                            top: 0,
+                            left: 0,
+                            width: '100%',
+                            height: `${virtualItem.size}px`,
+                            transform: `translateY(${virtualItem.start}px)`,
+                          }}
+                        >
+                          <VendorTableRow
+                            vendor={vendor}
+                            onEvaluate={handleEvaluate}
+                            onViewDetails={handleViewDetails}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+        
+        {filteredVendors.length === 0 && (
+          <div className="text-center py-12">
+            <Building2 className="mx-auto h-12 w-12 text-gray-400" />
+            <h3 className="mt-2 text-sm font-medium text-gray-900">ไม่พบผู้รับเหมา</h3>
+            <p className="mt-1 text-sm text-gray-500">
+              ลองปรับเปลี่ยนตัวกรองหรือเพิ่มผู้รับเหมาใหม่
+            </p>
+            <div className="mt-6">
               <button
-                onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-                disabled={currentPage === totalPages}
-                className="px-3 py-2 text-sm border rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={() => navigate('/csm/vendors/add')}
+                className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700"
               >
-                ถัดไป
+                <Plus className="w-4 h-4 mr-2" />
+                เพิ่มผู้รับเหมา
               </button>
             </div>
           </div>
-        </div>
-      )}
-
-      {/* Quick Actions Floating Button */}
-      <div className="fixed z-50 bottom-6 right-6">
-        <div className="flex flex-col gap-3">
-          <button
-            onClick={() => handleNavigate('/csm/reports')}
-            className="flex items-center justify-center w-12 h-12 text-white transition-colors bg-green-600 rounded-full shadow-lg hover:bg-green-700"
-            title="รายงาน"
-          >
-            <BarChart3 className="w-6 h-6" />
-          </button>
-          
-          <button
-            onClick={() => handleNavigate('/csm/vendors/add')}
-            className="flex items-center justify-center w-12 h-12 text-white transition-colors bg-blue-600 rounded-full shadow-lg hover:bg-blue-700"
-            title="เพิ่มผู้รับเหมา"
-          >
-            <Plus className="w-6 h-6" />
-          </button>
-        </div>
+        )}
       </div>
     </div>
   );

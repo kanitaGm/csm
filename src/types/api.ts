@@ -32,7 +32,8 @@ export interface Plant {
 }
 
 export interface Company {
-  companyId: string; // Firestore Document ID  
+  id?: string;  // Firestore Document ID
+  companyId: string; // Unique Company Identifier  
   name: string; // ชื่อบริษัท
   type:string;
   isActive: boolean;

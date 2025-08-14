@@ -1,7 +1,7 @@
 // 📁 src/services/index.ts - Fixed Service Exports
 export { default as csmService } from './csmService';
 export { csmVendorService } from './csmVendorService';
-export { enhancedCSMFormsService } from './enhancedCsmService';
+export { EnhancedFormsService } from './enhancedCsmService';
 export { cacheService } from './cacheService';
 
 // Auth service

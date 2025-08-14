@@ -28,7 +28,7 @@ export interface BaseEmployeeData {
   company?: string;
   companyId?: string;
   plantId?: string| null; 
-  employeeType?: 'employee' | 'contractor' | 'transporter' | 'driver' | 'pending';    
+  employeeType?: 'employee' | 'contractor' | 'transporter' | 'driver' | '';    
   status: 'active' | 'inactive' | 'terminated' | 'pending' | 'blacklist';
   createdAt: Timestamp | Date | string; 
   updatedAt?: Timestamp | Date | string; 
@@ -51,11 +51,11 @@ export interface EmployeeFormState extends Partial<BaseEmployeeData> {
 // EmployeeProfile - ปรับให้ realistic มากขึ้น
 export interface EmployeeProfile extends EmployeeFormState {
   id: string; // Firestore document ID
-  email: string; // ✅ ทำให้ required
+  email: string; //  ทำให้ required
   searchKeywords: string[]; // **สำคัญมาก** สำหรับการค้นหา
-  createdAt: Timestamp | Date | string; // ✅ ทำให้ required
-  updatedAt: Timestamp | Date | string; // ✅ ทำให้ required
-  [key: string]: unknown; // ✅ เก็บไว้สำหรับ flexibility
+  createdAt: Timestamp | Date | string; //  ทำให้ required
+  updatedAt: Timestamp | Date | string; //  ทำให้ required
+  [key: string]: unknown; //  เก็บไว้สำหรับ flexibility
 }
 
 

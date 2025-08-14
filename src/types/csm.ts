@@ -7,7 +7,7 @@ export type DateInput = Timestamp | Date | string | null | undefined | { seconds
 // CSM VENDOR TYPES
 // ========================================================================
 export interface CSMVendor {
-  id?: string;
+  id?: string; //for Firestore document ID
   companyId: string;
   vdCode: string;
   vdName: string;
@@ -54,13 +54,13 @@ export interface CSMFormDoc {
 // ========================================================================
 // CSM ASSESSMENT TYPES
 // ========================================================================
-export type Score = 'n/a' | '0' | '1' | '2' | '3' | '4' | '5';
+export type Score = 'n/a' | '0' | '1' | '2' | '3' | '4' | '5' |'';
 
 export interface CSMAuditor {
   name: string;
   email: string;
   phone?: string;
-  position: string;
+  position?: string;
 }
 
 export interface CSMAuditee extends CSMAuditor {
@@ -84,8 +84,9 @@ export interface CSMAssessment {
   companyId: string;
   vdCode: string;
   vdName: string;
-  formId: string;
-  formVersion: string;
+  docReference?: string;  // Reference to the document in CSM
+  formCode: string;
+  formVersion: string;  
   answers: CSMAssessmentAnswer[];
   auditor: CSMAuditor;
   assessor?: string;
@@ -106,7 +107,7 @@ export interface CSMAssessment {
   updatedAt?: Timestamp | Date | string | unknown;
 }
 
-// ✅ Add alias for backward compatibility
+//  Add alias for backward compatibility
 export interface CSMAssessmentDoc extends CSMAssessment {unknown: unknown;}
 
 // ========================================================================
@@ -146,6 +147,7 @@ export interface VendorCategory {
   name: string;
   description: string;
   color: string;
+  defaultFrequency?: string; // Assessment frequency (e.g., '1year', '6months')
 }
 
 export interface AssessmentFrequency {
@@ -156,11 +158,11 @@ export interface AssessmentFrequency {
 }
 
 export const CSM_VENDOR_CATEGORIES: VendorCategory[] = [
-  { code: '1', name: 'ก่อสร้าง', description: 'บริษัทผู้รับเหมาก่อสร้าง', color: 'bg-blue-100 text-blue-800' },
-  { code: '2', name: 'บริการ', description: 'บริษัทให้บริการทั่วไป', color: 'bg-green-100 text-green-800' },
-  { code: '3', name: 'ขนส่ง', description: 'บริษัทขนส่งและโลจิสติกส์', color: 'bg-yellow-100 text-yellow-800' },
-  { code: '4', name: 'วัสดุ', description: 'ผู้จำหน่ายวัสดุและอุปกรณ์', color: 'bg-purple-100 text-purple-800' },
-  { code: '5', name: 'เทคโนโลยี', description: 'บริการเทคโนโลยีและ IT', color: 'bg-indigo-100 text-indigo-800' }
+  { code: '1', name: 'Administration', description: 'งานทั่วไป', color: 'bg-blue-100 text-blue-800' },
+  { code: '2', name: 'Service', description: 'งานบริการ', color: 'bg-green-100 text-green-800' },
+  { code: '3', name: 'Construction-Mantenance', description: 'งาน construction and maintenance', color: 'bg-yellow-100 text-yellow-800' },
+  { code: '4', name: 'Transportation-Logistics', description: 'จัดส่ง', color: 'bg-purple-100 text-purple-800' },
+  //{ code: '5', name: 'เทคโนโลยี', description: 'บริการเทคโนโลยีและ IT', color: 'bg-indigo-100 text-indigo-800' }
 ];
 
 export const ASSESSMENT_FREQUENCIES: AssessmentFrequency[] = [

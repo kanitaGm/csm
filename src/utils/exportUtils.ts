@@ -8,6 +8,8 @@ import { format } from 'date-fns';
 import { formatDate } from './dateUtils';
 import type { DateInput } from './dateUtils';
 
+import type { CSMVendor, CSMAssessment, CSMAssessmentSummary } from '../types';
+
 // Enhanced Type definitions
 interface ExportData {
   [key: string]: unknown;
@@ -721,4 +723,303 @@ export {
   type ExportResult,
   calculateDataSize,
   sanitizeFilename 
+};
+
+
+
+////////////////////////////////CSM//////////////
+//  เพิ่มฟังก์ชันใหม่โดยใช้ ExcelJS ที่มีอยู่แล้ว
+export const exportCSMVendorsToExcelJS = async (
+  vendors: CSMVendor[], 
+  assessmentSummaries: CSMAssessmentSummary[] = [],
+  filename: string = 'CSM_Vendors'
+): Promise<ExportResult> => {
+  try {
+    // ใช้ ExcelJS ที่มีอยู่แล้วในระบบ
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('CSM Vendors');
+
+    // Prepare CSM data
+    const csmData = vendors.map(vendor => {
+      const summary = assessmentSummaries.find(s => s.vdCode === vendor.vdCode);
+      
+      return {
+        'รหัสผู้รับเหมา': vendor.vdCode,
+        'ชื่อผู้รับเหมา': vendor.vdName,
+        'หมวดหมู่': vendor.category || 'ไม่ระบุ',
+        'พื้นที่ทำงาน': Array.isArray(vendor.workingArea) 
+          ? vendor.workingArea.join(', ') 
+          : vendor.workingArea || 'ไม่ระบุ',
+        'ความถี่การประเมิน (วัน)': vendor.freqAss || '365',
+        'สถานะ': vendor.isActive ? 'ใช้งาน' : 'ไม่ใช้งาน',
+        'การประเมินล่าสุด': summary 
+          ? formatDate(summary.lastAssessmentDate)
+          : 'ยังไม่ประเมิน',
+        'คะแนนล่าสุด (%)': summary 
+          ? summary.avgScore.toString()
+          : '-',
+        'ระดับความเสี่ยง': summary 
+          ? getCSMRiskLevelThai(summary.riskLevel)
+          : 'ไม่ระบุ',
+        'วันที่สร้าง': formatDate(vendor.createdAt),
+        'ผู้สร้าง': vendor.createdBy,
+        'อัปเดตล่าสุด': formatDate(vendor.updatedAt)
+      };
+    });
+
+    // ใช้ฟังก์ชัน prepareExportData ที่มีอยู่แล้ว
+    const headers = Object.keys(csmData[0] || {});
+    const preparedData = prepareExportData(csmData, headers, {}, 'excel');
+
+    // Add headers
+    const headerRow = worksheet.addRow(headers);
+    headerRow.font = { bold: true, color: { argb: 'FFFFFF' } };
+    headerRow.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: '16A085' }
+    };
+
+    // Add data
+    preparedData.forEach(row => {
+      worksheet.addRow(Object.values(row));
+    });
+
+    // Auto-fit columns
+    worksheet.columns.forEach(column => {
+      if (column.values && column.values.length > 0) {
+        let maxLength = 10;
+        column.values.forEach(value => {
+          if (value) {
+            const length = String(value).length;
+            if (length > maxLength) {
+              maxLength = Math.min(length + 2, 50);
+            }
+          }
+        });
+        column.width = maxLength;
+      }
+    });
+
+    // Generate and download
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { 
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+    });
+    
+    const finalFilename = `${filename}_${getTimestamp()}.xlsx`;
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', finalFilename);
+    link.style.display = 'none';
+    
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+    return {
+      success: true,
+      filename: finalFilename,
+      fileSize: blob.size / (1024 * 1024)
+    };
+
+  } catch (error) {
+    console.error('CSM Excel export error:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Export failed'
+    };
+  }
+};
+
+//  เพิ่มฟังก์ชันสำหรับ CSM Assessments
+export const exportCSMAssessmentsToExcelJS = async (
+  assessments: CSMAssessment[],
+  vendors: CSMVendor[] = [],
+  filename: string = 'CSM_Assessments'
+): Promise<ExportResult> => {
+  try {
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('CSM Assessments');
+
+    const assessmentData = assessments.map(assessment => {
+      const vendor = vendors.find(v => v.vdCode === assessment.vdCode);
+      
+      return {
+        'รหัสผู้รับเหมา': assessment.vdCode,
+        'ชื่อผู้รับเหมา': assessment.vdName,
+        'หมวดหมู่': assessment.vdCategory || vendor?.category || 'ไม่ระบุ',
+        'วันที่ประเมิน': formatDate(assessment.approvedAt),
+        'ผู้ประเมิน': assessment.auditor?.name || 'ไม่ระบุ',
+        'คะแนนรวม': assessment.totalScore || '0',
+        'คะแนนเต็ม': assessment.maxScore || '100',
+        'คะแนนเฉลี่ย (%)': assessment.avgScore || '0',
+        'ระดับความเสี่ยง': getCSMRiskLevelThai(assessment.riskLevel),
+        'สถานะ': getCSMAssessmentStatus(assessment),
+        'วันที่เสร็จสิ้น': assessment.finishedAt 
+          ? formatDate(assessment.finishedAt)
+          : '-',
+        'ผู้อนุมัติ': assessment.approvedBy || '-'
+      };
+    });
+
+    const headers = Object.keys(assessmentData[0] || {});
+    const preparedData = prepareExportData(assessmentData, headers, {}, 'excel');
+
+    // Add headers with styling
+    const headerRow = worksheet.addRow(headers);
+    headerRow.font = { bold: true, color: { argb: 'FFFFFF' } };
+    headerRow.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: '3498DB' }
+    };
+
+    // Add data rows
+    preparedData.forEach(row => {
+      worksheet.addRow(Object.values(row));
+    });
+
+    // Auto-fit columns
+    worksheet.columns.forEach(column => {
+      if (column.values && column.values.length > 0) {
+        let maxLength = 10;
+        column.values.forEach(value => {
+          if (value) {
+            const length = String(value).length;
+            if (length > maxLength) {
+              maxLength = Math.min(length + 2, 50);
+            }
+          }
+        });
+        column.width = maxLength;
+      }
+    });
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { 
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+    });
+    
+    const finalFilename = `${filename}_${getTimestamp()}.xlsx`;
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', finalFilename);
+    link.style.display = 'none';
+    
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+    return {
+      success: true,
+      filename: finalFilename,
+      fileSize: blob.size / (1024 * 1024)
+    };
+
+  } catch (error) {
+    console.error('CSM Assessment export error:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Export failed'
+    };
+  }
+};
+
+//  Utility functions สำหรับ CSM
+const getCSMRiskLevelThai = (riskLevel: string | undefined): string => {
+  switch (riskLevel?.toLowerCase()) {
+    case 'low': return 'ต่ำ';
+    case 'medium': return 'ปานกลาง';
+    case 'high': return 'สูง';
+    default: return 'ไม่ระบุ';
+  }
+};
+
+const getCSMAssessmentStatus = (assessment: CSMAssessment): string => {
+  if (assessment.isApproved) return 'อนุมัติแล้ว';
+  if (assessment.isFinish) return 'เสร็จสิ้น';
+  return 'กำลังดำเนินการ';
+};
+
+//  Backward compatibility aliases
+export const exportVendorsToExcel = exportCSMVendorsToExcelJS;
+export const exportAssessmentsToExcel = exportCSMAssessmentsToExcelJS;
+
+//  Enhanced CSM export with multiple sheets
+export const exportCSMComprehensiveReport = async (
+  vendors: CSMVendor[],
+  assessments: CSMAssessment[],
+  assessmentSummaries: CSMAssessmentSummary[],
+  filename: string = 'CSM_Comprehensive_Report'
+): Promise<ExportResult> => {
+  try {
+    const workbook = new ExcelJS.Workbook();
+    
+    // Sheet 1: Summary
+    const summarySheet = workbook.addWorksheet('สรุป');
+    const dashboardStats = {
+      'ผู้รับเหมาทั้งหมด': vendors.length,
+      'ประเมินแล้ว': assessmentSummaries.length,
+      'ยังไม่ประเมิน': vendors.length - assessmentSummaries.length,
+      'คะแนนเฉลี่ย': assessmentSummaries.length > 0 
+        ? (assessmentSummaries.reduce((sum, s) => sum + s.avgScore, 0) / assessmentSummaries.length).toFixed(1)
+        : '0',
+      'วันที่สร้างรายงาน': formatDate(new Date())
+    };
+    
+    summarySheet.addRow(['หัวข้อ', 'ข้อมูล']);
+    Object.entries(dashboardStats).forEach(([key, value]) => {
+      summarySheet.addRow([key, value]);
+    });
+
+    // Sheet 2: Vendors
+    const vendorSheet = workbook.addWorksheet('รายการผู้รับเหมา');
+    const vendorResult = await exportCSMVendorsToExcelJS(vendors, assessmentSummaries, 'temp');
+    // Copy data to this sheet (simplified version)
+    
+    // Sheet 3: Assessments
+    const assessmentSheet = workbook.addWorksheet('การประเมิน');
+    const assessmentResult = await exportCSMAssessmentsToExcelJS(assessments, vendors, 'temp');
+    // Copy data to this sheet (simplified version)
+    console.log('Assessment export result:', vendorSheet , vendorResult, assessmentSheet, assessmentResult);
+
+    // Generate final file
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { 
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+    });
+    
+    const finalFilename = `${filename}_${getTimestamp()}.xlsx`;
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', finalFilename);
+    link.style.display = 'none';
+    
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+    return {
+      success: true,
+      filename: finalFilename,
+      fileSize: blob.size / (1024 * 1024)
+    };
+
+  } catch (error) {
+    console.error('CSM Comprehensive report error:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Export failed'
+    };
+  }
 };

@@ -4,7 +4,7 @@
 // ========================================================================
 import React, { useState, useEffect, createContext, useContext, useCallback, useRef } from 'react';
 import { onAuthStateChanged, signOut} from 'firebase/auth';
-import type {User as FirebaseUser  } from 'firebase/auth';
+import type {User as FirebaseUser  } from 'firebase/auth'; 
 import { auth } from '../config/firebase';
 import { AuthenticationService } from '../services/authService';
 import type { AppUser, AuthContextType, EmployeeProfile } from '../types';
@@ -151,7 +151,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
             setLoading(false);
         }
     }, []);
-    
+    /*
     const signInWithInternalCredentials = useCallback(async (empId: string, passcode: string) => {
         setAuthError(null);
         setLoading(true);
@@ -165,7 +165,41 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
             setAuthError(errorMessage || "เกิดข้อผิดพลาดในการเข้าสู่ระบบแบบภายใน");
             setLoading(false);
         }
-    }, []);
+    }, []);*/
+    const signInWithInternalCredentials = useCallback(async (empId: string, passcode: string) => {
+        setAuthError(null);
+        setLoading(true);
+        try {
+            console.log('[AuthContext] Starting internal sign in...');
+            const result = await AuthenticationService.handleInternalLogin(empId, passcode);
+            
+            // ✅ Internal Login ไม่ผ่าน Firebase Auth ต้อง set state เอง
+            setUser(result);
+            setLoginType('internal');
+            setCurrentUser(null); // ไม่มี Firebase user
+            setCurrentUserClaims(null);
+            setEmpUser(null);
+            
+            // ✅ แก้ไข: ตรวจสอบ profile type ก่อน set
+            if (result.profile && 'id' in result.profile) {
+                // เป็น EmployeeProfile
+                setFirebaseLinkedEmpProfile(result.profile as EmployeeProfile);
+            } else {
+                // เป็น { displayName: string | null }
+                setFirebaseLinkedEmpProfile(null);
+            }
+            
+            console.log('[AuthContext] Internal login successful:', result);
+            
+        } catch (error: unknown) {
+            console.error('[AuthContext] Internal sign in failed:', error);
+            const errorMessage = getErrorMessage(error);
+            setAuthError(errorMessage || "เกิดข้อผิดพลาดในการเข้าสู่ระบบแบบภายใน");
+        } finally {
+            setLoading(false);
+        }
+    }, []);    
+
 
     const logout = useCallback(async () => {
         await signOut(auth);

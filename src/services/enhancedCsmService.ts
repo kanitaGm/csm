@@ -1,357 +1,573 @@
-// 📁 src/services/enhancedCSMFormsService.ts - Fixed ESLint Errors
+// 📁 src/services/enhancedCsmService.ts
+// High-Performance CSM Service with Caching and Batch Operations
 import { 
-  collection, 
-  query, 
-  where, 
-  getDocs, 
-  orderBy,
-  doc,
-  getDoc,
-  QueryConstraint
+  collection, doc, getDocs,  addDoc, updateDoc, writeBatch,
+  query, where, orderBy, limit, startAfter, Timestamp, 
+  QueryDocumentSnapshot
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
-import type { CSMFormDoc, CSMFormField } from '../types';
+import type { 
+  CSMFormDoc, CSMAssessment, CSMAssessmentSummary, 
+  CSMVendor, Company, DateInput
+} from '../types';
+import { cacheService } from './cacheService';
 
 // =================== CONSTANTS ===================
-const FORMS_COLLECTION = 'forms';
-const CACHE_DURATION = 300; // 5 minutes
-const CSM_FORM_CODES = ['CSMChecklist', 'CSM_Assessment', 'CSM_Evaluation'];
+const COLLECTIONS = {
+  CSM_VENDORS: 'csmVendors',
+  CSM_FORMS: 'forms', // Using existing forms collection
+  CSM_ASSESSMENTS: 'csmAssessments', 
+  COMPANIES: 'companies',
+  CSM_SUMMARIES: 'csmAssessmentSummaries'
+} as const;
 
-// =================== TYPES ===================
-interface FormQueryOptions {
-  includeInactive?: boolean;
-  formCodes?: string[];
-  applicableTo?: string[];
-}
+const CACHE_DURATIONS = {
+  VENDORS: 5 * 60 * 1000,     // 5 minutes
+  FORMS: 30 * 60 * 1000,      // 30 minutes (forms change rarely)
+  ASSESSMENTS: 2 * 60 * 1000,  // 2 minutes
+  SUMMARIES: 3 * 60 * 1000     // 3 minutes  
+} as const;
 
-// =================== SIMPLE CACHE ===================
-const simpleCache = new Map<string, { data: unknown; expiry: number }>();
+const PAGINATION_SIZE = 50; // Default page size for performance
 
-const cacheGet = <T>(key: string): T | null => {
-  const item = simpleCache.get(key);
-  if (item && item.expiry > Date.now()) {
-    return item.data as T;
+// =================== UTILITIES ===================
+const convertToDate = (value: DateInput): Date => {
+  if (value instanceof Date) return value;
+  if (value instanceof Timestamp) return value.toDate();
+  if (typeof value === 'string') return new Date(value);
+  if (value && typeof value === 'object' && 'seconds' in value) {
+    return new Date(value.seconds * 1000);
   }
-  simpleCache.delete(key);
-  return null;
+  return new Date();
 };
 
-const cacheSet = <T>(key: string, data: T, ttlSeconds: number): void => {
-  const expiry = Date.now() + (ttlSeconds * 1000);
-  simpleCache.set(key, { data, expiry });
-};
+const normalizeVendorData = (data: any): CSMVendor => ({
+  id: data.id,
+  companyId: data.companyId || '',
+  vdCode: data.vdCode || '',
+  vdName: data.vdName || '',
+  freqAss: data.freqAss || '365', // Default 1 year
+  isActive: data.isActive !== false, // Default true
+  category: data.category || '',
+  workingArea: Array.isArray(data.workingArea) ? data.workingArea : [data.workingArea].filter(Boolean),
+  createdAt: convertToDate(data.createdAt),
+  updatedAt: convertToDate(data.updatedAt),
+  createdBy: data.createdBy || '',
+  lastUpdatedBy: data.lastUpdatedBy || data.createdBy || ''
+});
 
-const cacheDelete = (key: string): void => {
-  simpleCache.delete(key);
-};
-
-const cacheClearPattern = (pattern: RegExp): void => {
-  const keysToDelete = Array.from(simpleCache.keys()).filter(key => pattern.test(key));
-  keysToDelete.forEach(key => simpleCache.delete(key));
-};
-
-// =================== ENHANCED CSM FORMS SERVICE ===================
-export class EnhancedCSMFormsService {
-  private readonly collectionName = FORMS_COLLECTION;
-  private readonly cacheDuration = CACHE_DURATION;
+// =================== ENHANCED VENDORS SERVICE ===================
+export class EnhancedVendorsService {
+  private static instance: EnhancedVendorsService;
+  private vendorCache = new Map<string, CSMVendor>();
+  private lastFetchTime = 0;
+  
+  static getInstance(): EnhancedVendorsService {
+    if (!this.instance) {
+      this.instance = new EnhancedVendorsService();
+    }
+    return this.instance;
+  }
 
   /**
-   * Get all forms with optional filtering
+   * Get all vendors with smart caching
    */
-  async getAllForms(options: FormQueryOptions = {}): Promise<CSMFormDoc[]> {
-    const cacheKey = `forms-all-${JSON.stringify(options)}`;
-    const cached = cacheGet<CSMFormDoc[]>(cacheKey);
+  async getAll(): Promise<CSMVendor[]> {
+    const cacheKey = 'csm-vendors-all';
+    const cached = cacheService.get<CSMVendor[]>(cacheKey);
     
-    if (cached) {
-      console.log('✅ Found forms in cache:', cached.length);
+    if (cached && Date.now() - this.lastFetchTime < CACHE_DURATIONS.VENDORS) {
       return cached;
     }
 
     try {
-      console.log('🔍 Querying forms from Firestore...');
+      const querySnapshot = await getDocs(
+        query(
+          collection(db, COLLECTIONS.CSM_VENDORS),
+          where('isActive', '==', true),
+          orderBy('vdName')
+        )
+      );
       
-      // Build base query
-      const queryRef = collection(db, this.collectionName);
-      const constraints: QueryConstraint[] = [];
-
-      // Add active filter unless including inactive
-      if (!options.includeInactive) {
-        constraints.push(where('isActive', '==', true));
-      }
-
-      // Add form codes filter
-      if (options.formCodes && options.formCodes.length > 0) {
-        constraints.push(where('formCode', 'in', options.formCodes));
-      }
-
-      // Add applicable to filter
-      if (options.applicableTo && options.applicableTo.length > 0) {
-        constraints.push(where('applicableTo', 'array-contains-any', options.applicableTo));
-      }
-
-      // Add ordering
-      constraints.push(orderBy('updatedAt', 'desc'));
-
-      const q = query(queryRef, ...constraints);
-      const querySnapshot = await getDocs(q);
-      
-      const forms = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      } as CSMFormDoc));
-
-      console.log('📋 Found forms:', forms.length);
-      
-      // Filter and sort results
-      const filteredForms = forms.filter(() => {
-        // Additional filtering if needed
-        return true;
-      }).sort((a, b) => {
-        // Sort by updated date descending
-        const aDate = a.updatedAt ? new Date(a.updatedAt as string) : new Date(0);
-        const bDate = b.updatedAt ? new Date(b.updatedAt as string) : new Date(0);
-        return bDate.getTime() - aDate.getTime();
+      const vendors = querySnapshot.docs.map(doc => {
+        const vendor = normalizeVendorData({ id: doc.id, ...doc.data() });
+        this.vendorCache.set(vendor.vdCode, vendor);
+        return vendor;
       });
+
+      cacheService.set(cacheKey, vendors, CACHE_DURATIONS.VENDORS);
+      this.lastFetchTime = Date.now();
       
-      // Validate form structure
-      const validForms = filteredForms.filter((form) => this.validateFormStructure(form));
-      
-      if (validForms.length !== filteredForms.length) {
-        console.warn(`⚠️ ${filteredForms.length - validForms.length} forms failed validation`);
+      return vendors;
+    } catch (error) {
+      console.error('Error fetching vendors:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get vendors with pagination for better performance
+   */
+  async getPaginated(
+    pageSize: number = PAGINATION_SIZE,
+    lastDoc?: QueryDocumentSnapshot,
+    filters?: {
+      category?: string;
+      search?: string;
+    }
+  ): Promise<{
+    vendors: CSMVendor[];
+    lastDoc: QueryDocumentSnapshot | null;
+    hasMore: boolean;
+  }> {
+    try {
+      let q = query(
+        collection(db, COLLECTIONS.CSM_VENDORS),
+        where('isActive', '==', true),
+        orderBy('vdName'),
+        limit(pageSize + 1) // Get one extra to check if there are more
+      );
+
+      // Add category filter
+      if (filters?.category && filters.category !== 'all') {
+        q = query(q, where('category', '==', filters.category));
       }
 
-      cacheSet(cacheKey, validForms, this.cacheDuration);
-      return validForms;
+      // Add pagination
+      if (lastDoc) {
+        q = query(q, startAfter(lastDoc));
+      }
+
+      const snapshot = await getDocs(q);
+      const docs = snapshot.docs;
+      const hasMore = docs.length > pageSize;
       
+      // Remove the extra document if it exists
+      const vendorDocs = hasMore ? docs.slice(0, pageSize) : docs;
+      
+      const vendors = vendorDocs.map(doc => 
+        normalizeVendorData({ id: doc.id, ...doc.data() })
+      );
+
+      // Apply search filter client-side (for now)
+      let filteredVendors = vendors;
+      if (filters?.search) {
+        const searchTerm = filters.search.toLowerCase();
+        filteredVendors = vendors.filter(v => 
+          v.vdName.toLowerCase().includes(searchTerm) ||
+          v.vdCode.toLowerCase().includes(searchTerm)
+        );
+      }
+
+      return {
+        vendors: filteredVendors,
+        lastDoc: hasMore ? vendorDocs[vendorDocs.length - 1] : null,
+        hasMore
+      };
     } catch (error) {
-      console.error('Error fetching forms:', error);
-      console.log('🔄 Returning empty array due to error');
+      console.error('Error fetching paginated vendors:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get vendor by code with caching
+   */
+  async getByVdCode(vdCode: string): Promise<CSMVendor | null> {
+    // Check instance cache first
+    if (this.vendorCache.has(vdCode)) {
+      return this.vendorCache.get(vdCode)!;
+    }
+
+    try {
+      const snapshot = await getDocs(
+        query(
+          collection(db, COLLECTIONS.CSM_VENDORS),
+          where('vdCode', '==', vdCode),
+          where('isActive', '==', true),
+          limit(1)
+        )
+      );
+
+      if (snapshot.empty) {
+        return null;
+      }
+
+      const doc = snapshot.docs[0];
+      const vendor = normalizeVendorData({ id: doc.id, ...doc.data() });
+      
+      // Cache the result
+      this.vendorCache.set(vdCode, vendor);
+      
+      return vendor;
+    } catch (error) {
+      console.error('Error fetching vendor by vdCode:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Get vendors needing assessment
+   */
+  async getVendorsNeedingAssessment(): Promise<CSMVendor[]> {
+    const cacheKey = 'vendors-needing-assessment';
+    const cached = cacheService.get<CSMVendor[]>(cacheKey);
+    
+    if (cached) return cached;
+
+    try {
+      const vendors = await this.getAll();
+      const assessmentSummaries = await enhancedAssessmentSummariesService.getAll();
+      
+      const needingAssessment = vendors.filter(vendor => {
+        const summary = assessmentSummaries.find(s => s.vdCode === vendor.vdCode);
+        
+        if (!summary) return true; // Never assessed
+        
+        const now = new Date();
+        const lastAssessment = new Date(summary.lastAssessmentDate);
+        const daysSince = Math.floor((now.getTime() - lastAssessment.getTime()) / (1000 * 60 * 60 * 24));
+        const frequency = parseInt(vendor.freqAss) || 365;
+        
+        return daysSince >= frequency - 30; // Due within 30 days or overdue
+      });
+
+      cacheService.set(cacheKey, needingAssessment, 10 * 60 * 1000); // 10 minutes
+      return needingAssessment;
+    } catch (error) {
+      console.error('Error getting vendors needing assessment:', error);
       return [];
     }
   }
 
   /**
-   * Get CSM checklist form specifically
+   * Bulk update vendors
+   */
+  async bulkUpdate(updates: { id: string; data: Partial<CSMVendor> }[]): Promise<void> {
+    const batch = writeBatch(db);
+    
+    updates.forEach(({ id, data }) => {
+      const docRef = doc(db, COLLECTIONS.CSM_VENDORS, id);
+      batch.update(docRef, {
+        ...data,
+        updatedAt: new Date()
+      });
+    });
+    
+    await batch.commit();
+    this.clearCache();
+  }
+
+  /**
+   * Clear cache
+   */
+  clearCache(): void {
+    this.vendorCache.clear();
+    cacheService.delete('csm-vendors-all');
+    cacheService.delete('vendors-needing-assessment');
+    this.lastFetchTime = 0;
+  }
+}
+
+// =================== ENHANCED FORMS SERVICE ===================
+export class EnhancedFormsService {
+  /**
+   * Get CSM Checklist form specifically
    */
   async getCSMChecklist(): Promise<CSMFormDoc | null> {
     const cacheKey = 'csm-checklist-form';
-    const cached = cacheGet<CSMFormDoc>(cacheKey);
+    const cached = cacheService.get<CSMFormDoc>(cacheKey);
     
-    if (cached) {
-      console.log('✅ Found CSM checklist in cache');
-      return cached;
-    }
+    if (cached) return cached;
 
     try {
-      console.log('🔍 Looking for CSM checklist in forms collection...');
+      const snapshot = await getDocs(
+        query(
+          collection(db, COLLECTIONS.CSM_FORMS),
+          where('formCode', '==', 'CSMChecklist'),
+          where('isActive', '==', true),
+          limit(1)
+        )
+      );
       
-      // Try exact match first with simple queries
-      for (const formCode of CSM_FORM_CODES) {
-        try {
-          const forms = await this.getFormsByCode(formCode);
-          if (forms.length > 0) {
-            const form = forms[0];
-            console.log(`✅ Found CSM form with code "${formCode}":`, form.formTitle || form.formCode);
-            cacheSet(cacheKey, form, this.cacheDuration);
-            return form;
-          }
-        } catch (formError) {
-          console.log(`⚠️ Could not find form with code ${formCode}, trying next...`, formError);
-          continue;
-        }
+      if (snapshot.empty) {
+        console.warn('CSMChecklist form not found');
+        return null;
       }
-
-      // Try broader search with simple query
-      try {
-        const allForms = await this.getAllForms();
-        
-        // Look for CSM-related forms
-        const csmForm = allForms.find(form => 
-          form.applicableTo?.includes('csm') ||
-          form.formCode?.toLowerCase().includes('csm') ||
-          form.formTitle?.toLowerCase().includes('csm')
-        );
-
-        if (csmForm) {
-          console.log('✅ Found CSM form by search:', csmForm.formTitle || csmForm.formCode);
-          cacheSet(cacheKey, csmForm, this.cacheDuration);
-          return csmForm;
-        }
-      } catch (searchError) {
-        console.log('⚠️ Could not search all forms, will create mock form', searchError);
-      }
-
-      console.log('❌ No CSM form found, creating mock form for development');
-      const mockForm = this.createMockCSMForm();
-      cacheSet(cacheKey, mockForm, 60); // Cache for 1 minute only
-      return mockForm;
       
+      const doc = snapshot.docs[0];
+      const form: CSMFormDoc = {
+        id: doc.id,
+        ...doc.data()
+      } as CSMFormDoc;
+      
+      cacheService.set(cacheKey, form, CACHE_DURATIONS.FORMS);
+      return form;
     } catch (error) {
-      console.error('Error fetching CSM checklist:', error);
-      console.log('🔄 Creating mock form as fallback');
-      return this.createMockCSMForm();
+      console.error('Error fetching CSM form:', error);
+      return null;
     }
   }
 
   /**
-   * Get forms by code
+   * Get all CSM-related forms
    */
-  async getFormsByCode(formCode: string): Promise<CSMFormDoc[]> {
+  async getCSMForms(): Promise<CSMFormDoc[]> {
+    const cacheKey = 'csm-forms-all';
+    const cached = cacheService.get<CSMFormDoc[]>(cacheKey);
+    
+    if (cached) return cached;
+
     try {
-      return await this.getAllForms({ 
-        formCodes: [formCode],
-        includeInactive: false 
-      });
+      const snapshot = await getDocs(
+        query(
+          collection(db, COLLECTIONS.CSM_FORMS),
+          where('applicableTo', 'array-contains', 'csm'),
+          where('isActive', '==', true),
+          orderBy('formTitle')
+        )
+      );
+      
+      const forms = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      } as CSMFormDoc));
+      
+      cacheService.set(cacheKey, forms, CACHE_DURATIONS.FORMS);
+      return forms;
     } catch (error) {
-      console.error(`Error fetching forms by code ${formCode}:`, error);
+      console.error('Error fetching CSM forms:', error);
+      return [];
+    }
+  }
+}
+
+// =================== ENHANCED ASSESSMENTS SERVICE ===================
+export class EnhancedAssessmentsService {
+  /**
+   * Create new assessment
+   */
+  async create(assessmentData: Omit<CSMAssessment, 'id'>): Promise<string> {
+    try {
+      const docRef = await addDoc(collection(db, COLLECTIONS.CSM_ASSESSMENTS), {
+        ...assessmentData,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      });
+      
+      // Update assessment summary
+      await this.updateAssessmentSummary(assessmentData.vdCode);
+      
+      // Clear relevant caches
+      cacheService.delete(`csm-assessments-${assessmentData.vdCode}`);
+      
+      return docRef.id;
+    } catch (error) {
+      console.error('Error creating assessment:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Update existing assessment
+   */
+  async update(id: string, data: Partial<CSMAssessment>): Promise<void> {
+    try {
+      await updateDoc(doc(db, COLLECTIONS.CSM_ASSESSMENTS, id), {
+        ...data,
+        updatedAt: new Date()
+      });
+      
+      // Update summary if assessment is finished
+      if (data.isFinish && data.vdCode) {
+        await this.updateAssessmentSummary(data.vdCode);
+      }
+      
+      // Clear cache
+      if (data.vdCode) {
+        cacheService.delete(`csm-assessments-${data.vdCode}`);
+      }
+    } catch (error) {
+      console.error('Error updating assessment:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get assessments by vendor code
+   */
+  async getByVdCode(vdCode: string): Promise<CSMAssessment[]> {
+    const cacheKey = `csm-assessments-${vdCode}`;
+    const cached = cacheService.get<CSMAssessment[]>(cacheKey);
+    
+    if (cached) return cached;
+
+    try {
+      const snapshot = await getDocs(
+        query(
+          collection(db, COLLECTIONS.CSM_ASSESSMENTS),
+          where('vdCode', '==', vdCode),
+          orderBy('createdAt', 'desc')
+        )
+      );
+      
+      const assessments = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        createdAt: convertToDate(doc.data().createdAt),
+        updatedAt: convertToDate(doc.data().updatedAt),
+        finishedAt: doc.data().finishedAt ? convertToDate(doc.data().finishedAt) : undefined
+      } as CSMAssessment));
+      
+      cacheService.set(cacheKey, assessments, CACHE_DURATIONS.ASSESSMENTS);
+      return assessments;
+    } catch (error) {
+      console.error('Error fetching assessments:', error);
       return [];
     }
   }
 
   /**
-   * Get form by ID
+   * Update assessment summary after assessment completion
    */
-  async getFormById(formId: string): Promise<CSMFormDoc | null> {
-    const cacheKey = `form-${formId}`;
-    const cached = cacheGet<CSMFormDoc>(cacheKey);
-    
-    if (cached) {
-      return cached;
-    }
-
+  private async updateAssessmentSummary(vdCode: string): Promise<void> {
     try {
-      const docSnap = await getDoc(doc(db, this.collectionName, formId));
+      const assessments = await this.getByVdCode(vdCode);
+      const completedAssessments = assessments.filter(a => a.isFinish);
       
-      if (docSnap.exists()) {
-        const form = {
-          id: docSnap.id,
-          ...docSnap.data()
-        } as CSMFormDoc;
-        
-        if (this.validateFormStructure(form)) {
-          cacheSet(cacheKey, form, this.cacheDuration);
-          return form;
-        }
+      if (completedAssessments.length === 0) return;
+      
+      const latest = completedAssessments[0];
+      const totalScore = parseFloat(latest.totalScore || '0');
+      const maxScore = parseFloat(latest.maxScore || '100');
+      const avgScore = maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0;
+      
+      // Determine risk level
+      let riskLevel: 'Low' | 'Medium' | 'High' = 'High';
+      if (avgScore >= 80) riskLevel = 'Low';
+      else if (avgScore >= 60) riskLevel = 'Medium';
+      
+      const summary: Omit<CSMAssessmentSummary, 'id'> = {
+        vdCode,
+        lastAssessmentId: latest.id || '',
+        // ✅ Fixed: Cast latest.createdAt to proper type
+        lastAssessmentDate: convertToDate(latest.createdAt as DateInput),
+        totalScore,
+        maxScore,
+        avgScore,
+        completedQuestions: latest.answers?.filter(a => a.score && a.score !== '').length || 0,
+        totalQuestions: latest.answers?.length || 0,
+        riskLevel,
+        updatedAt: new Date()
+      };
+      
+      // Update or create summary
+      const summarySnapshot = await getDocs(
+        query(
+          collection(db, COLLECTIONS.CSM_SUMMARIES),
+          where('vdCode', '==', vdCode),
+          limit(1)
+        )
+      );
+      
+      if (summarySnapshot.empty) {
+        await addDoc(collection(db, COLLECTIONS.CSM_SUMMARIES), summary);
+      } else {
+        const summaryDoc = summarySnapshot.docs[0];
+        await updateDoc(doc(db, COLLECTIONS.CSM_SUMMARIES, summaryDoc.id), summary);
       }
       
-      return null;
+      // Clear summary cache
+      cacheService.delete('csm-assessment-summaries-all');
     } catch (error) {
-      console.error('Error fetching form by ID:', error);
-      return null;
+      console.error('Error updating assessment summary:', error);
     }
-  }
-
-  /**
-   * Validate form structure
-   */
-  private validateFormStructure(form: unknown): form is CSMFormDoc {
-    if (!form || typeof form !== 'object') {
-      return false;
-    }
-
-    const formData = form as Record<string, unknown>;
-
-    // Check required properties
-    const requiredFields = ['formCode', 'formTitle', 'isActive'];
-    for (const field of requiredFields) {
-      if (!(field in formData)) {
-        console.warn(`Form missing required field: ${field}`);
-        return false;
-      }
-    }
-
-    // Validate fields array
-    if (formData.fields && Array.isArray(formData.fields)) {
-      for (const field of formData.fields) {
-        if (!this.validateFormField(field)) {
-          console.warn('Form contains invalid field:', field);
-          return false;
-        }
-      }
-    }
-
-    return true;
-  }
-
-  /**
-   * Validate individual form field
-   */
-  private validateFormField(field: unknown): field is CSMFormField {
-    if (!field || typeof field !== 'object') {
-      return false;
-    }
-
-    const fieldData = field as Record<string, unknown>;
-
-    const requiredFields = ['ckItem', 'ckQuestion'];
-    for (const reqField of requiredFields) {
-      if (!(reqField in fieldData) || !fieldData[reqField]) {
-        console.warn(`Field missing required property: ${reqField}`);
-        return false;
-      }
-    }
-
-    return true;
-  }
-
-  /**
-   * Clear forms cache
-   */
-  clearCache(): void {
-    console.log('🧹 Clearing forms cache...');
-    cacheClearPattern(/^forms-/);
-    cacheDelete('csm-checklist-form');
-  }
-
-  /**
-   * Create mock CSM form for testing
-   */
-  createMockCSMForm(): CSMFormDoc {
-    return {
-      id: 'mock-csm-form',
-      formCode: 'CSMChecklist',
-      formTitle: 'CSM Assessment Checklist (Mock)',
-      formDescription: 'Mock CSM assessment form for testing purposes',
-      isActive: true,
-      applicableTo: ['csm'],
-      fields: [
-        {
-          ckItem: '1',
-          ckType: 'M',
-          ckQuestion: 'มีการจัดการด้านความปลอดภัยหรือไม่?',
-          ckRequirement: 'ต้องมีระบบจัดการความปลอดภัยที่ครอบคลุม',
-          fScore: '5',
-          tScore: '5',
-          type: 'text'
-        },
-        {
-          ckItem: '2',
-          ckType: 'M',
-          ckQuestion: 'มีการฝึกอบรมพนักงานหรือไม่?',
-          ckRequirement: 'ควรมีการฝึกอบรมอย่างสม่ำเสมอและมีหลักฐาน',
-          fScore: '5',
-          tScore: '5',
-          type: 'text'
-        },
-        {
-          ckItem: '3',
-          ckType: 'P',
-          ckQuestion: 'มีใบรับรองมาตรฐานที่เกี่ยวข้องหรือไม่?',
-          ckRequirement: 'ควรมีใบรับรองมาตรฐานที่เกี่ยวข้อง',
-          fScore: '3',
-          tScore: '3',
-          type: 'text'
-        }
-      ],
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      createdBy: 'system'
-    };
   }
 }
 
-// =================== CREATE SERVICE INSTANCE ===================
-export const enhancedCSMFormsService = new EnhancedCSMFormsService();
+// =================== ENHANCED ASSESSMENT SUMMARIES SERVICE ===================
+export class EnhancedAssessmentSummariesService {
+  /**
+   * Get all assessment summaries
+   */
+  async getAll(): Promise<CSMAssessmentSummary[]> {
+    const cacheKey = 'csm-assessment-summaries-all';
+    const cached = cacheService.get<CSMAssessmentSummary[]>(cacheKey);
+    
+    if (cached) return cached;
 
-// =================== EXPORT FOR COMPATIBILITY ===================
-export default enhancedCSMFormsService;
+    try {
+      const snapshot = await getDocs(
+        query(
+          collection(db, COLLECTIONS.CSM_SUMMARIES),
+          orderBy('updatedAt', 'desc')
+        )
+      );
+      
+      const summaries = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        lastAssessmentDate: convertToDate(doc.data().lastAssessmentDate),
+        updatedAt: convertToDate(doc.data().updatedAt)
+      } as CSMAssessmentSummary));
+      
+      cacheService.set(cacheKey, summaries, CACHE_DURATIONS.SUMMARIES);
+      return summaries;
+    } catch (error) {
+      console.error('Error fetching assessment summaries:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get summary by vendor code
+   */
+  async getByVdCode(vdCode: string): Promise<CSMAssessmentSummary | null> {
+    const summaries = await this.getAll();
+    return summaries.find(s => s.vdCode === vdCode) || null;
+  }
+}
+
+// =================== COMPANIES SERVICE ===================
+export class EnhancedCompaniesService {
+  async getByVdCode(companyId: string): Promise<Company | null> {
+    try {
+      const snapshot = await getDocs(
+        query(
+          collection(db, COLLECTIONS.COMPANIES),
+          where('companyId', '==', companyId),
+          limit(1)
+        )
+      );
+      
+      if (snapshot.empty) return null;
+      
+      const doc = snapshot.docs[0];
+      return {
+        id: doc.id,
+        ...doc.data()
+      } as Company;
+    } catch (error) {
+      console.error('Error fetching company:', error);
+      return null;
+    }
+  }
+}
+
+// =================== SERVICE INSTANCES ===================
+export const enhancedVendorsService = EnhancedVendorsService.getInstance();
+export const enhancedFormsService = new EnhancedFormsService();
+export const enhancedAssessmentsService = new EnhancedAssessmentsService();
+export const enhancedAssessmentSummariesService = new EnhancedAssessmentSummariesService();
+export const enhancedCompaniesService = new EnhancedCompaniesService();
+
+// =================== UNIFIED SERVICE ===================
+export const enhancedCSMService = {
+  vendors: enhancedVendorsService,
+  forms: enhancedFormsService,
+  assessments: enhancedAssessmentsService,
+  assessmentSummaries: enhancedAssessmentSummariesService,
+  companies: enhancedCompaniesService
+};
+
+export default enhancedCSMService;

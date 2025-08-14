@@ -211,7 +211,9 @@ export const csmVendorService = {
 
         //  แก้ไข: ใช้ helper function แทน manual type handling
         const assessmentData = lastAssessment as CSMAssessment;
-        const lastAssessmentDate = convertFirestoreDateToDate(assessmentData.createdAt);
+        const lastAssessmentDate = convertFirestoreDateToDate(
+            assessmentData.updatedAt as string | Timestamp | Date | undefined
+        );        
 
         const monthsSinceLastAssessment = Math.floor(
           (currentDate.getTime() - lastAssessmentDate.getTime()) / 
@@ -336,12 +338,14 @@ export const csmVendorService = {
           companyId: companyDoc.id,
           vdCode: companyData.vdCode || `VD${companyDoc.id.substring(0, 6).toUpperCase()}`,
           vdName: companyData.name || 'Unknown',
-          freqAss: this.getCategoryFrequency(companyData.category || 'admin'), //  แก้ไข category default
+          freqAss: this.getCategoryFrequency(companyData.category || '1Year'), //  แก้ไข category default
           isActive: companyData.isActive !== false,
-          category: companyData.category || 'admin', //  แก้ไข category default
+          category: companyData.category || '3', //  แก้ไข category default
           workingArea: companyData.workingArea || [],
           createdAt: companyData.createdAt || new Date(),
-          updatedAt: new Date()
+          updatedAt: new Date(),
+          createdBy: companyData.createdBy || 'system',
+          lastUpdatedBy: companyData.lastUpdatedBy || 'system'
         };
 
         batch.set(csmVendorRef, csmVendorData);
@@ -359,8 +363,16 @@ export const csmVendorService = {
   },
 
   //  แก้ไข private method
+  //  ใช้ helper function แทน manual type handling
   getCategoryFrequency(category: string): string {
-    const categoryInfo = getCategoryInfo(category); //  ใช้ imported function
-    return categoryInfo?.defaultFrequency || '1year';
+      const categoryInfo = getCategoryInfo(category);
+      
+      // Type guard เพื่อตรวจสอบ property
+      if (categoryInfo && 'defaultFrequency' in categoryInfo && categoryInfo.defaultFrequency) {
+          return categoryInfo.defaultFrequency;
+      }
+      
+      return '1year'; // default fallback
   }
+
 };
