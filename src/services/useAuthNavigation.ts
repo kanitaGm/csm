@@ -1,5 +1,5 @@
 // ========================================================================
-// ไฟล์: src/sevices/useAuthNavigation.ts
+// ไฟล์: src/services/useAuthNavigation.ts
 // Hook สำหรับจัดการการ navigate หลังจาก login สำเร็จ
 // ========================================================================
 import { useEffect, useCallback } from 'react';
@@ -18,12 +18,12 @@ export function useAuthNavigation(options: AuthNavigationOptions = {}) {
   const { user } = useAuth();
   
   const {
-    redirectTo = '/employees', // default redirect path
+    redirectTo = '/dashboard', // ✅ เปลี่ยนจาก '/employees' เป็น '/dashboard'
     onLoginSuccess,
     onLogoutSuccess
   } = options;
 
-  //  Handle login success event
+  // Handle login success event
   const handleLoginSuccess = useCallback((event: CustomEvent) => {
     const { user: loggedInUser, method } = event.detail;
     console.log('🎉 Login success detected:', method, loggedInUser?.email);
@@ -39,7 +39,7 @@ export function useAuthNavigation(options: AuthNavigationOptions = {}) {
     
   }, [navigate, redirectTo, onLoginSuccess]);
 
-  //  Handle logout success event
+  // Handle logout success event
   const handleLogoutSuccess = useCallback(() => {
     console.log('👋 Logout success detected');
     
@@ -54,7 +54,7 @@ export function useAuthNavigation(options: AuthNavigationOptions = {}) {
     
   }, [navigate, onLogoutSuccess]);
 
-  //  Setup event listeners
+  // Setup event listeners
   useEffect(() => {
     console.log('🎧 Setting up auth navigation listeners');
     
@@ -73,7 +73,7 @@ export function useAuthNavigation(options: AuthNavigationOptions = {}) {
     };
   }, [handleLoginSuccess, handleLogoutSuccess]);
 
-  //  Auto redirect ถ้า user login อยู่แล้ว และอยู่ในหน้า login
+  // Auto redirect ถ้า user login อยู่แล้ว และอยู่ในหน้า login
   useEffect(() => {
     if (user && window.location.pathname === '/login') {
       console.log('🔄 User already logged in, redirecting from login page');

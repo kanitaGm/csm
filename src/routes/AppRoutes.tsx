@@ -1,7 +1,5 @@
-
 import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
-import { AuthProvider } from '../contexts/AuthContext';
 import { ThemeProvider } from '../contexts/ThemeContext';
 import ProtectedRoute, { CSMProtectedRoute } from './ProtectedRoute';
 import MainLayout from '../components/layout/MainLayout';
@@ -14,6 +12,9 @@ const NotFoundPage = React.lazy(() => import('../pages/NotFoundPage'));
 
 const DebugAuth = React.lazy(() => import('../features/test/DebugAuth'));
 const ImportCSVPage = React.lazy(() => import('../utils/ImportCSVPage'));
+const TestProfile = React.lazy(() => import('../features/test/testProfile'));
+const TestAPI = React.lazy(() => import('../features/test/testApi'));
+
 
 //CSM Management
 const DashboardPage = React.lazy(() => import('../pages/DashboardPage'));
@@ -27,7 +28,7 @@ const CSMReportsPage  = React.lazy(() => import('../features/csm/pages/CSMReport
 const EmployeeListPage = React.lazy(() => import('../features/employees/EmployeeListPage'));
 const AddEmployeePage = React.lazy(() => import('../features/employees/AddEmployeePage'));
 const EditEmployeePage = React.lazy(() => import('../features/employees/EditEmployeePage'));
-
+const ProfilePageEmp = React.lazy(() => import('../features/employees/ProfilePage'));
 
 // Loading component
 const PageLoader = () => (
@@ -65,79 +66,75 @@ const PlaceholderPage = ({ title, description, icon = "🚧" }: {
     </div>
   </div>
 );
+
 const WIP = (title: string, description: string) => (
   <PlaceholderPage title={title} description={description} />
 );
 
-
 const AppRoutes: React.FC = () => {
     return (
-        <AuthProvider>
-            <ThemeProvider>
-                <React.Suspense fallback={<PageLoader />}>
-                    <Routes>
+        <ThemeProvider>
+            <React.Suspense fallback={<PageLoader />}>
+                <Routes>
+                    {/* ========== PUBLIC ROUTES ========== */}
+                    
+                    {/* Home Page - แสดงหน้าแรกพร้อม Login Panel */}
+                    <Route path="/" element={<HomePage />} />
+                    <Route path="/home" element={<HomePage />} />
+                    
+                    {/* Login Page - สำหรับ fallback */}
+                    <Route path="/login" element={<LoginPage />} />                        
 
-                        {/* ========== PUBLIC ROUTES ========== */}
-                        
-                        {/* Home Page - แสดงหน้าแรกพร้อม Login Panel */}
-                        <Route path="/" element={<HomePage />} />
-                        <Route path="/home" element={<HomePage />} />
-                        
-                        {/* Login Page - สำหรับ fallback */}
-                        <Route path="/login" element={<LoginPage />} />                        
+                    {/* Profile Page - Public access */}
+                    <Route path="/profile/:empId" element={<ProfilePageEmp />} />
 
-                        {/* Profile Page - Public access */}
-                        <Route path="/profile/:empId" element={<ProfilePage />} />
+                    {/* Test - Display */}
+                    <Route path="/import-csv" element={<ImportCSVPage />} />
+                    <Route path="/debug" element={<DebugAuth />} />
+                    <Route path="/testProfile/:empId" element={<TestProfile />} />
+                    <Route path="/api-search" element={<TestAPI />} />
 
-                        {/* Test - Display */}
-                        <Route path="/import-csv" element={<ImportCSVPage />} />
-                        <Route path="/debug" element={<DebugAuth />} />
 
-                        {/* ========== PROTECTED ROUTES ========== */}
-                        <Route element={<ProtectedRoute />}>
-                            <Route element={<MainLayout />}>
-                                {/* Dashboard */}
-                                <Route path="/dashboard" element={<DashboardPage />} />   
-                                <Route path="/admin/*" element={WIP("Admin Page", "หน้านี้ยังอยู่ระหว่างการพัฒนา")} />
-                        
-                                
-                                {/* CSM Routes */}
-                                <Route path="/csm/*" element={<CSMProtectedRoute />}>
-                                    <Route index element={<CSMListPage />} />
-                                    <Route path="list" element={<CSMListPage />} />
-                                    <Route path="e/:vdCode" element={<CSMEvaluatePage />} />
-                                    <Route path="dashboard" element={<CSMDashboardPage />} />
-                                    <Route path="detail/:id" element={<AssessmentDetailPage />} />
-                                    <Route path="reports" element={<CSMReportsPage />} />
-                                </Route>
 
-                             {/* Emmployees Routes */}
-                                <Route path="/emp/*" element={<ProtectedRoute />}>
-                                    <Route index element={<EmployeeListPage />} />
-                                    <Route path="list" element={<EmployeeListPage />} />
-                                    {/*<Route path="s/:empId" element={<EmployeeListPage />} />*/}
-                                    <Route path="e/:empId" element={<EditEmployeePage />} />
-                                    <Route path="add" element={<AddEmployeePage />} />
-                                    {/*<Route path="dashboard" element={<CSMDashboardPage />} />*/}
-                                </Route>
+
+                    {/* ========== PROTECTED ROUTES ========== */}
+                    <Route element={<ProtectedRoute />}>
+                        <Route element={<MainLayout />}>
+                            {/* Dashboard */}
+                            <Route path="/dashboard" element={<DashboardPage />} /> 
+                            <Route path="/userprifile/:empId" element={<ProfilePage />} /> 
+                            <Route path="/admin/*" element={WIP("Admin Page", "หน้านี้ยังอยู่ระหว่างการพัฒนา")} />
+                    
+                            {/* CSM Routes */}
+                            <Route path="/csm/*" element={<CSMProtectedRoute />}>
+                                <Route index element={<CSMListPage />} />
+                                <Route path="list" element={<CSMListPage />} />
+                                <Route path="e/:vdCode" element={<CSMEvaluatePage />} />
+                                <Route path="dashboard" element={<CSMDashboardPage />} />
+                                <Route path="detail/:id" element={<AssessmentDetailPage />} />
+                                <Route path="reports" element={<CSMReportsPage />} />
+                            </Route>
+
+                            {/* Employees Routes */}
+                            <Route path="/emp/*" element={<ProtectedRoute />}>
+                                <Route index element={<EmployeeListPage />} />
+                                <Route path="list" element={<EmployeeListPage />} />
+                                <Route path="e/:empId" element={<EditEmployeePage />} />
+                                <Route path="add" element={<AddEmployeePage />} />
                             </Route>
                         </Route>
+                    </Route>
 
-
-
-
-
-                        {/* ========== FALLBACK ROUTES ========== */}
-                        
-                        {/* Redirect old login to home */}
-                        <Route path="/auth/login" element={<Navigate to="/" replace />} />
-                        
-                        {/* 404 Not Found */}
-                        <Route path="*" element={<NotFoundPage />} />
-                    </Routes>
-                </React.Suspense>
-            </ThemeProvider>
-        </AuthProvider>
+                    {/* ========== FALLBACK ROUTES ========== */}
+                    
+                    {/* Redirect old login to home */}
+                    <Route path="/auth/login" element={<Navigate to="/" replace />} />
+                    
+                    {/* 404 Not Found */}
+                    <Route path="*" element={<NotFoundPage />} />
+                </Routes>
+            </React.Suspense>
+        </ThemeProvider>
     );
 };
 

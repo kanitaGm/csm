@@ -15,7 +15,7 @@ const UserProfileCard: React.FC<{ user: AppUser }> = ({ user }) => {
                 {isEmployee ? `สวัสดี, ${(user.profile as EmployeeProfile).firstName}` : `สวัสดี, ${user.profile.displayName}`}
             </h2>
             <p className="mb-4 text-gray-600">คุณเข้าสู่ระบบในฐานะ: 
-                <span className="px-2 py-1 ml-2 text-sm font-bold text-blue-800 bg-blue-100 rounded-full">{user.role}</span>
+                <span className="px-2 py-1 ml-2 text-sm font-bold text-blue-800 bg-blue-100 rounded-full">{user.roles}</span>
             </p>
             <div className="pt-4 border-t border-gray-200">
                 <p className="text-gray-500"><span className="font-semibold text-gray-700">Email:</span> {user.email}</p>
@@ -48,7 +48,7 @@ const ProfilePage: React.FC = () => {
           {/* Add more dashboard components here based on user role */}
           <div className="p-6 mt-8 bg-white border border-gray-200 shadow-lg rounded-xl">
             <h3 className="mb-4 text-xl font-semibold">ส่วนเนื้อหา</h3>
-            <p>เนื้อหาสำหรับผู้ใช้ที่มีสิทธิ์ `{user.role}` จะแสดงที่นี่</p>
+            <p>เนื้อหาสำหรับผู้ใช้ที่มีสิทธิ์ `{user.roles}` จะแสดงที่นี่</p>
           </div>
         </main>
       </div>
