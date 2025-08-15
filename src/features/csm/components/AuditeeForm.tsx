@@ -14,7 +14,6 @@ const AuditeeForm: React.FC<AuditeeFormProps> = ({ auditee, onChange, required =
   const [formData, setFormData] = useState<CSMAuditee>(auditee || {
     name: '',
     email: '',
-    phone: '',
     position: ''
   });
 
@@ -56,20 +55,6 @@ const AuditeeForm: React.FC<AuditeeFormProps> = ({ auditee, onChange, required =
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
             placeholder="auditee@vendor.com"
             required={required}
-          />
-        </div>
-
-        {/* Phone */}
-        <div>
-          <label className="block mb-1 text-sm font-medium text-gray-700">
-            เบอร์ติดต่อ
-          </label>
-          <input
-            type="tel"
-            value={formData.phone || ''}
-            onChange={(e) => handleChange('phone', e.target.value)}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-            placeholder="081-234-5678"
           />
         </div>
 
