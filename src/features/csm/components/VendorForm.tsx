@@ -20,7 +20,11 @@ const VendorForm: React.FC<VendorFormProps> = ({ vendor, companies, onSave, onCa
     freqAss: vendor?.freqAss || '1year',
     isActive: vendor?.isActive ?? true,
     category: vendor?.category || 'admin',
-    workingArea: vendor?.workingArea || []
+    workingArea: vendor?.workingArea || [],
+    createdAt: vendor?.createdAt || new Date(),
+    updatedAt: vendor?.updatedAt || new Date(),
+    createdBy: vendor?.createdBy || 'system',
+    lastUpdatedBy: vendor?.lastUpdatedBy || 'system'
   });
 
   const [selectedCompany, setSelectedCompany] = useState<Company | null>(null);

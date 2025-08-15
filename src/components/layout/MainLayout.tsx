@@ -339,7 +339,7 @@ const MainLayout: React.FC = () => {
                 </div>
                 <div className="hidden text-left lg:block">
                   <p className="text-sm font-medium text-gray-900 truncate max-w-24">{profileName}</p>
-                  <p className="text-xs text-gray-500">{user.role}</p>
+                  <p className="text-xs text-gray-500">{user.roles}</p>
                 </div>
                 <ChevronDown className={`w-4 h-4 text-gray-500 transition-transform ${isUserMenuOpen ? 'rotate-180' : ''}`} />
               </button>

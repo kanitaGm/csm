@@ -2,17 +2,15 @@
 // Edit CSM vendor page
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { 
-  ArrowLeft, Save, Plus, Building2, MapPin, 
-  User, AlertCircle, Trash2
-} from 'lucide-react';
+import { ArrowLeft, Save, Plus, Building2, MapPin, 
+  User, AlertCircle, Trash2} from 'lucide-react';
 import type { CSMVendor } from '../../../types';
 import { csmVendorService } from '../../../services/csmVendorService';
 import { useToast } from '../../../hooks/useToast';
 import { ToastContainer } from '../../../components/ui/ToastContainer';
 import { SkeletonLoader } from '../../../components/ui/SkeletonLoader';
 import { CSM_VENDOR_CATEGORIES, ASSESSMENT_FREQUENCIES } from '../../../types/csm';
-import type{ formatDate, parseDate} from '../../../utils/dateUtils'
+import{ formatDateThai} from '../../../utils/dateUtils'
 
 const CSMVendorEditPage: React.FC = () => {
   const { vendorId } = useParams<{ vendorId: string }>();
@@ -156,7 +154,7 @@ const CSMVendorEditPage: React.FC = () => {
         freqAss: formData.freqAss || '1year',
         workingArea: formData.workingArea || [],
         isActive: formData.isActive,
-        lastUpdateBy: 'current-user@example.com' // จะต้องเอาจาก auth context
+        lastUpdatedBy: 'current-user@example.com' // จะต้องเอาจาก auth context
       };
 
       await csmVendorService.update(originalVendor.id!, updateData);
@@ -553,25 +551,13 @@ const CSMVendorEditPage: React.FC = () => {
             <div>
               <span className="font-medium">สร้างเมื่อ:</span>
               <span className="ml-2">
-                {new Date(originalVendor.createdAt).toLocaleDateString('th-TH', {
-                  year: 'numeric',
-                  month: 'long',
-                  day: 'numeric',
-                  hour: '2-digit',
-                  minute: '2-digit'
-                })}
+                {originalVendor.createdAt ? formatDateThai(originalVendor.createdAt) : 'ไม่ระบุ'}
               </span>
             </div>
             <div>
               <span className="font-medium">อัปเดตล่าสุด:</span>
               <span className="ml-2">
-                {new Date(originalVendor.updatedAt).toLocaleDateString('th-TH', {
-                  year: 'numeric',
-                  month: 'long',
-                  day: 'numeric',
-                  hour: '2-digit',
-                  minute: '2-digit'
-                })}
+                {originalVendor.updatedAt ? formatDateThai(originalVendor.updatedAt) : 'ไม่ระบุ'}
               </span>
             </div>
             {originalVendor.createdBy && (
@@ -580,10 +566,10 @@ const CSMVendorEditPage: React.FC = () => {
                 <span className="ml-2">{originalVendor.createdBy}</span>
               </div>
             )}
-            {originalVendor.lastUpdateBy && (
+            {originalVendor.lastUpdatedBy && (
               <div>
                 <span className="font-medium">อัปเดตโดย:</span>
-                <span className="ml-2">{originalVendor.lastUpdateBy}</span>
+                <span className="ml-2">{originalVendor.lastUpdatedBy}</span>
               </div>
             )}
           </div>

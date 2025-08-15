@@ -48,12 +48,10 @@ const DebugAuth: React.FC = () => {
                 console.log('✅ [Debug] User found:', permissions);
 
                 let migratedRoles: Role[];
-                if (Array.isArray(permissions?.role)) {
-                    migratedRoles = permissions.role;
+                if (Array.isArray(permissions?.roles)) {
+                    migratedRoles = permissions.roles;
                 } else {
-                    migratedRoles = RoleMigrationHelper.migrateStringRoleToArray(
-                        permissions?.role || ''
-                    );
+                    migratedRoles = RoleMigrationHelper.toArray(permissions?.roles ) || [];                    
                 }
 
                 const combinedPermissions = PermissionManager.combinePermissions(migratedRoles);

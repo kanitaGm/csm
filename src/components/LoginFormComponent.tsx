@@ -82,9 +82,9 @@ const LoginFormComponent: React.FC<LoginFormProps> = ({ onSuccess }) => {
 
     // ✅ Test users info
     const testUsers = [
-        { empId: '14900013', passcode: '123456', role: 'csmAuditor' },
-        { empId: '14900001', passcode: '123456', role: 'admin' },
-        { empId: '14900014', passcode: 'admin123', role: 'superAdmin' }
+        { empId: '14900013', passcode: '123456', roles: 'csmAuditor' },
+        { empId: '14900001', passcode: '123456', roles: 'admin' },
+        { empId: '14900014', passcode: 'admin123', roles: 'superAdmin' }
     ];
 
     return (
@@ -205,7 +205,7 @@ const LoginFormComponent: React.FC<LoginFormProps> = ({ onSuccess }) => {
                                         <span className="font-mono">{user.passcode}</span>
                                     </div>
                                     <span className="px-1 text-xs text-blue-800 bg-blue-200 rounded">
-                                        {user.role}
+                                        {user.roles}
                                     </span>
                                 </div>
                             ))}

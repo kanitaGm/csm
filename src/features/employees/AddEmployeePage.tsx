@@ -341,7 +341,7 @@ export default function AddEmployeePage() {
         ...dataToSave,
         createdBy: user?.email || 'System',
         createdAt: serverTimestamp(),
-        lastUpdateBy: user?.email || 'System',
+        lastUpdatedBy: user?.email || 'System',
         lastUpdateAt: serverTimestamp(),
       };
       

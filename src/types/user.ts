@@ -1,25 +1,32 @@
-// 📁 src/types/user.ts - แก้ไขให้ตรงกับ database และไม่มี type errors
+// 📁 src/types/user.ts - Roles เป็น Role[] เสมอ
 
 import { Timestamp } from 'firebase/firestore';
 import type { EmployeeProfile } from './employees';
 
-export type Role = 'superAdmin' | 'admin' | 'csmAdmin' | 'csmAuditor' | 'auditor' | 'plantAdmin' | 'guest';
+export type Role =
+  | 'superAdmin'
+  | 'admin'
+  | 'csmAdmin'
+  | 'csmAuditor'
+  | 'auditor'
+  | 'plantAdmin'
+  | 'guest';
 
 // User Role Interface
 export interface UserRole {
   uid?: string; // Firebase Auth UID
   empId: string;
-  email: string;  
-  avatar?: string;  
-  displayName: string | null;  
+  email: string;
+  avatar?: string;
+  displayName: string | null;
   department?: string;
-  passcode?: string; // Only for internal users  
-  createdAt?: Timestamp | Date | string; 
-  updatedAt?: Timestamp | Date | string; 
+  passcode?: string; // Only for internal users
+  createdAt?: Timestamp | Date | string;
+  updatedAt?: Timestamp | Date | string;
   updatedBy?: string;
   isActive: boolean;
-  roles: Role[]; // ✅ เป็น array เสมอ
-  
+  roles: Role[]; // ✅ array เสมอ
+
   // Enhanced Permissions Structure
   permissions: {
     csm?: {
@@ -36,7 +43,7 @@ export interface UserRole {
       canEdit: boolean;
       canDelete: boolean;
       canImport: boolean;
-    };    
+    };
     system?: {
       canManageUsers: boolean;
       canViewLogs: boolean;
@@ -44,34 +51,34 @@ export interface UserRole {
       canManageSettings: boolean;
     };
   };
-  
+
   // Geographic/Organizational Scope
   managedCountry?: string[];
   managedZones?: string[];
   managedSites?: string[];
-  managedPlants?: string[];  
+  managedPlants?: string[];
 }
 
-// ✅ แก้ไข UserPermissions interface ให้ตรงกับ database
+// ✅ แก้ไข UserPermissions ให้ใช้ Role[] เท่านั้น
 export interface UserPermissions {
-    empId: string;
-    email: string;
-    role: Role | Role[]; // ✅ รองรับทั้ง string และ array สำหรับ backward compatibility
-    isActive: boolean;
-    passcode?: string; 
-    displayName?: string;
+  empId: string;
+  email: string;
+  roles: Role[];
+  isActive: boolean;
+  passcode?: string;
+  displayName?: string;
 }
 
-// ✅ แก้ไข AppUser ให้ใช้ roles (array) เท่านั้น
+// ✅ แก้ไข AppUser ให้ใช้ Role[] เท่านั้น
 export interface AppUser {
-    uid: string;
-    empId: string | null;
-    email: string | null;
-    displayName: string | null;
-    roles: Role[]; // ✅ เป็น array เสมอ
-    permissions: UserRole['permissions'];
-    profile: EmployeeProfile | { displayName: string | null };
-    loginType: 'provider' | 'firebase' | 'internal' | null;
+  uid: string;
+  empId: string | null;
+  email: string | null;
+  displayName: string | null;
+  roles: Role[];
+  permissions: UserRole['permissions'];
+  profile: EmployeeProfile | { displayName: string | null };
+  loginType: 'provider' | 'firebase' | 'internal' | null;
 }
 
 // Employee Login Interface
@@ -86,7 +93,7 @@ export interface LoginResult {
   user?: AppUser;
   error?: string;
   redirecting?: boolean;
-  message?: string; 
+  message?: string;
 }
 
 // Auth Context Type
@@ -95,9 +102,9 @@ export interface AuthContextType {
   currentUser: unknown; // Firebase User object
   empUser: EmployeeProfile | null; // Employee login user
   firebaseLinkedEmpProfile: EmployeeProfile | null; // Firebase linked employee profile
-  loginType: 'provider' | 'firebase' |'internal' | null;
+  loginType: 'provider' | 'firebase' | 'internal' | null;
   currentUserClaims: unknown; // Firebase custom claims
-  loading: boolean; 
+  loading: boolean;
   error: string | null;
   setError: (error: string | null) => void;
   signInWithGoogle: () => Promise<void>;
@@ -107,451 +114,328 @@ export interface AuthContextType {
   logout: () => Promise<void>;
 }
 
-// ✅ เพิ่ม Default Permissions
+// ✅ Default Permissions
 export const DEFAULT_PERMISSIONS: UserRole['permissions'] = {
-    csm: {
-        canEvaluate: false,
-        canApprove: false,
-        canManageVendors: false,
-        canViewReports: false,
-        canExportData: false,
-        canManageForms: false,
-    },
-    employees: {
-        canView: false,
-        canCreate: false,
-        canEdit: false,
-        canDelete: false,
-        canImport: false,
-    },
-    system: {
-        canManageUsers: false,
-        canViewLogs: false,
-        canBackupRestore: false,
-        canManageSettings: false,
-    },
+  csm: {
+    canEvaluate: false,
+    canApprove: false,
+    canManageVendors: false,
+    canViewReports: false,
+    canExportData: false,
+    canManageForms: false,
+  },
+  employees: {
+    canView: false,
+    canCreate: false,
+    canEdit: false,
+    canDelete: false,
+    canImport: false,
+  },
+  system: {
+    canManageUsers: false,
+    canViewLogs: false,
+    canBackupRestore: false,
+    canManageSettings: false,
+  },
 };
 
-// ✅ Role Permissions Mapping - ครบทุก role
+// ✅ Role Permissions Mapping
 export const ROLE_PERMISSIONS: Record<Role, UserRole['permissions']> = {
-    superAdmin: {
-        csm: {
-            canEvaluate: true,
-            canApprove: true,
-            canManageVendors: true,
-            canViewReports: true,
-            canExportData: true,
-            canManageForms: true,
-        },
-        employees: {
-            canView: true,
-            canCreate: true,
-            canEdit: true,
-            canDelete: true,
-            canImport: true,
-        },
-        system: {
-            canManageUsers: true,
-            canViewLogs: true,
-            canBackupRestore: true,
-            canManageSettings: true,
-        },
+  superAdmin: {
+    csm: {
+      canEvaluate: true,
+      canApprove: true,
+      canManageVendors: true,
+      canViewReports: true,
+      canExportData: true,
+      canManageForms: true,
     },
-    admin: {
-        csm: {
-            canEvaluate: true,
-            canApprove: true,
-            canManageVendors: true,
-            canViewReports: true,
-            canExportData: true,
-            canManageForms: false,
-        },
-        employees: {
-            canView: true,
-            canCreate: true,
-            canEdit: true,
-            canDelete: false,
-            canImport: true,
-        },
-        system: {
-            canManageUsers: false,
-            canViewLogs: true,
-            canBackupRestore: false,
-            canManageSettings: false,
-        },
+    employees: {
+      canView: true,
+      canCreate: true,
+      canEdit: true,
+      canDelete: true,
+      canImport: true,
     },
-    csmAdmin: {
-        csm: {
-            canEvaluate: true,
-            canApprove: true,
-            canManageVendors: true,
-            canViewReports: true,
-            canExportData: true,
-            canManageForms: true,
-        },
-        employees: {
-            canView: true,
-            canCreate: false,
-            canEdit: false,
-            canDelete: false,
-            canImport: false,
-        },
-        system: {
-            canManageUsers: false,
-            canViewLogs: false,
-            canBackupRestore: false,
-            canManageSettings: false,
-        },
+    system: {
+      canManageUsers: true,
+      canViewLogs: true,
+      canBackupRestore: true,
+      canManageSettings: true,
     },
-    csmAuditor: {
-        csm: {
-            canEvaluate: true,
-            canApprove: false,
-            canManageVendors: false,
-            canViewReports: true,
-            canExportData: true,
-            canManageForms: false,
-        },
-        employees: {
-            canView: true,
-            canCreate: false,
-            canEdit: false,
-            canDelete: false,
-            canImport: false,
-        },
-        system: {
-            canManageUsers: false,
-            canViewLogs: false,
-            canBackupRestore: false,
-            canManageSettings: false,
-        },
+  },
+  admin: {
+    csm: {
+      canEvaluate: true,
+      canApprove: true,
+      canManageVendors: true,
+      canViewReports: true,
+      canExportData: true,
+      canManageForms: false,
     },
-    auditor: {
-        csm: {
-            canEvaluate: true,
-            canApprove: false,
-            canManageVendors: false,
-            canViewReports: true,
-            canExportData: false,
-            canManageForms: false,
-        },
-        employees: {
-            canView: true,
-            canCreate: false,
-            canEdit: false,
-            canDelete: false,
-            canImport: false,
-        },
-        system: {
-            canManageUsers: false,
-            canViewLogs: false,
-            canBackupRestore: false,
-            canManageSettings: false,
-        },
+    employees: {
+      canView: true,
+      canCreate: true,
+      canEdit: true,
+      canDelete: false,
+      canImport: true,
     },
-    plantAdmin: {
-        csm: {
-            canEvaluate: false,
-            canApprove: false,
-            canManageVendors: false,
-            canViewReports: true,
-            canExportData: false,
-            canManageForms: false,
-        },
-        employees: {
-            canView: true,
-            canCreate: true,
-            canEdit: true,
-            canDelete: false,
-            canImport: true,
-        },
-        system: {
-            canManageUsers: false,
-            canViewLogs: false,
-            canBackupRestore: false,
-            canManageSettings: false,
-        },
+    system: {
+      canManageUsers: false,
+      canViewLogs: true,
+      canBackupRestore: false,
+      canManageSettings: false,
     },
-    guest: {
-        csm: {
-            canEvaluate: false,
-            canApprove: false,
-            canManageVendors: false,
-            canViewReports: false,
-            canExportData: false,
-            canManageForms: false,
-        },
-        employees: {
-            canView: false,
-            canCreate: false,
-            canEdit: false,
-            canDelete: false,
-            canImport: false,
-        },
-        system: {
-            canManageUsers: false,
-            canViewLogs: false,
-            canBackupRestore: false,
-            canManageSettings: false,
-        },
+  },
+  csmAdmin: {
+    csm: {
+      canEvaluate: true,
+      canApprove: true,
+      canManageVendors: true,
+      canViewReports: true,
+      canExportData: true,
+      canManageForms: true,
     },
+    employees: {
+      canView: true,
+      canCreate: false,
+      canEdit: false,
+      canDelete: false,
+      canImport: false,
+    },
+    system: {
+      canManageUsers: false,
+      canViewLogs: false,
+      canBackupRestore: false,
+      canManageSettings: false,
+    },
+  },
+  csmAuditor: {
+    csm: {
+      canEvaluate: true,
+      canApprove: false,
+      canManageVendors: false,
+      canViewReports: true,
+      canExportData: true,
+      canManageForms: false,
+    },
+    employees: {
+      canView: true,
+      canCreate: false,
+      canEdit: false,
+      canDelete: false,
+      canImport: false,
+    },
+    system: {
+      canManageUsers: false,
+      canViewLogs: false,
+      canBackupRestore: false,
+      canManageSettings: false,
+    },
+  },
+  auditor: {
+    csm: {
+      canEvaluate: true,
+      canApprove: false,
+      canManageVendors: false,
+      canViewReports: true,
+      canExportData: false,
+      canManageForms: false,
+    },
+    employees: {
+      canView: true,
+      canCreate: false,
+      canEdit: false,
+      canDelete: false,
+      canImport: false,
+    },
+    system: {
+      canManageUsers: false,
+      canViewLogs: false,
+      canBackupRestore: false,
+      canManageSettings: false,
+    },
+  },
+  plantAdmin: {
+    csm: {
+      canEvaluate: false,
+      canApprove: false,
+      canManageVendors: false,
+      canViewReports: true,
+      canExportData: false,
+      canManageForms: false,
+    },
+    employees: {
+      canView: true,
+      canCreate: true,
+      canEdit: true,
+      canDelete: false,
+      canImport: true,
+    },
+    system: {
+      canManageUsers: false,
+      canViewLogs: false,
+      canBackupRestore: false,
+      canManageSettings: false,
+    },
+  },
+  guest: {
+    csm: {
+      canEvaluate: false,
+      canApprove: false,
+      canManageVendors: false,
+      canViewReports: false,
+      canExportData: false,
+      canManageForms: false,
+    },
+    employees: {
+      canView: false,
+      canCreate: false,
+      canEdit: false,
+      canDelete: false,
+      canImport: false,
+    },
+    system: {
+      canManageUsers: false,
+      canViewLogs: false,
+      canBackupRestore: false,
+      canManageSettings: false,
+    },
+  },
 };
 
 // Permission Manager Class
 export class PermissionManager {
-    /**
-     * Combine permissions from multiple roles
-     */
-    static combinePermissions(roles: Role[]): UserRole['permissions'] {
-        const combined = JSON.parse(JSON.stringify(DEFAULT_PERMISSIONS)) as UserRole['permissions'];
-        
-        roles.forEach(role => {
-            const rolePermissions = ROLE_PERMISSIONS[role];
-            if (rolePermissions) {
-                // Merge CSM permissions
-                if (rolePermissions.csm && combined.csm) {
-                    Object.assign(combined.csm, rolePermissions.csm);
-                }
-                
-                // Merge employees permissions
-                if (rolePermissions.employees && combined.employees) {
-                    Object.assign(combined.employees, rolePermissions.employees);
-                }
-                
-                // Merge system permissions
-                if (rolePermissions.system && combined.system) {
-                    Object.assign(combined.system, rolePermissions.system);
-                }
-            }
-        });
+  static combinePermissions(roles: Role[]): UserRole['permissions'] {
+    const combined = JSON.parse(JSON.stringify(DEFAULT_PERMISSIONS)) as UserRole['permissions'];
+    roles.forEach((roles) => {
+      const rolePermissions = ROLE_PERMISSIONS[roles];
+      if (rolePermissions) {
+        Object.assign(combined.csm!, rolePermissions.csm || {});
+        Object.assign(combined.employees!, rolePermissions.employees || {});
+        Object.assign(combined.system!, rolePermissions.system || {});
+      }
+    });
+    return combined;
+  }
 
-        return combined;
+  static hasPermission(userRoles: Role[], module: keyof UserRole['permissions'], action: string): boolean {
+    const permissions = this.combinePermissions(userRoles);
+    const modulePermissions = permissions[module];
+    return modulePermissions ? (modulePermissions as any)[action] === true : false;
+  }
+
+  static checkRoleHierarchy(userRoles: Role[], requiredRole: Role | Role[]): boolean {
+    const roleHierarchy = new Map<Role, number>([
+      ['guest', 0],
+      ['plantAdmin', 2],
+      ['auditor', 3],
+      ['csmAuditor', 4],
+      ['csmAdmin', 5],
+      ['admin', 6],
+      ['superAdmin', 10],
+    ]);
+    const userMaxLevel = Math.max(...userRoles.map((r) => roleHierarchy.get(r) || 0));
+    if (Array.isArray(requiredRole)) {
+      return requiredRole.some((r) => userMaxLevel >= (roleHierarchy.get(r) || 0));
     }
+    return userMaxLevel >= (roleHierarchy.get(requiredRole) || 0);
+  }
 
-    /**
-     * Check if user has specific permission
-     */
-    static hasPermission(
-        userRoles: Role[], 
-        module: keyof UserRole['permissions'], 
-        action: string
-    ): boolean {
-        const permissions = this.combinePermissions(userRoles);
-        const modulePermissions = permissions[module];
-        
-        if (!modulePermissions) return false;
-        
-        return (modulePermissions as any)[action] === true;
+  static getHighestRole(roles: Role[]): Role {
+    const hierarchy: Role[] = ['superAdmin', 'admin', 'csmAdmin', 'csmAuditor', 'auditor', 'plantAdmin', 'guest'];
+    for (const r of hierarchy) {
+      if (roles.includes(r)) return r;
     }
+    return 'guest';
+  }
 
-    /**
-     * Check role hierarchy
-     */
-    static checkRoleHierarchy(userRoles: Role[], requiredRole: Role | Role[]): boolean {
-        const roleHierarchy = new Map<Role, number>([
-            ['guest', 0],
-            ['plantAdmin', 2],
-            ['auditor', 3],
-            ['csmAuditor', 4],
-            ['csmAdmin', 5],
-            ['admin', 6],
-            ['superAdmin', 10]
-        ]);
-
-        const userMaxLevel = Math.max(...userRoles.map(role => roleHierarchy.get(role) || 0));
-
-        if (Array.isArray(requiredRole)) {
-            return requiredRole.some(role => {
-                const requiredLevel = roleHierarchy.get(role) || 0;
-                return userMaxLevel >= requiredLevel;
-            });
-        }
-
-        const requiredLevel = roleHierarchy.get(requiredRole) || 0;
-        return userMaxLevel >= requiredLevel;
-    }
-
-    /**
-     * Get user's highest role
-     */
-    static getHighestRole(roles: Role[]): Role {
-        const hierarchy: Role[] = ['superAdmin', 'admin', 'csmAdmin', 'csmAuditor', 'auditor', 'plantAdmin', 'guest'];
-        
-        for (const role of hierarchy) {
-            if (roles.includes(role)) {
-                return role;
-            }
-        }
-        
-        return 'guest';
-    }
-
-    /**
-     * Format roles for display
-     */
-    static formatRolesForDisplay(roles: Role[]): string {
-        const roleLabels = new Map<Role, string>([
-            ['superAdmin', 'ผู้ดูแลระบบสูงสุด'],
-            ['admin', 'ผู้ดูแลระบบ'],
-            ['csmAdmin', 'ผู้ดูแลระบบ CSM'],
-            ['csmAuditor', 'ผู้ตรวจสอบ CSM'],
-            ['auditor', 'ผู้ตรวจสอบ'],
-            ['plantAdmin', 'ผู้ดูแลโรงงาน'],
-            ['guest', 'ผู้เข้าชม']
-        ]);
-
-        return roles.map(role => roleLabels.get(role) || role).join(', ');
-    }
+  static formatRolesForDisplay(roles: Role[]): string {
+    const roleLabels = new Map<Role, string>([
+      ['superAdmin', 'ผู้ดูแลระบบสูงสุด'],
+      ['admin', 'ผู้ดูแลระบบ'],
+      ['csmAdmin', 'ผู้ดูแลระบบ CSM'],
+      ['csmAuditor', 'ผู้ตรวจสอบ CSM'],
+      ['auditor', 'ผู้ตรวจสอบ'],
+      ['plantAdmin', 'ผู้ดูแลโรงงาน'],
+      ['guest', 'ผู้เข้าชม'],
+    ]);
+    return roles.map((r) => roleLabels.get(r) || r).join(', ');
+  }
 }
 
-// Role Migration Helper
+// RoleMigrationHelper เวอร์ชันใหม่ — ใช้แปลงข้อมูลจาก DB ให้เป็น Role[] เท่านั้น
 export class RoleMigrationHelper {
-    /**
-     * Convert old string role to new array format
-     */
-    static migrateStringRoleToArray(oldRole: string | Role[]): Role[] {
-        // If already an array, return as is
-        if (Array.isArray(oldRole)) {
-            return oldRole.filter(r => this.isValidRole(r));
-        }
-
-        // Handle comma-separated roles
-        if (typeof oldRole === 'string' && oldRole.includes(',')) {
-            return oldRole.split(',').map(r => r.trim() as Role).filter(r => this.isValidRole(r));
-        }
-        
-        // Single role
-        if (typeof oldRole === 'string' && this.isValidRole(oldRole as Role)) {
-            return [oldRole as Role];
-        }
-        
-        // Default to guest if invalid
-        console.warn('[RoleMigration] Invalid role detected, defaulting to guest:', oldRole);
-        return ['guest'];
+  static toArray(input: unknown): Role[] {
+    if (Array.isArray(input)) return input.filter((r): r is Role => this.isValidRole(r));
+    if (typeof input === 'string') {
+      if (input.includes(',')) {
+        return input.split(',').map((r) => r.trim()).filter((r): r is Role => this.isValidRole(r));
+      }
+      return this.isValidRole(input) ? [input] : ['guest'];
     }
+    return ['guest'];
+  }
 
-    /**
-     * Convert array back to string for storage (if needed)
-     */
-    static convertArrayRoleToString(roles: Role[]): string {
-        return roles.join(', ');
-    }
-
-    /**
-     * Check if role is valid
-     */
-    static isValidRole(role: string): role is Role {
-        const validRoles: Role[] = ['superAdmin', 'admin', 'csmAdmin', 'csmAuditor', 'auditor', 'plantAdmin', 'guest'];
-        return validRoles.includes(role as Role);
-    }
+  static isValidRole(roles: string): roles is Role {
+    return ['superAdmin', 'admin', 'csmAdmin', 'csmAuditor', 'auditor', 'plantAdmin', 'guest'].includes(roles);
+  }
 }
 
-// Service for managing user roles
+// UserRoleService
 export class UserRoleService {
-    /**
-     * Update user roles
-     */
-    static async updateUserRoles(userId: string, newRoles: Role[]): Promise<void> {
-        // Validate role combination
-        const validation = RoleValidator.validateRoleCombination(newRoles);
-        if (!validation.valid) {
-            console.warn('Role validation warnings:', validation.warnings);
-        }
-        
-        // Optimize roles
-        const optimizedRoles = RoleValidator.suggestOptimalRoles(newRoles);
-        
-        // Combine permissions
-        const permissions = PermissionManager.combinePermissions(optimizedRoles);
-        
-        // Update in database (implementation depends on your data layer)
-        const updateData: Partial<UserRole> = {
-            roles: optimizedRoles,
-            permissions,
-            updatedAt: new Date()
-        };
-        
-        console.log('Updating user roles:', { userId, updateData });
-    }
+  static async updateUserRoles(userId: string, newRoles: Role[]): Promise<void> {
+    const validation = RoleValidator.validateRoleCombination(newRoles);
+    if (!validation.valid) console.warn('Role validation warnings:', validation.warnings);
+    const optimizedRoles = RoleValidator.suggestOptimalRoles(newRoles);
+    const permissions = PermissionManager.combinePermissions(optimizedRoles);
+    const updateData: Partial<UserRole> = { roles: optimizedRoles, permissions, updatedAt: new Date() };
+    console.log('Updating user roles:', { userId, updateData });
+  }
 
-    /**
-     * Check if user can access CSM evaluation
-     */
-    static canAccessCSMEvaluation(userRoles: Role[]): boolean {
-        return PermissionManager.hasPermission(userRoles, 'csm', 'canEvaluate');
-    }
-
-    /**
-     * Check if user can manage vendors
-     */
-    static canManageVendors(userRoles: Role[]): boolean {
-        return PermissionManager.hasPermission(userRoles, 'csm', 'canManageVendors');
-    }
-
-    /**
-     * Check if user can approve assessments
-     */
-    static canApproveAssessments(userRoles: Role[]): boolean {
-        return PermissionManager.hasPermission(userRoles, 'csm', 'canApprove');
-    }
+  static canAccessCSMEvaluation(userRoles: Role[]): boolean {
+    return PermissionManager.hasPermission(userRoles, 'csm', 'canEvaluate');
+  }
+  static canManageVendors(userRoles: Role[]): boolean {
+    return PermissionManager.hasPermission(userRoles, 'csm', 'canManageVendors');
+  }
+  static canApproveAssessments(userRoles: Role[]): boolean {
+    return PermissionManager.hasPermission(userRoles, 'csm', 'canApprove');
+  }
 }
 
-// Role Validation Utilities
+// RoleValidator
 export class RoleValidator {
-    /**
-     * Validate role combinations
-     */
-    static validateRoleCombination(roles: Role[]): { valid: boolean; warnings: string[] } {
-        const warnings: string[] = [];
-        
-        // Check for conflicting roles
-        if (roles.includes('guest') && roles.length > 1) {
-            warnings.push('Guest role should not be combined with other roles');
-        }
-        
-        // Check for redundant roles
-        if (roles.includes('superAdmin') && roles.includes('admin')) {
-            warnings.push('SuperAdmin role already includes Admin permissions');
-        }
-        
-        if (roles.includes('admin') && roles.includes('csmAuditor')) {
-            warnings.push('Admin role already includes CSM Auditor permissions');
-        }
-        
-        return {
-            valid: warnings.length === 0,
-            warnings
-        };
-    }
+  static validateRoleCombination(roles: Role[]): { valid: boolean; warnings: string[] } {
+    const warnings: string[] = [];
+    if (roles.includes('guest') && roles.length > 1) warnings.push('Guest role should not be combined with other roles');
+    if (roles.includes('superAdmin') && roles.includes('admin'))
+      warnings.push('SuperAdmin role already includes Admin permissions');
+    if (roles.includes('admin') && roles.includes('csmAuditor'))
+      warnings.push('Admin role already includes CSM Auditor permissions');
+    return { valid: warnings.length === 0, warnings };
+  }
 
-    /**
-     * Suggest optimal role combination
-     */
-    static suggestOptimalRoles(roles: Role[]): Role[] {
-        if (roles.includes('superAdmin')) {
-            return ['superAdmin']; // SuperAdmin is sufficient
-        }
-        
-        if (roles.includes('admin')) {
-            // Remove redundant roles
-            return roles.filter(role => !['csmAuditor', 'auditor', 'plantAdmin'].includes(role));
-        }
-        
-        return roles;
+  static suggestOptimalRoles(roles: Role[]): Role[] {
+    if (roles.includes('superAdmin')) return ['superAdmin'];
+    if (roles.includes('admin')) {
+      return roles.filter((r) => !['csmAuditor', 'auditor', 'plantAdmin'].includes(r));
     }
+    return roles;
+  }
 }
 
 // Additional interfaces
 export interface CreateUserRequest {
-    email: string;
-    name: string;
-    roles: Role[];
+  email: string;
+  name: string;
+  roles: Role[];
 }
 
 export interface UserProfile extends UserRole {
-    preferences: {
-        theme: 'light' | 'dark';
-        language: 'th' | 'en';
-        notifications: boolean;
-    };
+  preferences: {
+    theme: 'light' | 'dark';
+    language: 'th' | 'en';
+    notifications: boolean;
+  };
 }

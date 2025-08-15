@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback , useMemo} from 'react';
 import { BarChart3, TrendingUp, AlertTriangle, CheckCircle, Eye, FileText, RefreshCw } from 'lucide-react';
 import type { CSMAssessmentDoc } from '../../../types';
 import { formatDate} from '../../../utils/dateUtils';
-import csmService from '../../../services/csmService';
+import {csmService}from '../../../services/csmService';
 import { CardSkeleton} from '../../../components/ui/SkeletonLoader';
 
 
@@ -404,14 +404,14 @@ const CurrentAssessmentView: React.FC<{
             <div className="flex items-center justify-between">
               <span className="text-sm text-gray-600">วันที่ประเมิน:</span>
               <span className="text-sm font-medium">
-                {formatDate(assessment.createdAt)}
+                {assessment.createdAt ? formatDate(assessment.createdAt) : 'ไม่ระบุ'}
               </span>
             </div>
             
             <div className="flex items-center justify-between">
               <span className="text-sm text-gray-600">อัพเดทล่าสุด:</span>
               <span className="text-sm font-medium">
-                {formatDate(assessment.updatedAt || assessment.createdAt)}
+                {assessment.updatedAt ? formatDate(assessment.updatedAt || assessment.createdAt) : 'ไม่ระบุ'}
               </span>
             </div>
           </div>
@@ -422,7 +422,7 @@ const CurrentAssessmentView: React.FC<{
       {onViewDetails && (
         <div className="flex justify-center">
           <button
-            onClick={() => onViewDetails(assessment.id)}
+            onClick={() => onViewDetails(assessment.id ? assessment.id : '')}
             className="flex items-center gap-2 px-6 py-2 text-white transition-colors bg-blue-600 rounded-lg shadow-sm hover:bg-blue-700 hover:shadow-md"
           >
             <Eye className="w-4 h-4" />
@@ -456,7 +456,7 @@ const AssessmentHistoryView: React.FC<{
               <div className="flex-1">
                 <div className="flex items-center gap-3 mb-2">
                   <h5 className="font-medium text-gray-900">
-                    การประเมิน {formatDate(assessment.createdAt)}
+                    การประเมิน {assessment.createdAt ? formatDate(assessment.createdAt) : 'ไม่ระบุ'}
                   </h5>
                   {assessment.isActive && (
                     <span className="px-2 py-1 text-xs font-medium text-green-800 bg-green-100 rounded-full">
@@ -471,11 +471,11 @@ const AssessmentHistoryView: React.FC<{
                 <div className="grid grid-cols-2 gap-4 text-sm md:grid-cols-4">
                   <div>
                     <span className="text-gray-600">คะแนนรวม:</span>
-                    <span className="ml-1 font-medium">{parseFloat(assessment.finalScore || '0').toFixed(1)}</span>
+                    <span className="ml-1 font-medium">{assessment.finalScore ? parseFloat(assessment.finalScore).toFixed(1) : '0'}</span>
                   </div>
                   <div>
                     <span className="text-gray-600">คะแนนเฉลี่ย:</span>
-                    <span className="ml-1 font-medium">{parseFloat(assessment.avgScore || '0').toFixed(1)}</span>
+                    <span className="ml-1 font-medium">{assessment.avgScore ? parseFloat(assessment.avgScore).toFixed(1) : '0'}</span>
                   </div>
                   <div>
                     <span className="text-gray-600">ผู้ประเมิน:</span>
@@ -484,7 +484,7 @@ const AssessmentHistoryView: React.FC<{
                   <div>
                     <span className="text-gray-600">อัพเดท:</span>
                     <span className="ml-1 font-medium">
-                      {formatDate(assessment.updatedAt || assessment.createdAt)}
+                      {assessment.updatedAt ? formatDate(assessment.updatedAt || assessment.createdAt) : 'ไม่ระบุ'}                      
                     </span>
                   </div>
                 </div>
@@ -492,7 +492,7 @@ const AssessmentHistoryView: React.FC<{
               
               {onViewDetails && (
                 <button
-                  onClick={() => onViewDetails(assessment.id)}
+                  onClick={() => onViewDetails(assessment.id ? assessment.id : '')}
                   className="flex items-center gap-1 p-2 ml-4 text-blue-600 transition-colors rounded-lg hover:text-blue-800 hover:bg-blue-50"
                 >
                   <Eye className="w-4 h-4" />

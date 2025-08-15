@@ -173,7 +173,7 @@ const CSMVendorDetailPage: React.FC = () => {
     return (
       <div className="min-h-screen py-8 bg-gray-50">
         <div className="max-w-6xl px-4 mx-auto sm:px-6 lg:px-8">
-          <SkeletonLoader lines={8} />
+          <SkeletonLoader rows={8} />
         </div>
       </div>
     );
@@ -546,10 +546,10 @@ const CSMVendorDetailPage: React.FC = () => {
                   </div>
                 )}
                 
-                {vendor.laseUpdateBy && (
+                {vendor.lastUpdatedBy&& (
                   <div>
                     <span className="text-gray-600">อัปเดตโดย:</span>
-                    <p className="text-gray-900">{vendor.laseUpdateBy}</p>
+                    <p className="text-gray-900">{vendor.lastUpdatedBy}</p>
                   </div>
                 )}
               </div>

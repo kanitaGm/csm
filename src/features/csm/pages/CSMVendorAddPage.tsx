@@ -107,7 +107,7 @@ const CSMVendorAddPage: React.FC = () => {
         createdAt: new Date(),
         updatedAt: new Date(),
         createdBy: 'current-user@example.com', // จะต้องเอาจาก auth context
-        laseUpdateBy: 'current-user@example.com'
+        lastUpdatedBy: 'current-user@example.com'
       };
 
       const newVendorId = await csmVendorService.create(vendorData);

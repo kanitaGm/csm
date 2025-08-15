@@ -8,10 +8,9 @@ import {
 import { db } from '../config/firebase';
 import type { 
   CSMFormDoc, CSMAssessment, CSMAssessmentSummary, 
-  CSMVendor, Company, DateInput
-} from '../types';
+  CSMVendor, Company} from '../types';
 import { cacheService } from './cacheService';
-
+import type {DateInput} from '../utils/dateUtils';
 // =================== CONSTANTS ===================
 const COLLECTIONS = {
   CSM_VENDORS: 'csmVendors',
@@ -41,7 +40,7 @@ const convertToDate = (value: DateInput): Date => {
   return new Date();
 };
 
-const normalizeVendorData = (data: any): CSMVendor => ({
+const normalizeVendorData = (data: Partial<CSMVendor>): CSMVendor => ({
   id: data.id,
   companyId: data.companyId || '',
   vdCode: data.vdCode || '',
@@ -49,7 +48,7 @@ const normalizeVendorData = (data: any): CSMVendor => ({
   freqAss: data.freqAss || '365', // Default 1 year
   isActive: data.isActive !== false, // Default true
   category: data.category || '',
-  workingArea: Array.isArray(data.workingArea) ? data.workingArea : [data.workingArea].filter(Boolean),
+  workingArea: data.workingArea || [],
   createdAt: convertToDate(data.createdAt),
   updatedAt: convertToDate(data.updatedAt),
   createdBy: data.createdBy || '',
@@ -443,9 +442,9 @@ export class EnhancedAssessmentsService {
       const avgScore = maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0;
       
       // Determine risk level
-      let riskLevel: 'Low' | 'Medium' | 'High' = 'High';
+      let riskLevel: 'Low' | 'Moderate' | 'High' = 'High';
       if (avgScore >= 80) riskLevel = 'Low';
-      else if (avgScore >= 60) riskLevel = 'Medium';
+      else if (avgScore >= 60) riskLevel = 'Moderate';
       
       const summary: Omit<CSMAssessmentSummary, 'id'> = {
         vdCode,

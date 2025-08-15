@@ -12,21 +12,12 @@ import type { Role } from '../types/user';
 interface OldUserRecord {
     empId: string;
     email: string;
-    role: string; // Old format
+    roles: string[]; // Old format
     isActive: boolean;
     displayName?: string;
     passcode?: string;
 }
-/*
-interface NewUserRecord {
-    empId: string;
-    email: string;
-    roles: Role[]; // New format
-    isActive: boolean;
-    displayName?: string;
-    passcode?: string;
-}
-*/
+
 export class RoleMigrationService {
     /**
      * Migrate all users from string role to array roles
@@ -47,26 +38,26 @@ export class RoleMigrationService {
                     const userData = docSnap.data() as OldUserRecord;
                     
                     // Check if already migrated (has roles array)
-                    if (Array.isArray(userData.role)) {
+                    if (Array.isArray(userData.roles)) {
                         console.log(`✅ [Migration] User ${userData.empId} already migrated`);
                         return;
                     }
 
                     // Migrate string role to array
-                    const newRoles = RoleMigrationHelper.migrateStringRoleToArray(userData.role);
+                    const newRoles = RoleMigrationHelper.toArray(userData.roles);
                     
                     // Update document
                     const userRef = doc(db, 'users', docSnap.id);
                     batch.update(userRef, {
                         roles: newRoles,
                         // Keep old role field for backup
-                        oldRole: userData.role,
+                        oldRole: userData.roles,
                         migratedAt: new Date(),
                         updatedAt: new Date()
                     });
 
                     migrationCount++;
-                    console.log(`🔄 [Migration] Migrating ${userData.empId}: "${userData.role}" → [${newRoles.join(', ')}]`);
+                    console.log(`🔄 [Migration] Migrating ${userData.empId}: "${userData.roles}" → [${newRoles.join(', ')}]`);
                     
                 } catch (error) {
                     errorCount++;
@@ -112,9 +103,9 @@ export class RoleMigrationService {
                 if (Array.isArray(userData.roles)) {
                     migratedUsers++;
                     console.log(`✅ ${userData.empId}: roles = [${userData.roles.join(', ')}]`);
-                } else if (userData.role && !Array.isArray(userData.role)) {
+                } else if (userData.roles && !Array.isArray(userData.roles)) {
                     unmigrated++;
-                    console.log(`❌ ${userData.empId}: still has old role = "${userData.role}"`);
+                    console.log(`❌ ${userData.empId}: still has old role = "${userData.roles}"`);
                 }
             });
 
@@ -151,16 +142,15 @@ export class RoleMigrationService {
                     console.log('👤 [Debug] User found:', {
                         empId: userData.empId,
                         email: userData.email,
-                        role: userData.role,
                         roles: userData.roles,
                         isActive: userData.isActive,
                         displayName: userData.displayName
                     });
 
                     // Test role migration
-                    if (!Array.isArray(userData.roles) && userData.role) {
-                        const migratedRoles = RoleMigrationHelper.migrateStringRoleToArray(userData.role);
-                        console.log(`🔄 [Debug] Would migrate "${userData.role}" to:`, migratedRoles);
+                    if (!Array.isArray(userData.roles) && userData.roles) {
+                        const migratedRoles = RoleMigrationHelper.toArray(userData.roles);
+                        console.log(`🔄 [Debug] Would migrate "${userData.roles}" to:`, migratedRoles);
                     }
                 }
             });

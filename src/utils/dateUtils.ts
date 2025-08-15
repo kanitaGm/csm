@@ -6,6 +6,7 @@ import { format, parseISO, isValid } from 'date-fns';
 // Type definitions
 export type DateInput = Timestamp | Date | string | null | undefined | { seconds: number; nanoseconds?: number };
 
+
 /**
  * Safely convert various date inputs to Date object
  */

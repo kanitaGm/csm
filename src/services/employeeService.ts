@@ -273,7 +273,7 @@ export class EmployeeService {
         'level', 'prefix', 'displayName', 'nickname', 'phoneNumber', 'address',
         'profileImageUrl', 'position', 'companyId', 'company', 'department',
         'countryId', 'zoneId', 'siteId', 'plantId', 'dateOfBirth', 'startDate',
-        'cardExpiryDate', 'lastUpdateBy'
+        'cardExpiryDate', 'lastUpdatedBy'
       ] as const;
 
       formStateFields.forEach(field => {

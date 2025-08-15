@@ -296,8 +296,8 @@ export const useCSVImport = (config: ImportConfig) => {
               const transformedData = config.dataTransformer 
                 ? config.dataTransformer(record, actualIndex)
                 : isRecord(record) 
-                  ? { ...record, lastUpdateBy: userEmail }
-                  : { data: record, lastUpdateBy: userEmail };
+                  ? { ...record, lastUpdatedBy: userEmail }
+                  : { data: record, lastUpdatedBy: userEmail };
 
               await addDoc(collection(db, config.collectionName), transformedData as Record<string, unknown>);
               results.success++;

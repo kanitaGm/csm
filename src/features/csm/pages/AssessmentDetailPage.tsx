@@ -6,7 +6,7 @@ import {
   TrendingUp, Target, Award, Clock
 } from 'lucide-react';
 import type { CSMAssessmentDoc, CSMFormField, Company, CSMAssessmentAnswer } from '../../../types/';
-import csmService from '../../../services/csmService';
+import {csmService} from '../../../services/csmService';
 import { formatDate } from '../../../utils/dateUtils';
 
 interface CSMAssessmentDetailPageProps {
@@ -618,7 +618,7 @@ const AssessmentDetailPage: React.FC<CSMAssessmentDetailPageProps> = ({
               <div>
                 <h1 className="text-xl font-bold text-gray-900">รายละเอียดการประเมิน</h1>
                 <p className="text-sm text-gray-600">
-                  {company?.name || assessment.vdName} - {formatDate(assessment.createdAt)}
+                  {company?.name || assessment.vdName} -  {assessment.createdAt ? formatDate(assessment.createdAt) : 'ไม่ระบุ'}     
                 </p>
               </div>
 
@@ -674,14 +674,14 @@ const AssessmentDetailPage: React.FC<CSMAssessmentDetailPageProps> = ({
         <div className="grid grid-cols-1 gap-6 mb-8 sm:grid-cols-2 lg:grid-cols-4">
           <ScoreCard
             title="คะแนนรวม"
-            value={parseFloat(assessment.finalScore || '0').toFixed(1)}
+            value={assessment.finalScore ? parseFloat(assessment.finalScore).toFixed(1) : '0'}
             subtitle="จากคะแนนเต็ม"
             icon={BarChart3}
             color="blue"
           />
           <ScoreCard
             title="คะแนนเฉลี่ย"
-            value={parseFloat(assessment.avgScore || '0').toFixed(1)}
+            value={assessment.avgScore ? parseFloat(assessment.avgScore).toFixed(1) : '0'}
             subtitle="คะแนนเฉลี่ยต่อข้อ"
             icon={TrendingUp}
             color="green"
@@ -763,11 +763,11 @@ const AssessmentDetailPage: React.FC<CSMAssessmentDetailPageProps> = ({
                 </div>
                 <div className="flex items-start">
                   <span className="flex-shrink-0 w-20 text-sm text-gray-600">วันที่สร้าง:</span>
-                  <span className="font-medium text-gray-900">{formatDate(assessment.createdAt)}</span>
+                  <span className="font-medium text-gray-900">{assessment.createdAt ? formatDate(assessment.createdAt) : 'ไม่ระบุ'}  </span>
                 </div>
                 <div className="flex items-start">
                   <span className="flex-shrink-0 w-20 text-sm text-gray-600">อัพเดท:</span>
-                  <span className="font-medium text-gray-900">{formatDate(assessment.updatedAt || assessment.createdAt)}</span>
+                  <span className="font-medium text-gray-900">{assessment.createdAt ? formatDate(assessment.createdAt || assessment.updatedAt) : 'ไม่ระบุ'}  </span>
                 </div>
               </div>
             </div>

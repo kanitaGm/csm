@@ -1,8 +1,6 @@
 // src/utils/csmExportWrapper.ts
 import { 
-  exportToExcel, 
-  prepareExportData, 
-  type ExportOptions, 
+  exportToExcel,
   type ExportResult 
 } from './exportUtils';
 import type { CSMVendor, CSMAssessmentSummary } from '../types/csm';

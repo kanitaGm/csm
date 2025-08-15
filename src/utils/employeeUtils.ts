@@ -173,7 +173,7 @@ export const normalizeEmployeePayload = (form: Partial<EmployeeFormState>): Omit
     status: form.status || 'active',
     createdAt: Timestamp.now(),
     updatedAt: Timestamp.now(),
-    lastUpdateBy: form.lastUpdateBy || 'System',
+    lastUpdatedBy: form.lastUpdatedBy || 'System',
     searchKeywords: createSearchKeywords({ ...form, fullName }),
   };
 };
@@ -202,8 +202,8 @@ export const normalizeCSVEmployeeData = (csvData: Record<string, unknown>): Part
   // Validate and normalize employee type
   const validateEmployeeType = (
     value: unknown
-  ): 'employee' | 'contractor' | 'transporter' | 'driver' | 'pending' => {
-    const validTypes = ['employee', 'contractor', 'transporter', 'driver', 'pending'] as const;
+  ): 'employee' | 'contractor' | 'transporter' | 'driver' | 'pending' |'' => {
+    const validTypes = ['employee', 'contractor', 'transporter', 'driver', 'pending',''] as const;
     type EmployeeType = typeof validTypes[number];
     const normalized = String(value || 'employee').trim().toLowerCase();
     if (validTypes.includes(normalized as EmployeeType)) {
@@ -216,7 +216,7 @@ export const normalizeCSVEmployeeData = (csvData: Record<string, unknown>): Part
   // Validate and normalize status
   const validateStatus = (
     value: unknown
-  ): 'active' | 'inactive' | 'terminated' | 'pending' => {
+  ): 'active' | 'inactive' | 'terminated' | 'pending'=> {
     const validStatuses = ['active', 'inactive', 'terminated', 'pending'] as const;
     type StatusType = typeof validStatuses[number];
     const normalized = String(value || 'active').trim().toLowerCase();
@@ -242,7 +242,8 @@ export const normalizeCSVEmployeeData = (csvData: Record<string, unknown>): Part
     department: String(csvData.department || '').trim(),
     company: String(csvData.company || '').trim(),
     level: String(csvData.level || '').trim(),
-    employeeType: validateEmployeeType(csvData.employeeType),
+    employeeType: validateEmployeeType(csvData.employeeType) ,
+    companyId: String(csvData.companyId || '').trim(),    
     countryId: String(csvData.countryId || '').trim(),
     zoneId: String(csvData.zoneId || '').trim(),
     siteId: String(csvData.siteId || '').trim(),
@@ -252,7 +253,7 @@ export const normalizeCSVEmployeeData = (csvData: Record<string, unknown>): Part
     startDate: csvData.startDate ? String(csvData.startDate) : undefined,
     cardExpiryDate: csvData.cardExpiryDate ? String(csvData.cardExpiryDate) : undefined,
     status: validateStatus(csvData.status),
-    lastUpdateBy: String(csvData.lastUpdateBy || 'CSV Import').trim()
+    lastUpdatedBy: String(csvData.lastUpdatedBy || 'CSV Import').trim()
   };
 };
 

@@ -1,15 +1,12 @@
 // 📁 src/services/csmService.ts - Fixed version with fallback data
 import { 
-  collection, doc, getDocs, getDoc, query, where, orderBy, limit, Timestamp
+  collection, doc, getDocs, getDoc, query, where, orderBy, limit, Timestamp,deleteDoc 
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
-import type { 
-  CSMFormDoc, CSMAssessment, CSMAssessmentSummary, 
-  CSMVendor, CSMAssessmentAnswer,
-  DateInput, Company
-} from '../types';
+import type { CSMFormDoc, CSMAssessment, CSMAssessmentSummary, 
+  CSMVendor, CSMAssessmentAnswer,  Company} from '../types';
 import { cacheService } from './cacheService';
-
+import type { DateInput } from '../utils/dateUtils'; 
 // =================== CONSTANTS ===================
 const COLLECTIONS = {
   CSM_VENDORS: 'csmVendors',
@@ -141,7 +138,7 @@ const DEMO_SUMMARIES: CSMAssessmentSummary[] = [
     avgScore: 65,
     completedQuestions: 18,
     totalQuestions: 20,
-    riskLevel: 'Medium',
+    riskLevel: 'Moderate',
     updatedAt: new Date()
   }
 ];
@@ -213,7 +210,7 @@ const normalizeAssessmentSummary = (data: unknown): CSMAssessmentSummary | null 
   const updatedAt = d.updatedAt ? convertToDate(d.updatedAt as DateInput) : new Date();
 
   const riskLevel = d.riskLevel as string;
-  if (!['Low', 'Medium', 'High', ''].includes(riskLevel)) {
+  if (!['Low', 'Moderate', 'High', ''].includes(riskLevel)) {
     console.warn('Invalid risk level:', riskLevel);
   }
 
@@ -227,7 +224,7 @@ const normalizeAssessmentSummary = (data: unknown): CSMAssessmentSummary | null 
     avgScore: typeof d.avgScore === 'number' ? d.avgScore as number : 0,
     completedQuestions: typeof d.completedQuestions === 'number' ? d.completedQuestions as number : 0,
     totalQuestions: typeof d.totalQuestions === 'number' ? d.totalQuestions as number : 0,
-    riskLevel: ['Low', 'Medium', 'High', ''].includes(riskLevel) ? riskLevel as 'Low' | 'Medium' | 'High' : 'High',
+    riskLevel: ['Low', 'Moderate', 'High', ''].includes(riskLevel) ? riskLevel as 'Low' | 'Moderate' | 'High' : 'High',
     updatedAt
   };
 };
@@ -475,6 +472,61 @@ export const formsService = {
     }
   },
 
+  async getAll(): Promise<CSMFormDoc[]> {
+    const cacheKey = 'csm-forms-all';
+    const cached = cacheService.get<CSMFormDoc[]>(cacheKey);
+    
+    if (cached) {
+      return cached;
+    }
+
+    try {
+      //console.log('🔍 Fetching all CSM forms from Firestore...');      
+      const querySnapshot = await getDocs(
+        query(
+          collection(db, COLLECTIONS.CSM_FORMS),
+          where('isActive', '==', true),
+          orderBy('formTitle', 'asc')
+        )
+      );
+
+      const forms: CSMFormDoc[] = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      } as CSMFormDoc));
+
+      //console.log(`✅ Loaded ${forms.length} forms from Firestore`);
+      cacheService.set(cacheKey, forms, CACHE_DURATIONS.FORMS);
+      
+      return forms;
+    } catch (error) {
+      console.error('❌ Error fetching forms:', error);
+      // Return demo form as fallback
+      return [formsService.createDemoForm()];
+    }
+  },
+
+  // เพิ่ม delete method ที่หายไป
+  async delete(formId: string): Promise<void> {
+    if (!isValidString(formId)) {
+      throw new Error('Invalid form ID');
+    }
+
+    try {
+      console.log('🗑️ Deleting form:', formId);
+      
+      await deleteDoc(doc(db, COLLECTIONS.CSM_FORMS, formId));
+      
+      // Clear cache
+      cacheService.delete('csm-forms-all');
+      cacheService.delete('csm-form-checklist');
+      
+      console.log('✅ Form deleted successfully');
+    } catch (error) {
+      console.error('❌ Error deleting form:', error);
+      throw new Error('Failed to delete form');
+    }
+  },  
   /**
    * Create a demo CSM form for fallback
    */
@@ -600,7 +652,68 @@ export const assessmentsService = {
       console.error('Error fetching assessment by ID:', error);
       return null;
     }
+  },
+
+  async delete(assessmentId: string): Promise<void> {
+    if (!isValidString(assessmentId)) {
+      throw new Error('Invalid assessment ID');
+    }
+
+    try {
+      console.log('🗑️ Deleting assessment:', assessmentId);
+      
+      await deleteDoc(doc(db, COLLECTIONS.CSM_ASSESSMENTS, assessmentId));
+      
+      // Clear related caches
+      cacheService.clear(); // Clear all caches as we don't know which vendor this belongs to
+      
+      console.log('✅ Assessment deleted successfully');
+    } catch (error) {
+      console.error('❌ Error deleting assessment:', error);
+      throw new Error('Failed to delete assessment');
+    }
+  },
+
+  //  เพิ่ม getAll method (ถ้าต้องการ)
+  async getAll(): Promise<CSMAssessment[]> {
+    const cacheKey = 'csm-assessments-all';
+    const cached = cacheService.get<CSMAssessment[]>(cacheKey);
+    
+    if (cached) {
+      return cached;
+    }
+
+    try {
+      console.log('🔍 Fetching all assessments from Firestore...');
+      
+      const querySnapshot = await getDocs(
+        query(
+          collection(db, COLLECTIONS.CSM_ASSESSMENTS),
+          orderBy('createdAt', 'desc')
+        )
+      );
+
+      const assessments = querySnapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          ...data,
+          createdAt: convertToDate(data.createdAt),
+          updatedAt: convertToDate(data.updatedAt),
+          finishedAt: data.finishedAt ? convertToDate(data.finishedAt) : undefined
+        } as CSMAssessment;
+      });
+
+      console.log(`✅ Loaded ${assessments.length} assessments from Firestore`);
+      cacheService.set(cacheKey, assessments, CACHE_DURATIONS.ASSESSMENTS);
+      
+      return assessments;
+    } catch (error) {
+      console.error('❌ Error fetching all assessments:', error);
+      return [];
+    }
   }
+
 };
 
 // =================== ASSESSMENT UTILITIES ===================
@@ -608,25 +721,25 @@ const calculateAssessmentScore = (answers: CSMAssessmentAnswer[]): {
   totalScore: number;
   maxScore: number;
   avgScore: number;
-  riskLevel: 'Low' | 'Medium' | 'High';
+  riskLevel: 'Low' | 'Moderate' | 'High';
 } => {
   if (answers.length === 0) {
     return { totalScore: 0, maxScore: 0, avgScore: 0, riskLevel: 'High' };
   }
 
   const totalScore = answers.reduce((sum, answer) => {
-    const score = parseInt(answer.score) || 0;
+    const score = parseInt(answer.score || '') || 0;
     return sum + score;
   }, 0);
 
   const maxScore = answers.length * 5; // Assuming max score per question is 5
   const avgScore = maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0;
 
-  let riskLevel: 'Low' | 'Medium' | 'High';
+  let riskLevel: 'Low' | 'Moderate' | 'High';
   if (avgScore >= 80) {
     riskLevel = 'Low';
   } else if (avgScore >= 60) {
-    riskLevel = 'Medium';
+    riskLevel = 'Moderate';
   } else {
     riskLevel = 'High';
   }
@@ -733,7 +846,7 @@ export const companiesService = {
 };
 
 // =================== EXPORT DEFAULT SERVICE ===================
-const csmService = {
+export const csmService = {
   vendors: vendorsService,
   assessmentSummaries: assessmentSummariesService,
   forms: formsService,
@@ -744,4 +857,6 @@ const csmService = {
   }
 };
 
+//  Keep default export for backward compatibility
 export default csmService;
+

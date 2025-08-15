@@ -2,8 +2,8 @@
 // 📁 src/services/csmVendorService.ts - แก้ไข errors
 // ===================================================================
 import { 
-  collection, doc, getDocs, getDoc, addDoc, updateDoc, query, 
-  where, orderBy, writeBatch,Timestamp  } from 'firebase/firestore';
+  collection, doc, getDocs, getDoc, query, where, orderBy,  writeBatch,
+  addDoc, updateDoc, Timestamp } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { cacheService } from './cacheService';
 import type { CSMVendor, Company, CSMAssessment } from '../types';
@@ -127,6 +127,48 @@ export const csmVendorService = {
       throw error;
     }
   },
+
+  async getById(id: string): Promise<CSMVendor | null> {
+    if (!id || typeof id !== 'string' || id.trim() === '') {
+      throw new Error('Invalid vendor ID');
+    }
+
+    try {
+      console.log('🔍 Fetching vendor by ID:', id);
+      
+      const docSnap = await getDoc(doc(db, 'csmVendors', id));
+      
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        const vendor: CSMVendor = {
+          id: docSnap.id,
+          companyId: data.companyId || '',
+          vdCode: data.vdCode || '',
+          vdName: data.vdName || '',
+          freqAss: data.freqAss || '365',
+          isActive: data.isActive !== false,
+          category: data.category || '',
+          workingArea: Array.isArray(data.workingArea) ? data.workingArea : [],
+          createdAt: data.createdAt instanceof Timestamp ? data.createdAt.toDate() : 
+                     data.createdAt instanceof Date ? data.createdAt : new Date(),
+          updatedAt: data.updatedAt instanceof Timestamp ? data.updatedAt.toDate() : 
+                     data.updatedAt instanceof Date ? data.updatedAt : new Date(),
+          createdBy: data.createdBy || '',
+          lastUpdatedBy: data.lastUpdatedBy || data.createdBy || ''
+        };
+        
+        console.log('✅ Vendor found:', vendor.vdName);
+        return vendor;
+      } else {
+        console.log('❌ Vendor not found');
+        return null;
+      }
+    } catch (error) {
+      console.error('❌ Error fetching vendor by ID:', error);
+      throw new Error('Failed to fetch vendor');
+    }
+  },
+
 
   async getByCompanyId(companyId: string): Promise<CSMVendor[]> {
     const cacheKey = `csm-vendors-company-${companyId}`;

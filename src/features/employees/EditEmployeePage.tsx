@@ -74,7 +74,7 @@ export default function EditEmployeeForm() {
       // eslint-disable-next-line 
       const updatedData: any = {
           ...normalizedData,
-          lastUpdateBy: user?.email || 'System',
+          lastUpdatedBy: user?.email || 'System',
           lastUpdateAt: serverTimestamp(),
       };
 

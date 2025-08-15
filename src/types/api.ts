@@ -93,7 +93,7 @@ export interface LoginResponse {
     id: string;
     email: string;
     name: string;
-    role: string;
+    roles: string[];
   };
   token: string;
   refreshToken: string;

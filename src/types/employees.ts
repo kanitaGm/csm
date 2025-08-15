@@ -28,7 +28,7 @@ export interface BaseEmployeeData {
   company?: string;
   companyId?: string;
   plantId?: string| null; 
-  employeeType?: 'employee' | 'contractor' | 'transporter' | 'driver' | '';    
+  employeeType?: 'employee' | 'contractor' | 'transporter' | 'driver' | 'pending' | '';
   status: 'active' | 'inactive' | 'terminated' | 'pending' | 'blacklist';
   createdAt: Timestamp | Date | string; 
   updatedAt?: Timestamp | Date | string; 
@@ -44,7 +44,7 @@ export interface EmployeeFormState extends Partial<BaseEmployeeData> {
   zoneId?: string;
   countryId?: string;
   startDate?: string | Date;
-  lastUpdateBy?: string;
+  lastUpdatedBy?: string;
   searchKeywords?: string[];
 }
 

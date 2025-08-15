@@ -206,7 +206,7 @@ const CSMReportsPage: React.FC = () => {
     return (
       <div className="min-h-screen py-8 bg-gray-50">
         <div className="px-4 mx-auto max-w-7xl sm:px-6 lg:px-8">
-          <SkeletonLoader lines={8} />
+          <SkeletonLoader rows={8} />
         </div>
       </div>
     );

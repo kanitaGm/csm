@@ -401,7 +401,7 @@ const CSMListPage: React.FC = () => {
                 [
                   { value: 'all', label: 'ทุกระดับ' },
                   { value: 'Low', label: 'ความเสี่ยงต่ำ' },
-                  { value: 'Medium', label: 'ความเสี่ยงกลาง' },
+                  { value: 'Moderate', label: 'ความเสี่ยงกลาง' },
                   { value: 'High', label: 'ความเสี่ยงสูง' }
                 ].find(opt => opt.value === filters.riskLevel) || null
               }
@@ -409,7 +409,7 @@ const CSMListPage: React.FC = () => {
               options={[
                 { value: 'all', label: 'ทุกระดับ' },
                 { value: 'Low', label: 'ความเสี่ยงต่ำ' },
-                { value: 'Medium', label: 'ความเสี่ยงกลาง' },
+                { value: 'Moderate', label: 'ความเสี่ยงกลาง' },
                 { value: 'High', label: 'ความเสี่ยงสูง' }
               ]}
               placeholder="ระดับความเสี่ยง"
@@ -558,7 +558,7 @@ const VendorCard: React.FC<{ vendor: VendorWithStatus; onClick: (vendor: CSMVend
     switch (level) {
       case 'Low':
         return { color: 'text-green-700 bg-green-100', text: 'ต่ำ' };
-      case 'Medium':
+      case 'Moderate':
         return { color: 'text-yellow-700 bg-yellow-100', text: 'กลาง' };
       case 'High':
         return { color: 'text-red-700 bg-red-100', text: 'สูง' };

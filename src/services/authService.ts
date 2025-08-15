@@ -65,11 +65,11 @@ export class AuthenticationService {
         // 🔧 แก้ไข: ใช้ permissions.role และแปลงเป็น array
         let userRoles: Role[];
         
-        if (Array.isArray(permissions.role)) {
-            userRoles = permissions.role;
+        if (Array.isArray(permissions.roles)) {
+            userRoles = permissions.roles;
             //console.log(`[AuthService] User already has roles array:`, userRoles);
         } else {
-            const roleString = permissions.role as string;
+            const roleString = permissions.roles as string;
             
             if (roleString && roleString.includes(',')) {
                 userRoles = roleString.split(',').map(r => r.trim() as Role);
@@ -96,14 +96,14 @@ export class AuthenticationService {
             profile: profile || { displayName: firebaseUser.displayName || "User" },
             loginType: loginType
         };
-        /*
+        
         console.log("[AuthService] AppUser created successfully:", {
             uid: appUser.uid,
             empId: appUser.empId,
             roles: appUser.roles,
             loginType: appUser.loginType,
             permissions: appUser.permissions
-        });*/
+        });
         
         return appUser;
     }
@@ -114,8 +114,8 @@ export class AuthenticationService {
         
         const combined = JSON.parse(JSON.stringify(DEFAULT_PERMISSIONS)) as UserRole['permissions'];
         
-        roles.forEach(role => {
-            const rolePermissions = ROLE_PERMISSIONS[role];
+        roles.forEach(roles => {
+            const rolePermissions = ROLE_PERMISSIONS[roles];
             if (rolePermissions) {
                 if (rolePermissions.csm && combined.csm) {
                     Object.assign(combined.csm, rolePermissions.csm);
@@ -391,13 +391,13 @@ export class AuthenticationService {
 
             // ขั้นตอน 4: แปลง roles
             let userRoles: Role[];
-            if (Array.isArray(userRecord.role)) {
-                userRoles = userRecord.role;
+            if (Array.isArray(userRecord.roles)) {
+                userRoles = userRecord.roles;
             } else if (Array.isArray(userRecord.roles)) {
                 userRoles = userRecord.roles;
             } else {
                 // Handle string role
-                const roleString = userRecord.role || userRecord.roles;
+                const roleString = userRecord.roles || userRecord.roles;
                 if (roleString && typeof roleString === 'string') {
                     userRoles = roleString.includes(',') 
                         ? roleString.split(',').map(r => r.trim() as Role)

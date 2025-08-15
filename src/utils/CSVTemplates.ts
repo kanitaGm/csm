@@ -71,7 +71,7 @@ export const EMPLOYEE_TEMPLATE: CSVTemplateConfig = {
     status: 'active',
     createdAt: () => new Date(),
     createdBy: (userEmail?: string) => userEmail || 'system',
-    lastUpdateBy: (userEmail?: string) => userEmail || 'system'
+    lastUpdatedBy: (userEmail?: string) => userEmail || 'system'
   },  
   fieldDescriptions: {
     'empId': 'Employee ID (Unique)',
@@ -293,7 +293,7 @@ export const TRAINING_TEMPLATE: CSVTemplateConfig = {
   defaultValues: {
     createdAt: () => new Date(),
     createdBy: (userEmail?: string) => userEmail || 'system',
-    lastUpdateBy: (userEmail?: string) => userEmail || 'system'
+    lastUpdatedBy: (userEmail?: string) => userEmail || 'system'
   },
   
   fieldDescriptions: {
@@ -424,12 +424,12 @@ export const USER_ROLES_TEMPLATE: CSVTemplateConfig = {
     empId: 'empId',
     email: 'email',
     displayName: 'displayName',
-    role: 'role',
+    roles: 'roles',
     managedCountry: 'managedCountry',
     managedZones: 'managedZones',
     managedSites: 'managedSites'
   },  
-  requiredFields: ['email', 'empId', 'role','displayName'],
+  requiredFields: ['email', 'empId', 'roles','displayName'],
   dateFields: [],  
   defaultValues: {
     isActive: true,
@@ -442,7 +442,7 @@ export const USER_ROLES_TEMPLATE: CSVTemplateConfig = {
     'empId': 'Employee ID',
     'email': 'User Email Address',
     'displayName': 'User Fullname',
-    'role': 'User Role (superadmin/admin/regionalAdmin/zoneAdmin/siteAdmin/plantAdmin/user/guest)',
+    'roles': 'User Role (superadmin/admin/regionalAdmin/zoneAdmin/siteAdmin/plantAdmin/user/guest)',
     'managedCountry': 'Managed Country',
     'managedZones': 'Managed Zones (comma-separated)',
     'managedSites': 'Managed Sites (comma-separated)'
@@ -466,7 +466,7 @@ export const USER_ROLES_TEMPLATE: CSVTemplateConfig = {
       return null;
     },
     
-    role: (value: unknown) => {
+    roles: (value: unknown) => {
       const validRoles = ['superadmin', 'admin', 'regionalAdmin', 'zoneAdmin', 'siteAdmin', 'plantAdmin', 'user', 'guest'];
       if (!isString(value) || !value.trim()) {
         return 'Role is required';
@@ -484,7 +484,7 @@ export const USER_ROLES_TEMPLATE: CSVTemplateConfig = {
       }
       return value;
     },    
-    role: (value: unknown) => {
+    roles: (value: unknown) => {
       if (isString(value)) {
         return value.toLowerCase().trim();
       }

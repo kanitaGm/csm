@@ -586,7 +586,7 @@ export default function ImportCSVPage() {
           
           // Add metadata
           payload.createdAt = serverTimestamp();
-          payload.lastUpdateBy = user?.email || 'CSV Import';
+          payload.lastUpdatedBy = user?.email || 'CSV Import';
           
           //console.log(`Importing record ${i + 1}/${rowsToImport.length} to collection "${selectedTemplate.collection}":`, payload);
           

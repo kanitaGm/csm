@@ -64,8 +64,8 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
     }
     
     // Legacy: if user.role exists (old format)
-    if ((user as any).role) {
-      const legacyRole = (user as any).role;
+    if ((user as any).roles) {
+      const legacyRole = (user as any).roles;
       if (typeof legacyRole === 'string') {
         return legacyRole.includes(',') 
           ? legacyRole.split(',').map((r: string) => r.trim() as Role)
@@ -163,8 +163,8 @@ export const usePermissions = () => {
     canExportData: () => PermissionManager.hasPermission(userRoles, 'csm', 'canExportData'),
     canManageUsers: () => PermissionManager.hasPermission(userRoles, 'system', 'canManageUsers'),
     canViewReports: () => PermissionManager.hasPermission(userRoles, 'csm', 'canViewReports'),
-    hasRole: (role: Role) => userRoles.includes(role),
-    hasAnyRole: (roles: Role[]) => roles.some(role => userRoles.includes(role)),
+    hasRole: (roles: Role) => userRoles.includes(roles),
+    hasAnyRole: (roles: Role[]) => roles.some(roles => userRoles.includes(roles)),
     userRoles,
     displayRoles: PermissionManager.formatRolesForDisplay(userRoles),
     highestRole: PermissionManager.getHighestRole(userRoles)
@@ -205,9 +205,9 @@ const UnauthorizedPage: React.FC = () => {
         <div className="mb-6 p-4 bg-gray-50 rounded-lg">
           <p className="text-sm text-gray-700 mb-2">สิทธิ์ปัจจุบันของคุณ:</p>
           <div className="space-y-1">
-            {userRoles.map(role => (
-              <span key={role} className="inline-block px-2 py-1 mr-1 text-xs bg-blue-100 text-blue-800 rounded">
-                {PermissionManager.formatRolesForDisplay([role])}
+            {userRoles.map(roles => (
+              <span key={roles} className="inline-block px-2 py-1 mr-1 text-xs bg-blue-100 text-blue-800 rounded">
+                {PermissionManager.formatRolesForDisplay([roles])}
               </span>
             ))}
           </div>

@@ -51,7 +51,7 @@ export interface FilterOptions {
   company?: string;
   site?: string;
   plant?: string;
-  employeeType?: string;
+  employeeType?:  'employee' | 'contractor' | 'transporter' | 'driver' | '';  
   status?: string;
   department?: string;
   level?: string;

@@ -544,8 +544,8 @@ export default function EnhancedEmployeeListPage() {
 
   // ✅ Memoized permission check
   const canManage = useMemo(() => {
-    return Boolean(user?.role && ['admin', 'superadmin'].includes(user.role));
-  }, [user?.role]);
+    return Boolean(user?.roles && ['admin', 'superadmin'].includes(user.roles[0]));
+  }, [user?.roles]);
 
   // ✅ Filtered and sorted employees
   const filteredEmployees = useMemo(() => {

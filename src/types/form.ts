@@ -22,6 +22,20 @@ export interface OptionType {
   value: string;
   label: string;
 }
+export interface SelectOption {
+  value: string;
+  label: string;
+  description?: string;
+  disabled?: boolean;
+}
+
+export type Score = 'n/a' | '0' | '1' | '2' | '3' | '4' | '5' |'';
+export interface ScoreOption {
+  value: Score;
+  label: string;
+  description: string;
+  color: string;
+}
 
 export interface FileAttachment {
   id: string;
@@ -245,7 +259,7 @@ export interface FormSubmission {
     name?: string;
     email?: string;
     department?: string;
-    role?: string;
+    roles?: string[];
     ipAddress?: string;
     userAgent?: string;
     location?: string;
