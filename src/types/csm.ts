@@ -69,12 +69,12 @@ export interface CSMFormDoc {
 export interface CSMAuditor {
   name: string;
   email: string;
-  phone?: string;
-  position?: string;
 }
 
-//  แก้ไข CSMAuditee - ลบ unknown property
-export type CSMAuditee = CSMAuditor;
+
+export interface CSMAuditee extends CSMAuditor {
+  position?: string;
+}
 
 export interface CSMAssessmentAnswer {
   ckItem: string;

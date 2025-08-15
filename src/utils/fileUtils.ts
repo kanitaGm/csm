@@ -1,16 +1,9 @@
-// src/utils/fileUtils.ts - Simple Version
+// src/utils/fileUtils.ts - Firebase & Legacy Support Only
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
-import imageCompression from 'browser-image-compression'; 
 import { storage } from '../config/firebase';
 import { sanitizeEmpId } from '../utils/employeeUtils';
-
-interface CompressionResult {
-  compressedFile: File;
-  previewURL: string;
-  compressionRatio: number;
-  originalSize: number;
-  compressedSize: number;
-}
+import { compressFile } from './fileCompression';
+import type { CompressionResult } from './fileCompression';
 
 interface UploadProgress {
   bytesTransferred: number;
@@ -18,58 +11,10 @@ interface UploadProgress {
   progress: number;
 }
 
-/**
- *  Simple image compression without Web Workers
- */
-export const compressAndCreatePreview = async (
-  file: File,
-  onProgress?: (progress: number) => void
-): Promise<CompressionResult> => {
-  // Validate file type
-  if (!file.type.startsWith('image/')) {
-    throw new Error('File must be an image');
-  }
 
-  // Check file size limit (10MB)
-  const MAX_FILE_SIZE = 10 * 1024 * 1024;
-  if (file.size > MAX_FILE_SIZE) {
-    throw new Error('File size must be less than 10MB');
-  }
-
-  const options = {
-    maxSizeMB: 0.2, // 200KB max
-    maxWidthOrHeight: 600,
-    initialQuality: 0.8,
-    fileType: 'image/webp' as const,
-    useWebWorker: false, // Disable for compatibility
-    onProgress: onProgress ? (progress: number) => {
-      onProgress(Math.round(progress * 100));
-    } : undefined,
-  };
-
-  try {
-    const compressedFile = await imageCompression(file, options);
-    const previewURL = URL.createObjectURL(compressedFile);
-    const compressionRatio = file.size > 0 
-      ? ((file.size - compressedFile.size) / file.size) * 100 
-      : 0;
-
-    return {
-      compressedFile,
-      previewURL,
-      compressionRatio,
-      originalSize: file.size,
-      compressedSize: compressedFile.size
-    };
-
-  } catch (error) {
-    console.error('Error during image compression:', error);
-    throw new Error(`Image compression failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-  }
-};
 
 /**
- *  Simple employee photo upload
+ * Employee photo upload with compression using new system
  */
 export const uploadEmployeePhoto = async (
   photoFile: File | null,
@@ -88,8 +33,15 @@ export const uploadEmployeePhoto = async (
       throw new Error('File must be an image');
     }
 
-    // Compress image first
-    const compressionResult = await compressAndCreatePreview(photoFile);
+    // Use new compression system
+    const compressionResult = await compressFile(photoFile, {
+      imageOptions: {
+        maxSizeMB: 0.2,
+        maxWidthOrHeight: 600,
+        quality: 0.8,
+        fileType: 'image/webp'
+      }
+    });
     
     // Create storage path
     const empIdForPath = sanitizeEmpId(empId);
@@ -97,7 +49,7 @@ export const uploadEmployeePhoto = async (
     const newFilename = `${empIdForPath}_profile_${timestamp}.webp`;
     const storageRef = ref(storage, `employees/${empIdForPath}/photo/${newFilename}`);
     
-    // Upload with progress tracking
+    // Upload compressed file with progress tracking
     const uploadTask = uploadBytesResumable(storageRef, compressionResult.compressedFile);
     
     return new Promise<string>((resolve, reject) => {
@@ -121,8 +73,10 @@ export const uploadEmployeePhoto = async (
           try {
             const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
             
-            // Clean up preview URL
-            URL.revokeObjectURL(compressionResult.previewURL);
+            // Clean up preview URL if exists
+            if (compressionResult.previewURL) {
+              URL.revokeObjectURL(compressionResult.previewURL);
+            }
             
             resolve(downloadURL);
           } catch (error) {
@@ -139,115 +93,75 @@ export const uploadEmployeePhoto = async (
 };
 
 /**
- *  Simple file validation
+ * Upload multiple files to Firebase Storage
  */
-export const validateFile = (
-  file: File,
+export const uploadMultipleFiles = async (
+  files: File[],
+  storagePath: string,
   options: {
-    maxSize?: number;
-    allowedTypes?: string[];
+    onProgress?: (fileIndex: number, totalFiles: number, fileProgress: number) => void;
+    onFileComplete?: (downloadURL: string, fileIndex: number, originalFile: File) => void;
+    compressFiles?: boolean;
   } = {}
-): { valid: boolean; error?: string } => {
-  const {
-    maxSize = 10 * 1024 * 1024, // 10MB default
-    allowedTypes = ['image/jpeg', 'image/png', 'image/webp']
-  } = options;
+): Promise<string[]> => {
+  const { onProgress, onFileComplete, compressFiles = true } = options;
+  const downloadURLs: string[] = [];
 
-  // Check file size
-  if (file.size > maxSize) {
-    return {
-      valid: false,
-      error: `File size (${Math.round(file.size / 1024 / 1024)}MB) exceeds maximum allowed size (${Math.round(maxSize / 1024 / 1024)}MB)`
-    };
-  }
-
-  // Check file type
-  if (!allowedTypes.includes(file.type)) {
-    return {
-      valid: false,
-      error: `File type ${file.type} is not allowed. Allowed types: ${allowedTypes.join(', ')}`
-    };
-  }
-
-  return { valid: true };
-};
-
-/**
- *  Create simple thumbnail
- */
-export const createThumbnail = async (
-  file: File,
-  size: number = 150
-): Promise<{ thumbnailFile: File; thumbnailURL: string }> => {
-  if (!file.type.startsWith('image/')) {
-    throw new Error('File must be an image');
-  }
-
-  try {
-    const options = {
-      maxSizeMB: 0.05, // 50KB for thumbnail
-      maxWidthOrHeight: size,
-      initialQuality: 0.7,
-      fileType: 'image/webp' as const,
-      useWebWorker: false
-    };
-
-    const thumbnailFile = await imageCompression(file, options);
-    const thumbnailURL = URL.createObjectURL(thumbnailFile);
-
-    return { thumbnailFile, thumbnailURL };
-
-  } catch (error) {
-    console.error('Error creating thumbnail:', error);
-    throw new Error(`Thumbnail creation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-  }
-};
-
-/**
- *  Memory cleanup utility
- */
-export const cleanupObjectURLs = (urls: string[]): void => {
-  urls.forEach(url => {
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    
     try {
-      URL.revokeObjectURL(url);
-    } catch (error) {
-      console.warn('Failed to revoke object URL:', url, error);
-    }
-  });
-};
-
-/**
- *  Convert file to base64 (for small files)
- */
-export const fileToBase64 = (file: File): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    // Check file size limit (1MB for base64)
-    if (file.size > 1024 * 1024) {
-      reject(new Error('File too large for base64 conversion (max 1MB)'));
-      return;
-    }
-
-    const reader = new FileReader();
-    
-    reader.onload = () => {
-      const result = reader.result;
-      if (typeof result === 'string') {
-        resolve(result);
-      } else {
-        reject(new Error('Failed to convert file to base64'));
+      // Compress file if enabled and file type is supported
+      let fileToUpload = file;
+      if (compressFiles && (file.type.startsWith('image/') || file.type === 'application/pdf')) {
+        const compressionResult = await compressFile(file);
+        fileToUpload = compressionResult.compressedFile;
       }
-    };
-    
-    reader.onerror = () => {
-      reject(new Error('Error reading file'));
-    };
-    
-    reader.readAsDataURL(file);
-  });
+
+      // Create unique filename
+      const timestamp = Date.now();
+      const randomSuffix = Math.random().toString(36).substr(2, 9);
+      const filename = `${timestamp}_${randomSuffix}_${file.name}`;
+      const storageRef = ref(storage, `${storagePath}/${filename}`);
+      
+      // Upload file
+      const uploadTask = uploadBytesResumable(storageRef, fileToUpload);
+      
+      const downloadURL = await new Promise<string>((resolve, reject) => {
+        uploadTask.on(
+          'state_changed',
+          (snapshot) => {
+            const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+            onProgress?.(i, files.length, Math.round(progress));
+          },
+          (error) => {
+            reject(error);
+          },
+          async () => {
+            try {
+              const url = await getDownloadURL(uploadTask.snapshot.ref);
+              resolve(url);
+            } catch (error) {
+              reject(error);
+            }
+          }
+        );
+      });
+
+      downloadURLs.push(downloadURL);
+      onFileComplete?.(downloadURL, i, file);
+
+    } catch (error) {
+      console.error(`Error uploading file ${file.name}:`, error);
+      throw new Error(`Failed to upload ${file.name}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  return downloadURLs;
 };
 
 /**
- *  Download file from URL
+ * Download file from URL with better error handling
  */
 export const downloadFile = async (
   url: string,
@@ -283,7 +197,77 @@ export const downloadFile = async (
 };
 
 /**
- *  Get file metadata
+ * Delete file from Firebase Storage
+ */
+export const deleteFileFromStorage = async (downloadURL: string): Promise<void> => {
+  try {
+    // Extract storage path from download URL
+    const url = new URL(downloadURL);
+    // Match Firebase Storage URL pattern: /v0/b/{bucket}/o/{path}
+    const pathMatch = url.pathname.match(/\/v0\/b\/[^/]+\/o\/(.+)/);
+    
+    if (!pathMatch) {
+      throw new Error('Invalid Firebase Storage URL');
+    }
+    
+    const storagePath = decodeURIComponent(pathMatch[1]);
+    const fileRef = ref(storage, storagePath);
+    
+    // Delete file
+    const { deleteObject } = await import('firebase/storage');
+    await deleteObject(fileRef);
+    
+  } catch (error) {
+    console.error('Error deleting file from storage:', error);
+    throw new Error(`Failed to delete file: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+};
+
+/**
+ * Convert file to base64 (for small files only)
+ */
+export const fileToBase64 = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    // Check file size limit (1MB for base64)
+    if (file.size > 1024 * 1024) {
+      reject(new Error('File too large for base64 conversion (max 1MB)'));
+      return;
+    }
+
+    const reader = new FileReader();
+    
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result === 'string') {
+        resolve(result);
+      } else {
+        reject(new Error('Failed to convert file to base64'));
+      }
+    };
+    
+    reader.onerror = () => {
+      reject(new Error('Error reading file'));
+    };
+    
+    reader.readAsDataURL(file);
+  });
+};
+
+/**
+ * Memory cleanup utility
+ */
+export const cleanupObjectURLs = (urls: string[]): void => {
+  urls.forEach(url => {
+    try {
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.warn('Failed to revoke object URL:', url, error);
+    }
+  });
+};
+
+/**
+ * Get file metadata
  */
 export const getFileMetadata = (file: File): {
   name: string;
@@ -309,4 +293,84 @@ export const getFileMetadata = (file: File): {
     lastModified: file.lastModified,
     sizeFormatted: formatSize(file.size)
   };
+};
+
+/**
+ * Batch upload with compression and progress tracking
+ */
+export const uploadCompressedFiles = async (
+  files: File[],
+  storagePath: string,
+  options: {
+    onProgress?: (current: number, total: number, currentFileProgress: number) => void;
+    onFileComplete?: (result: { downloadURL: string; originalFile: File; compressionInfo: CompressionResult }) => void;
+    maxConcurrent?: number;
+  } = {}
+): Promise<Array<{ downloadURL: string; originalFile: File; compressionInfo: CompressionResult }>> => {
+  const { onProgress, onFileComplete, maxConcurrent = 3 } = options;
+  const results: Array<{ downloadURL: string; originalFile: File; compressionInfo: CompressionResult }> = [];
+  
+  // Process files in batches
+  for (let i = 0; i < files.length; i += maxConcurrent) {
+    const batch = files.slice(i, i + maxConcurrent);
+    
+    const batchPromises = batch.map(async (file, batchIndex) => {
+      const fileIndex = i + batchIndex;
+      
+      try {
+        // Compress file first
+        const compressionResult = await compressFile(file, {
+          onProgress: (progress) => {
+            onProgress?.(fileIndex + 1, files.length, progress);
+          }
+        });
+
+        // Create unique filename
+        const timestamp = Date.now();
+        const randomSuffix = Math.random().toString(36).substr(2, 9);
+        const filename = `${timestamp}_${randomSuffix}_${file.name}`;
+        const storageRef = ref(storage, `${storagePath}/${filename}`);
+        
+        // Upload compressed file
+        const uploadTask = uploadBytesResumable(storageRef, compressionResult.compressedFile);
+        
+        const downloadURL = await new Promise<string>((resolve, reject) => {
+          uploadTask.on(
+            'state_changed',
+            (snapshot) => {
+              const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+              onProgress?.(fileIndex + 1, files.length, Math.round(progress));
+            },
+            reject,
+            async () => {
+              try {
+                const url = await getDownloadURL(uploadTask.snapshot.ref);
+                resolve(url);
+              } catch (error) {
+                reject(error);
+              }
+            }
+          );
+        });
+
+        const result = {
+          downloadURL,
+          originalFile: file,
+          compressionInfo: compressionResult
+        };
+
+        onFileComplete?.(result);
+        return result;
+
+      } catch (error) {
+        console.error(`Error uploading file ${file.name}:`, error);
+        throw error;
+      }
+    });
+
+    const batchResults = await Promise.all(batchPromises);
+    results.push(...batchResults);
+  }
+
+  return results;
 };

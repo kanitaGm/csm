@@ -1,26 +1,31 @@
 // ========================================
-// CSMEvaluatePage.tsx - Fixed Version with Working Data Persistence
+// scr/features/csm/pages/CSMEvaluatePage.tsx - Fixed Version with Layout and Save Issues
 // ========================================
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../../../config/firebase';
 import { 
   ArrowLeft, Save, CheckCircle, AlertTriangle, 
-  FileText, Building2, Camera, Users, Shield, Send, 
-  ChevronRight, ChevronLeft, Upload, X
+  FileText, Building2,  Users, Shield, Send, 
+  ChevronRight, ChevronLeft, 
 } from 'lucide-react';
 import { useToast } from '../../../hooks/useToast';
 import { useAuth } from '../../../contexts/AuthContext';
 import { useDebouncedAutoSave } from '../../../hooks/useDebouncedAutoSave';
 import { enhancedCSMService } from '../../../services/enhancedCsmService';
-import { validateFile, getFileMetadata, fileToBase64 } from '../../../utils/fileUtils';
+// เปลี่ยนจาก fileUtils เป็น utils ใหม่
+import { UniversalFileUpload } from '../../../components/ui/UniversalFileUpload';
+import type { FileAttachment } from '../../../hooks/useFileUpload';
+//import { validateFile, getFileMetadata } from '../../../utils';
 import type {  
   CSMAssessment, 
   CSMAssessmentAnswer, 
   CSMAuditor,
   CSMAuditee,
-  AssessmentStatus, // Import from types/csm.ts
+  AssessmentStatus,
 } from '../../../types/csm';
 import type { ScoreOption, Score } from '../../../types/form';
 
@@ -28,31 +33,35 @@ import type { ScoreOption, Score } from '../../../types/form';
 // CONSTANTS & TYPES
 // ========================================
 const SCORE_OPTIONS: ScoreOption[] = [
-  { value: '2', label: '2', description: 'ผ่าน/ดี', color: 'bg-green-500' },
-  { value: '1', label: '1', description: 'ต้องปรับปรุง', color: 'bg-yellow-500' },
-  { value: '0', label: '0', description: 'ไม่ผ่าน/ไม่มี', color: 'bg-red-500' },
-  { value: 'n/a', label: 'N/A', description: 'ไม่เกี่ยวข้อง', color: 'bg-gray-500' }
+  { value: '2', label: '2', description: 'ผ่าน/ดี', color: 'bg-green-400' },
+  { value: '1', label: '1', description: 'ต้องปรับปรุง', color: 'bg-yellow-400' },
+  { value: '0', label: '0', description: 'ไม่ผ่าน/ไม่มี', color: 'bg-red-400' },
+  { value: 'n/a', label: 'N/A', description: 'ไม่เกี่ยวข้อง', color: 'bg-gray-400' }
 ];
 
 const RISK_LEVELS = [
-  { value: 'Low', label: 'ต่ำ', color: 'bg-green-100 text-green-600' },
-  { value: 'Medium', label: 'ปานกลาง', color: 'bg-yellow-100 text-yellow-600' },
-  { value: 'High', label: 'สูง', color: 'bg-red-100 text-red-600' }
+  { value: 'Low', label: 'ต่ำ', color: 'bg-green-100 text-green-500' },
+  { value: 'Moderate', label: 'ปานกลาง', color: 'bg-yellow-100 text-yellow-500' },
+  { value: 'High', label: 'สูง', color: 'bg-red-100 text-red-500' }
 ];
 
+// ========================================
 interface QuestionProgress {
   completed: number;
   total: number;
   percentage: number;
 }
 
-interface FileAttachment {
+// ========================================
+interface QuestionFileAttachment {
   id: string;
   name: string;
   size: number;
   type: string;
   url?: string;
   base64?: string;
+  compressionRatio?: number;
+  originalSize?: number;
 }
 
 // ========================================
@@ -94,9 +103,7 @@ const validateRequiredFields = (
 ): boolean => {
   return !!(
     auditor.name && 
-    auditor.email && 
     auditee.name && 
-    auditee.email && 
     assessmentInfo.riskLevel &&
     assessmentInfo.workingArea &&
     assessmentInfo.category
@@ -162,163 +169,116 @@ const AssessmentStatusBadge: React.FC<{
   );
 };
 
-// File Upload Component - ใช้ fileUtils.ts
-const FileUploadComponent: React.FC<{
-  files: FileAttachment[];
-  onChange: (files: FileAttachment[]) => void;
+
+// File Upload Component // Enhanced File Upload Wrapper for Question
+const QuestionFileUpload: React.FC<{
+  files: QuestionFileAttachment[];
+  onChange: (files: QuestionFileAttachment[]) => void;
   disabled?: boolean;
-}> = ({ files, onChange, disabled }) => {
+  questionIndex: number;
+}> = ({ files, onChange, disabled, questionIndex }) => {
   const { addToast } = useToast();
 
-  const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFiles = Array.from(event.target.files || []);
-    const newFiles: FileAttachment[] = [];
-    
-    for (const file of selectedFiles) {
-      try {
-        // Validate file using existing utility
-        const validation = validateFile(file, {
-          maxSize: 10 * 1024 * 1024, // 10MB
-          allowedTypes: ['image/jpeg', 'image/png', 'image/webp', 'application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']
-        });
+  // Convert between old and new file format
+  const convertToUniversalFiles = (oldFiles: QuestionFileAttachment[]): FileAttachment[] => {
+    return oldFiles.map(file => ({
+      id: file.id,
+      name: file.name,
+      size: file.size,
+      type: file.type,
+      url: file.url,
+      base64: file.base64,
+      status: 'completed',
+      compressionRatio: file.compressionRatio || 0
+    }));
+  };
 
-        if (!validation.valid) {
-          addToast({
-            type: 'error',
-            title: 'ไฟล์ไม่ถูกต้อง',
-            message: validation.error || 'ไฟล์ไม่ถูกต้อง'
-          });
-          continue;
-        }
+  const convertFromUniversalFiles = (newFiles: FileAttachment[]): QuestionFileAttachment[] => {
+    return newFiles.map(file => ({
+      id: file.id,
+      name: file.name,
+      size: file.size,
+      type: file.type,
+      url: file.url,
+      base64: file.base64,
+      compressionRatio: file.compressionRatio,
+      originalSize: file.compressionRatio ? Math.round(file.size / (1 - file.compressionRatio / 100)) : file.size
+    }));
+  };
 
-        // Get file metadata using existing utility
-        const metadata = getFileMetadata(file);
-        
-        // Convert to base64 for small files (images under 1MB)
-        let base64Data = '';
-        if (file.type.startsWith('image/') && file.size <= 1024 * 1024) {
-          try {
-            base64Data = await fileToBase64(file);
-          } catch (error) {
-            console.warn('Failed to convert to base64:', error);
-          }
-        }
+  const handleFilesChange = (newFiles: FileAttachment[]) => {
+    const convertedFiles = convertFromUniversalFiles(newFiles);
+    onChange(convertedFiles);
 
-        const fileAttachment: FileAttachment = {
-          id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-          name: metadata.name,
-          size: metadata.size,
-          type: metadata.type,
-          url: URL.createObjectURL(file),
-          base64: base64Data
-        };
-        
-        newFiles.push(fileAttachment);
-        
-      } catch (error) {
-        console.error('Error processing file:', error);
-        addToast({
-          type: 'error',
-          title: 'เกิดข้อผิดพลาด',
-          message: `ไม่สามารถประมวลผลไฟล์ ${file.name} ได้`
-        });
-      }
+    // Show summary notification
+    if (newFiles.length > files.length) {
+      const addedCount = newFiles.length - files.length;
+      addToast({
+        type: 'success',
+        title: 'เพิ่มไฟล์แล้ว',
+        message: `เพิ่มไฟล์หลักฐานสำหรับข้อ ${questionIndex + 1} จำนวน ${addedCount} ไฟล์`,
+        duration: 3000
+      });
     }
-    
-    onChange([...files, ...newFiles]);
-  };
-
-  const handleFileRemove = (fileId: string) => {
-    const updatedFiles = files.filter(f => f.id !== fileId);
-    
-    // Cleanup object URLs
-    const fileToRemove = files.find(f => f.id === fileId);
-    if (fileToRemove?.url) {
-      URL.revokeObjectURL(fileToRemove.url);
-    }
-    
-    onChange(updatedFiles);
-  };
-
-  const formatFileSize = (bytes: number) => {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-  };
-
-  const getFileIcon = (fileType: string) => {
-    if (fileType.startsWith('image/')) return <Camera className="w-5 h-5 text-blue-500" />;
-    if (fileType === 'application/pdf') return <FileText className="w-5 h-5 text-red-500" />;
-    return <FileText className="w-5 h-5 text-gray-500" />;
   };
 
   return (
-    <div className="space-y-3">
-      <label className="block text-sm font-medium text-gray-700">
-        แนบไฟล์หลักฐาน (ถ้ามี)
-      </label>
-      
-      {!disabled && (
-        <div className="p-6 text-center transition-colors border-2 border-gray-300 border-dashed rounded-lg hover:border-gray-400">
-          <input
-            type="file"
-            multiple
-            accept="image/*,.pdf,.doc,.docx"
-            onChange={handleFileSelect}
-            className="hidden"
-            id="file-upload"
-          />
-          <label htmlFor="file-upload" className="cursor-pointer">
-            <Upload className="w-8 h-8 mx-auto mb-2 text-gray-400" />
-            <p className="text-sm text-gray-600">
-              คลิกเพื่อเลือกไฟล์ หรือลากไฟล์มาวาง
-            </p>
-            <p className="mt-1 text-xs text-gray-400">
-              รองรับ: JPG, PNG, WebP, PDF, DOC, DOCX (ขนาดไม่เกิน 10MB)
-            </p>
-          </label>
-        </div>
-      )}
+    <UniversalFileUpload
+      files={convertToUniversalFiles(files)}
+      onFilesChange={handleFilesChange}
+      options={{
+        disabled,
+        label: `แนบไฟล์หลักฐาน ข้อ ${questionIndex + 1} (ถ้ามี)`,
+        description: 'รองรับ: JPG, PNG, WebP, PDF, DOC, DOCX (ขนาดไม่เกิน 10MB)',
+        className: '',
+        showPreview: true,
+        showCompressionInfo: true,
+        acceptedFileTypes: 'image/*,.pdf,.doc,.docx',
+        maxFiles: 10,
+        maxFileSize: 10 * 1024 * 1024, // 10MB
+        allowedTypes: ['image/jpeg', 'image/png', 'image/webp', 'application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+        imageOptions: {
+          maxSizeMB: 0.2,
+          maxWidthOrHeight: 600,
+          quality: 0.8,
+          fileType: 'image/webp'
+        },
+        pdfMinSize: 500 * 1024, // 500KB
+        imageMinSize: 100 * 1024, // 100KB
+      }}
+    />
+  );
+};
 
-      {files.length > 0 && (
-        <div className="space-y-2">
-          <h4 className="text-sm font-medium text-gray-700">ไฟล์ที่แนบ ({files.length}):</h4>
-          {files.map((file) => (
-            <div key={file.id} className="flex items-center justify-between p-3 border rounded-lg bg-gray-50">
-              <div className="flex items-center space-x-3">
-                {getFileIcon(file.type)}
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-gray-900 truncate">{file.name}</p>
-                  <p className="text-xs text-gray-500">{formatFileSize(file.size)} • {file.type}</p>
-                </div>
-              </div>
-              <div className="flex items-center space-x-2">
-                {file.url && file.type.startsWith('image/') && (
-                  <img 
-                    src={file.url} 
-                    alt={file.name}
-                    className="object-cover w-10 h-10 rounded"
-                  />
-                )}
-                {!disabled && (
-                  <button
-                    onClick={() => handleFileRemove(file.id)}
-                    className="p-1 text-red-500 hover:text-red-700"
-                    title="ลบไฟล์"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
+// Add this component for showing file attachment summary
+const FileAttachmentSummary: React.FC<{
+  questionFiles: Record<string, QuestionFileAttachment[]>;
+  totalQuestions: number;
+}> = ({ questionFiles, totalQuestions }) => {
+  const totalFiles = Object.values(questionFiles).reduce((sum, files) => sum + files.length, 0);
+  const questionsWithFiles = Object.keys(questionFiles).filter(key => questionFiles[key].length > 0).length;
+  
+  if (totalFiles === 0) return null;
+  
+  return (
+    <div className="p-4 mb-6 border border-blue-200 rounded-lg bg-blue-50">
+      <div className="flex items-center justify-between">
+        <div>
+          <h4 className="text-sm font-medium text-blue-900">📎 สรุปไฟล์แนบ</h4>
+          <p className="text-xs text-blue-800">
+            มีไฟล์แนบทั้งหมด {totalFiles} ไฟล์ ใน {questionsWithFiles} ข้อ จาก {totalQuestions} ข้อ
+          </p>
         </div>
-      )}
+        <div className="text-right">
+          <div className="text-lg font-bold text-blue-900">{totalFiles}</div>
+          <div className="text-xs text-blue-700">ไฟล์</div>
+        </div>
+      </div>
     </div>
   );
 };
+
+
 
 // Question Confirm Button
 const QuestionConfirmButton: React.FC<{
@@ -362,23 +322,19 @@ const ScoreSelector: React.FC<{
   disabled?: boolean;
   allowNA?: boolean;
   questionType?: string;
-}> = ({ value, onChange, disabled, allowNA = true, questionType }) => {
-  
+}> = ({ value, onChange, disabled, allowNA = true, questionType}) => {
+
+  console.log(questionType);
   const availableOptions = allowNA 
     ? SCORE_OPTIONS 
     : SCORE_OPTIONS.filter((opt: ScoreOption) => opt.value !== 'n/a');
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <label className="block text-sm font-medium text-gray-700">
+        <label className="block text-base font-medium text-gray-700">
           คะแนนประเมิน
         </label>
-        {questionType === 'M' && (
-          <span className="px-2 py-1 text-xs text-red-800 bg-red-100 rounded-full">
-            ข้อบังคับ
-          </span>
-        )}
       </div>
       
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -389,7 +345,7 @@ const ScoreSelector: React.FC<{
             onClick={() => onChange(option.value)}
             disabled={disabled}
             className={`
-              relative p-4 rounded-lg border-2 transition-all duration-200 text-center
+              relative p-2 rounded-lg border-2 transition-all duration-200 text-center
               ${value === option.value
                 ? `${option.color} text-white border-transparent shadow-lg transform scale-105`
                 : 'bg-white text-gray-700 border-gray-300 hover:border-gray-400 hover:shadow-md'
@@ -397,228 +353,180 @@ const ScoreSelector: React.FC<{
               ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
             `}
           >
-            <div className="mb-1 text-lg font-bold">{option.label}</div>
+            <div className="mb-1 text-xl font-bold">{option.label}</div>
             <div className="text-xs leading-tight">{option.description}</div>
             {value === option.value && (
-              <div className="absolute -top-2 -right-2">
-                <CheckCircle className="w-6 h-6 text-white bg-green-500 rounded-full" />
+              <div className="absolute -top-1 -right-1">
+                <CheckCircle className="w-8 h-8 text-white bg-green-500 rounded-full" />
               </div>
             )}
           </button>
         ))}
       </div>
-      
-      {value && (
-        <div className="p-3 text-sm text-gray-600 rounded-lg bg-blue-50">
-          <strong>คะแนนที่เลือก:</strong> {SCORE_OPTIONS.find(opt => opt.value === value)?.description}
-        </div>
-      )}
     </div>
   );
 };
 
-// Auditor Form Component
-const AuditorForm: React.FC<{
+// Fixed Layout: Three blocks in a row
+const InfoFormsSection: React.FC<{
   auditor: CSMAuditor;
-  onChange: (auditor: CSMAuditor) => void;
-  disabled?: boolean;
-}> = ({ auditor, onChange, disabled }) => (
-  <div className="p-6 bg-white border rounded-lg shadow-sm">
-    <h3 className="flex items-center mb-4 text-lg font-medium text-gray-900">
-      <Shield className="w-5 h-5 mr-2 text-blue-600" />
-      ข้อมูลผู้ตรวจประเมิน (Auditor)
-    </h3>
-    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-      <div>
-        <label className="block mb-2 text-sm font-medium text-gray-700">
-          ชื่อผู้ตรวจ <span className="text-red-500">*</span>
-        </label>
-        <input
-          type="text"
-          value={auditor.name}
-          onChange={(e) => onChange({ ...auditor, name: e.target.value })}
-          disabled={disabled}
-          className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50"
-          placeholder="ระบุชื่อผู้ตรวจประเมิน"
-          required
-        />
-      </div>
-      <div>
-        <label className="block mb-2 text-sm font-medium text-gray-700">
-          อีเมล <span className="text-red-500">*</span>
-        </label>
-        <input
-          type="email"
-          value={auditor.email}
-          onChange={(e) => onChange({ ...auditor, email: e.target.value })}
-          disabled={disabled}
-          className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50"
-          placeholder="ระบุอีเมลผู้ตรวจประเมิน"
-          required
-        />
-      </div>
-      <div>
-        <label className="block mb-2 text-sm font-medium text-gray-700">
-          เบอร์โทรศัพท์
-        </label>
-        <input
-          type="tel"
-          value={auditor.phone || ''}
-          onChange={(e) => onChange({ ...auditor, phone: e.target.value })}
-          disabled={disabled}
-          className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50"
-          placeholder="ระบุเบอร์โทรศัพท์"
-        />
-      </div>
-      <div>
-        <label className="block mb-2 text-sm font-medium text-gray-700">
-          ตำแหน่ง
-        </label>
-        <input
-          type="text"
-          value={auditor.position || ''}
-          onChange={(e) => onChange({ ...auditor, position: e.target.value })}
-          disabled={disabled}
-          className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50"
-          placeholder="ระบุตำแหน่งงาน"
-        />
-      </div>
-    </div>
-  </div>
-);
-
-// Auditee Form Component  
-const AuditeeForm: React.FC<{
   auditee: CSMAuditee;
-  onChange: (auditee: CSMAuditee) => void;
+  assessmentInfo: { riskLevel: string; workingArea: string; category: string };
+  onAuditorChange: (auditor: CSMAuditor) => void;
+  onAuditeeChange: (auditee: CSMAuditee) => void;
+  onAssessmentInfoChange: (field: string, value: string) => void;
   disabled?: boolean;
-}> = ({ auditee, onChange, disabled }) => (
-  <div className="p-6 bg-white border rounded-lg shadow-sm">
-    <h3 className="flex items-center mb-4 text-lg font-medium text-gray-900">
-      <Users className="w-5 h-5 mr-2 text-green-600" />
-      ข้อมูลผู้รับการตรวจ (Auditee)
-    </h3>
-    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-      <div>
-        <label className="block mb-2 text-sm font-medium text-gray-700">
-          ชื่อผู้รับตรวจ <span className="text-red-500">*</span>
-        </label>
-        <input
-          type="text"
-          value={auditee.name}
-          onChange={(e) => onChange({ ...auditee, name: e.target.value })}
-          disabled={disabled}
-          className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50"
-          placeholder="ระบุชื่อผู้รับการตรวจ"
-          required
-        />
-      </div>
-      <div>
-        <label className="block mb-2 text-sm font-medium text-gray-700">
-          อีเมล <span className="text-red-500">*</span>
-        </label>
-        <input
-          type="email"
-          value={auditee.email}
-          onChange={(e) => onChange({ ...auditee, email: e.target.value })}
-          disabled={disabled}
-          className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50"
-          placeholder="ระบุอีเมลผู้รับการตรวจ"
-          required
-        />
-      </div>
-      <div>
-        <label className="block mb-2 text-sm font-medium text-gray-700">
-          เบอร์โทรศัพท์
-        </label>
-        <input
-          type="tel"
-          value={auditee.phone || ''}
-          onChange={(e) => onChange({ ...auditee, phone: e.target.value })}
-          disabled={disabled}
-          className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50"
-          placeholder="ระบุเบอร์โทรศัพท์"
-        />
-      </div>
-      <div>
-        <label className="block mb-2 text-sm font-medium text-gray-700">
-          ตำแหน่ง
-        </label>
-        <input
-          type="text"
-          value={auditee.position || ''}
-          onChange={(e) => onChange({ ...auditee, position: e.target.value })}
-          disabled={disabled}
-          className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50"
-          placeholder="ระบุตำแหน่งงาน"
-        />
+}> = ({
+  auditor,
+  auditee,
+  assessmentInfo,
+  onAuditorChange,
+  onAuditeeChange,
+  onAssessmentInfoChange,
+  disabled
+}) => (
+  <div className="grid grid-cols-1 gap-4 mb-6 lg:grid-cols-3"> 
+    {/* ข้อมูลการประเมิน */}
+    <div className="p-4 bg-white border rounded-lg shadow-sm">
+      <h3 className="flex items-center mb-3 text-base font-medium text-gray-900">
+        <AlertTriangle className="w-4 h-4 mr-2 text-orange-600" />
+        ข้อมูลการประเมิน
+      </h3>
+      <div className="space-y-3">
+        <div>
+          <label className="block mb-1 text-sm font-medium text-gray-700">
+            ระดับความเสี่ยง <span className="text-red-500">*</span>
+          </label>
+          <select
+            value={assessmentInfo.riskLevel}
+            onChange={(e) => onAssessmentInfoChange('riskLevel', e.target.value)}
+            disabled={disabled}
+            className="w-full p-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50"
+            required
+          >
+            <option value="">เลือกระดับความเสี่ยง</option>
+            {RISK_LEVELS.map(risk => (
+              <option key={risk.value} value={risk.value}>
+                {risk.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block mb-1 text-sm font-medium text-gray-700">
+            พื้นที่ปฏิบัติงาน <span className="text-red-500">*</span>
+          </label>
+          <input
+            type="text"
+            value={assessmentInfo.workingArea}
+            onChange={(e) => onAssessmentInfoChange('workingArea', e.target.value)}
+            disabled={disabled}
+            className="w-full p-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50"
+            placeholder="ระบุพื้นที่ปฏิบัติงาน"
+            required
+          />
+        </div>
+        <div>
+          <label className="block mb-1 text-sm font-medium text-gray-700">
+            หมวดหมู่งาน <span className="text-red-500">*</span>
+          </label>
+          <input
+            type="text"
+            value={assessmentInfo.category}
+            onChange={(e) => onAssessmentInfoChange('category', e.target.value)}
+            disabled={disabled}
+            className="w-full p-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50"
+            placeholder="ระบุหมวดหมู่งาน"
+            required
+          />
+        </div>
       </div>
     </div>
-  </div>
-);
 
-// Assessment Info Form
-const AssessmentInfoForm: React.FC<{
-  riskLevel: string;
-  workingArea: string;
-  category: string;
-  onRiskChange: (risk: string) => void;
-  onWorkingAreaChange: (area: string) => void;
-  onCategoryChange: (category: string) => void;
-  disabled?: boolean;
-}> = ({ riskLevel, workingArea, category, onRiskChange, onWorkingAreaChange, onCategoryChange, disabled }) => (
-  <div className="p-6 bg-white border rounded-lg shadow-sm">
-    <h3 className="flex items-center mb-4 text-lg font-medium text-gray-900">
-      <AlertTriangle className="w-5 h-5 mr-2 text-orange-600" />
-      ข้อมูลการประเมิน
-    </h3>
-    <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-      <div>
-        <label className="block mb-2 text-sm font-medium text-gray-700">
-          ระดับความเสี่ยง <span className="text-red-500">*</span>
-        </label>
-        <select
-          value={riskLevel}
-          onChange={(e) => onRiskChange(e.target.value)}
-          disabled={disabled}
-          className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50"
-          required
-        >
-          <option value="">เลือกระดับความเสี่ยง</option>
-          {RISK_LEVELS.map(risk => (
-            <option key={risk.value} value={risk.value}>
-              {risk.label}
-            </option>
-          ))}
-        </select>
+    {/* ข้อมูลผู้รับการตรวจ (Auditee) */}
+    <div className="p-4 bg-white border rounded-lg shadow-sm">
+      <h3 className="flex items-center mb-3 text-base font-medium text-gray-900">
+        <Users className="w-4 h-4 mr-2 text-green-600" />
+        ข้อมูลผู้รับการตรวจ (Auditee)
+      </h3>
+      <div className="space-y-3">
+        <div>
+          <label className="block mb-1 text-sm font-medium text-gray-700">
+            ชื่อผู้รับตรวจ <span className="text-red-500">*</span>
+          </label>
+          <input
+            type="text"
+            value={auditee.name}
+            onChange={(e) => onAuditeeChange({ ...auditee, name: e.target.value })}
+            disabled={disabled}
+            className="w-full p-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50"
+            placeholder="ระบุชื่อผู้รับการตรวจ"
+            required
+          />
+        </div>
+        <div>
+          <label className="block mb-1 text-sm font-medium text-gray-700">
+            อีเมล
+          </label>
+          <input
+            type="email"
+            value={auditee.email}
+            onChange={(e) => onAuditeeChange({ ...auditee, email: e.target.value })}
+            disabled={disabled}
+            className="w-full p-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50"
+            placeholder="ระบุอีเมลผู้รับการตรวจ"
+          />
+        </div>
+        <div>
+          <label className="block mb-1 text-sm font-medium text-gray-700">
+            ตำแหน่ง
+          </label>
+          <input
+            type="text"
+            value={auditee.position || ''}
+            onChange={(e) => onAuditeeChange({ ...auditee, position: e.target.value })}
+            disabled={disabled}
+            className="w-full p-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50"
+            placeholder="ระบุตำแหน่งงาน"
+          />
+        </div>
       </div>
-      <div>
-        <label className="block mb-2 text-sm font-medium text-gray-700">
-          พื้นที่ปฏิบัติงาน <span className="text-red-500">*</span>
-        </label>
-        <input
-          type="text"
-          value={workingArea}
-          onChange={(e) => onWorkingAreaChange(e.target.value)}
-          disabled={disabled}
-          className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50"
-          placeholder="ระบุพื้นที่ปฏิบัติงาน"
-          required
-        />
-      </div>
-      <div>
-        <label className="block mb-2 text-sm font-medium text-gray-700">
-          หมวดหมู่งาน <span className="text-red-500">*</span>
-        </label>
-        <input
-          type="text"
-          value={category}
-          onChange={(e) => onCategoryChange(e.target.value)}
-          disabled={disabled}
-          className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50"
-          placeholder="ระบุหมวดหมู่งาน"
-          required
-        />
+    </div>
+
+    {/* ข้อมูลผู้ตรวจประเมิน (Auditor) */}
+    <div className="p-4 bg-white border rounded-lg shadow-sm">
+      <h3 className="flex items-center mb-3 text-base font-medium text-gray-900">
+        <Shield className="w-4 h-4 mr-2 text-blue-600" />
+        ข้อมูลผู้ตรวจประเมิน (Auditor)
+      </h3>
+      <div className="space-y-3">
+        <div>
+          <label className="block mb-1 text-sm font-medium text-gray-700">
+            ชื่อผู้ตรวจ <span className="text-red-500">*</span>
+          </label>
+          <input
+            type="text"
+            value={auditor.name}
+            onChange={(e) => onAuditorChange({ ...auditor, name: e.target.value })}
+            disabled={disabled}
+            className="w-full p-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50"
+            placeholder="ระบุชื่อผู้ตรวจประเมิน"
+            required
+          />
+        </div>
+        <div>
+          <label className="block mb-1 text-sm font-medium text-gray-700">
+            อีเมล
+          </label>
+          <input
+            type="email"
+            value={auditor.email}
+            onChange={(e) => onAuditorChange({ ...auditor, email: e.target.value })}
+            disabled={disabled}
+            className="w-full p-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50"
+            placeholder="ระบุอีเมลผู้ตรวจประเมิน"
+          />
+        </div>
       </div>
     </div>
   </div>
@@ -642,14 +550,11 @@ const CSMEvaluatePage: React.FC = () => {
   const [questionFiles, setQuestionFiles] = useState<Record<string, FileAttachment[]>>({});
   const [auditor, setAuditor] = useState<CSMAuditor>({
     name: user?.displayName || '',
-    email: user?.email || '',
-    phone: '',
-    position: ''
+    email: user?.email || ''
   });
   const [auditee, setAuditee] = useState<CSMAuditee>({
     name: '',
     email: '',
-    phone: '',
     position: ''
   });
   const [assessmentInfo, setAssessmentInfo] = useState({
@@ -673,7 +578,6 @@ const CSMEvaluatePage: React.FC = () => {
     if (Array.isArray(user.roles)) {
       userRoles = user.roles;
     } else if (typeof user.roles === 'string') {
-      // Handle comma-separated string of roles
       const rolesString = user.roles as string;
       userRoles = rolesString.split(',').map((r: string) => r.trim()).filter((r: string) => r.length > 0);
     }
@@ -690,7 +594,7 @@ const CSMEvaluatePage: React.FC = () => {
     return hasAccess;
   }, [user?.roles]);
 
-  // Data Fetching
+    // Data Fetching
   const { data: vendor, isLoading: vendorLoading, error: vendorError } = useQuery({
     queryKey: ['csm-vendor', finalVdCode],
     queryFn: async () => {
@@ -747,44 +651,57 @@ const CSMEvaluatePage: React.FC = () => {
   // DATA PERSISTENCE - FIXED AUTO-SAVE
   // ========================================
   
-  // Create assessment save function
-  const createAssessmentData = useCallback((overrides: Partial<CSMAssessment> = {}): Partial<CSMAssessment> => {
-    if (!vendor || !form) {
-      throw new Error('Missing vendor or form data');
-    }
+  // Create assessment save function - FIXED ID generation
+const createAssessmentData = useCallback((overrides: Partial<CSMAssessment> = {}): Partial<CSMAssessment> => {
+  if (!vendor || !form) {
+    throw new Error('Missing vendor or form data');
+  }
 
-    const currentStatus = calculateAssessmentStatus(answers, confirmations, form.fields.length);
-    const currentProgress = calculateProgress(answers, confirmations, form.fields.length);
-    
-    // Merge confirmations into answers properly
-    const answersWithConfirmations = answers.map((answer, index) => ({
+  const currentStatus = calculateAssessmentStatus(answers, confirmations, form.fields.length);
+  const currentProgress = calculateProgress(answers, confirmations, form.fields.length);
+  
+  // Enhanced file handling in answers
+  answers.map((answer, index) => {
+    const questionFilesForIndex = questionFiles[index] || [];
+    const fileData = questionFilesForIndex.map(file => ({
+      id: file.id,
+      name: file.name,
+      size: file.size,
+      type: file.type,
+      url: file.url,
+      base64: file.base64,
+      compressionRatio: file.compressionRatio,
+      originalSize: file.originalSize
+    }));
+
+    return {
       ...answer,
       isFinish: confirmations[index] || false,
-      files: answer.files || []
-    }));
-    
-    return {
-      companyId: vendor.companyId,
-      vdCode: vendor.vdCode,
-      vdName: vendor.vdName,
-      docReference: vendor.vdCode,
-      formCode: form.formCode || 'CSMChecklist',
-      formVersion: '1.0',
-      vdWorkingArea: assessmentInfo.workingArea || (Array.isArray(vendor.workingArea) ? vendor.workingArea.join(', ') : vendor.workingArea || ''),
-      vdCategory: assessmentInfo.category || vendor.category,
-      riskLevel: assessmentInfo.riskLevel,
-      answers: answersWithConfirmations,
-      auditor,
-      auditee,
-      status: currentStatus,
-      progress: currentProgress,
-      lastModified: new Date(),
-      isActive: true,
-      isFinish: currentStatus === 'completed',
-      updatedAt: new Date(),
-      ...overrides
+      files: fileData // Enhanced file format
     };
-  }, [vendor, form, answers, confirmations, auditor, auditee, assessmentInfo]);
+  });
+  
+  return {
+    companyId: vendor.companyId,
+    vdCode: vendor.vdCode,
+    vdName: vendor.vdName,
+    docReference: vendor.vdCode,
+    formCode: form.formCode || 'CSMChecklist',
+    formVersion: '1.0',
+    vdWorkingArea: assessmentInfo.workingArea || (Array.isArray(vendor.workingArea) ? vendor.workingArea.join(', ') : vendor.workingArea || ''),
+    vdCategory: assessmentInfo.category || vendor.category,
+    riskLevel: assessmentInfo.riskLevel,
+    auditor,
+    auditee,
+    status: currentStatus,
+    progress: currentProgress,
+    lastModified: new Date(),
+    isActive: true,
+    isFinish: currentStatus === 'completed',
+    updatedAt: new Date(),
+    ...overrides
+  };
+}, [vendor, form, answers, confirmations, auditor, auditee, assessmentInfo, questionFiles]);
 
   // Auto-save functionality
   const autoSaveResult = useDebouncedAutoSave(
@@ -803,7 +720,7 @@ const CSMEvaluatePage: React.FC = () => {
         }
 
         // Only auto-save if there are meaningful changes
-        const hasChanges = data.answers.some(a => a.score) || 
+        const hasChanges = data.answers.some(a => a.score || a.comment || a.action) || 
                           data.auditor.name || 
                           data.auditee.name ||
                           Object.keys(data.confirmations).length > 0;
@@ -826,19 +743,29 @@ const CSMEvaluatePage: React.FC = () => {
           confirmationsCount: Object.keys(data.confirmations).length
         });
         
-        const assessmentToSave = createAssessmentData();
+        const assessmentToSave = createAssessmentData();        
+        //let savedAssessment;
+
+    if (existingAssessment?.id) {
+      try {
+        // 🔧 เพิ่มการตรวจสอบ document ใน auto-save ด้วย
+        const docRef = doc(db, 'csmAssessments', existingAssessment.id);
+        const docSnap = await getDoc(docRef);
         
-        let savedAssessment;
-        if (existingAssessment?.id) {
-          console.log('🔄 Updating existing assessment:', existingAssessment.id);
-          savedAssessment = await enhancedCSMService.assessments.update(existingAssessment.id, assessmentToSave);
-          console.log('✅ Auto-save: Updated existing assessment');
+        if (docSnap.exists()) {
+          await enhancedCSMService.assessments.update(existingAssessment.id, assessmentToSave);
         } else {
-          console.log('🆕 Creating new assessment');
+          // Document ไม่มี -> สร้างใหม่
           assessmentToSave.createdAt = new Date();
-          savedAssessment = await enhancedCSMService.assessments.create(assessmentToSave as Omit<CSMAssessment, 'id'>);
-          console.log('✅ Auto-save: Created new assessment:', savedAssessment);
+          await enhancedCSMService.assessments.create(assessmentToSave as Omit<CSMAssessment, 'id'>);
         }
+      } catch (error) {
+        // 🔧 Fallback สำหรับ auto-save
+        console.warn('⚠️ Auto-save update failed, creating new:', error);
+        assessmentToSave.createdAt = new Date();
+        await enhancedCSMService.assessments.create(assessmentToSave as Omit<CSMAssessment, 'id'>);
+      }
+    }
         
         // Invalidate queries to refresh data
         queryClient.invalidateQueries({ queryKey: ['csm-assessment', finalVdCode] });
@@ -860,7 +787,7 @@ const CSMEvaluatePage: React.FC = () => {
     }
   );
 
-  // Manual Save Mutation
+  // Manual Save Mutation - FIXED
   const saveAssessmentMutation = useMutation({
     mutationFn: async (data?: Partial<CSMAssessment>) => {
       if (!vendor || !form) {
@@ -878,15 +805,36 @@ const CSMEvaluatePage: React.FC = () => {
         auditorName: assessmentToSave.auditor?.name,
         auditeeName: assessmentToSave.auditee?.name,
         status: assessmentToSave.status,
-        riskLevel: assessmentToSave.riskLevel
+        riskLevel: assessmentToSave.riskLevel,
+        existingId: existingAssessment?.id
       });
       
-      if (existingAssessment?.id) {
-        return await enhancedCSMService.assessments.update(existingAssessment.id, assessmentToSave);
-      } else {
+    if (existingAssessment?.id) {
+      try {
+        // 🔧 เพิ่มการตรวจสอบว่า document มีอยู่จริงหรือไม่
+        const docRef = doc(db, 'csmAssessments', existingAssessment.id);
+        const docSnap = await getDoc(docRef);
+        
+        if (docSnap.exists()) {
+          // Document มีอยู่ -> update
+          await enhancedCSMService.assessments.update(existingAssessment.id, assessmentToSave);
+          return existingAssessment.id;
+        } else {
+          // Document ไม่มี -> สร้างใหม่
+          console.log('⚠️ Existing assessment document not found, creating new one');
+          assessmentToSave.createdAt = new Date();
+          const newId = await enhancedCSMService.assessments.create(assessmentToSave as Omit<CSMAssessment, 'id'>);
+          return newId;
+        }
+      } catch (error) {
+        // 🔧 Fallback mechanism
+        console.error('❌ Error checking/updating document:', error);
+        console.log('🔄 Fallback: Creating new assessment');
         assessmentToSave.createdAt = new Date();
-        return await enhancedCSMService.assessments.create(assessmentToSave as Omit<CSMAssessment, 'id'>);
+        const newId = await enhancedCSMService.assessments.create(assessmentToSave as Omit<CSMAssessment, 'id'>);
+        return newId;
       }
+    }
     },
     onSuccess: () => {
       addToast({
@@ -895,6 +843,7 @@ const CSMEvaluatePage: React.FC = () => {
         message: 'ข้อมูลการประเมินได้รับการบันทึกแล้ว'
       });
       queryClient.invalidateQueries({ queryKey: ['csm-assessment', finalVdCode] });
+      queryClient.invalidateQueries({ queryKey: ['csm-current-assessments'] });
       refetchAssessment();
     },
     onError: (error) => {
@@ -907,22 +856,45 @@ const CSMEvaluatePage: React.FC = () => {
     }
   });
 
-  // Submit Assessment Mutation
+  // Submit Assessment Mutation - FIXED to use updateWithSummary only on submit
   const submitAssessmentMutation = useMutation({
     mutationFn: async () => {
-      return await saveAssessmentMutation.mutateAsync({
-        status: 'submitted',
-        isFinish: true,
-        finishedAt: new Date(),
-        submittedAt: new Date()
-      });
+      if (!existingAssessment?.id) {
+        // Save first if no existing assessment        
+        const newId = await saveAssessmentMutation.mutateAsync(undefined);
+        // Then update with summary
+        if (!newId) {
+          throw new Error('Failed to create assessment');
+        }        
+        return await enhancedCSMService.assessments.updateWithSummary(newId, {
+          status: 'submitted',
+          isFinish: true,
+          finishedAt: new Date(),
+          submittedAt: new Date()
+        });
+      } else {
+        // Use updateWithSummary for final submission
+        return await enhancedCSMService.assessments.updateWithSummary(existingAssessment.id, {
+          status: 'submitted',
+          isFinish: true,
+          finishedAt: new Date(),
+          submittedAt: new Date()
+        });
+      }
     },
     onSuccess: () => {
       addToast({
         type: 'success',
         title: '✅ ส่งผลประเมินสำเร็จ',
-        message: 'การประเมินได้รับการบันทึกและส่งเรียบร้อยแล้ว'
+        message: 'การประเมินได้รับการบันทึกและส่งเรียบร้อยแล้ว สรุปผลการประเมินได้ถูกสร้างขึ้นแล้ว'
       });
+      
+      // Invalidate all related queries
+      queryClient.invalidateQueries({ queryKey: ['csm-assessment', finalVdCode] });
+      queryClient.invalidateQueries({ queryKey: ['csm-current-assessments'] });
+      queryClient.invalidateQueries({ queryKey: ['csm-assessment-summaries'] });
+      queryClient.invalidateQueries({ queryKey: ['csm-vendors'] });
+      
       navigate('/csm');
     },
     onError: (error) => {
@@ -948,14 +920,11 @@ const CSMEvaluatePage: React.FC = () => {
   }, []);
 
   const handleConfirmChange = useCallback((index: number, confirmed: boolean) => {
-    setConfirmations(prev => {
-      const newConfirmations = {
-        ...prev,
-        [index]: confirmed
-      };
-      console.log('✅ Confirmation changed:', index, confirmed);
-      return newConfirmations;
-    });
+    setConfirmations(prev => ({
+      ...prev,
+      [index]: confirmed
+    }));
+    console.log('✅ Confirmation changed:', index, confirmed);
   }, []);
 
   const handleScoreChange = useCallback((index: number, score: Score) => {
@@ -966,19 +935,17 @@ const CSMEvaluatePage: React.FC = () => {
     });
   }, [handleAnswerChange]);
 
-  const handleFileChange = useCallback((index: number, files: FileAttachment[]) => {
-    setQuestionFiles(prev => ({
-      ...prev,
-      [index]: files
-    }));
-    
-    // Convert to file names for storage
-    const fileNames = files.map(f => f.name);
-    handleAnswerChange(index, { files: fileNames });
-    
-    // Store file data for potential upload later
-    console.log('📎 Files attached to question', index, ':', files.length);
-  }, [handleAnswerChange]);
+
+const handleFileChange = useCallback((index: number, files: QuestionFileAttachment[]) => {
+  setQuestionFiles(prev => ({
+    ...prev,
+    [index]: files
+  }));
+  
+  const fileNames = files.map(f => f.name);  
+  handleAnswerChange(index, { files: fileNames });
+  console.log('📎 Files attached to question', index, ':', files.length);
+}, [handleAnswerChange]);
 
   const handleQuestionSelect = useCallback((index: number) => {
     setSelectedQuestionIndex(index);
@@ -1003,6 +970,14 @@ const CSMEvaluatePage: React.FC = () => {
   const handleSubmitAssessment = useCallback(() => {
     submitAssessmentMutation.mutate();
   }, [submitAssessmentMutation]);
+
+  // Handle assessment info changes
+  const handleAssessmentInfoChange = useCallback((field: string, value: string) => {
+    setAssessmentInfo(prev => ({
+      ...prev,
+      [field]: value
+    }));
+  }, []);
 
   // ========================================
   // DATA LOADING EFFECTS
@@ -1090,7 +1065,7 @@ const CSMEvaluatePage: React.FC = () => {
         }
       }
     }
-  }, [existingAssessment?.id, form?.fields?.length, answers.length, addToast, existingAssessment, form?.fields]);
+  }, [existingAssessment, form, answers, addToast]);
 
   // Initialize assessment info from vendor
   useEffect(() => {
@@ -1101,7 +1076,7 @@ const CSMEvaluatePage: React.FC = () => {
         category: vendor.category || ''
       }));
     }
-  }, [vendor, vendor?.vdCode, assessmentInfo.workingArea, assessmentInfo.category]);
+  }, [vendor, assessmentInfo]);
 
   // Error handling
   useEffect(() => {
@@ -1145,6 +1120,73 @@ const CSMEvaluatePage: React.FC = () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
   }, [answers, auditor.name, auditee.name, confirmations, autoSaveResult.isSaving, saveAssessmentMutation.isPending]);
+
+// Add this useEffect to handle existing file loading:
+useEffect(() => {
+  if (existingAssessment?.answers && form?.fields) {
+    const loadedFiles: Record<string, QuestionFileAttachment[]> = {};
+    
+    existingAssessment.answers.forEach((answer, index) => {
+      if (answer.files && Array.isArray(answer.files)) {
+        // Handle both old string array format and new object format
+        const files: QuestionFileAttachment[] = answer.files
+          .map((file: unknown, fileIndex: number) => {
+            if (typeof file === 'string') {
+              // Old format - just filename
+              return {
+                id: `existing-${index}-${fileIndex}`,
+                name: file,
+                size: 0,
+                type: 'application/octet-stream',
+                url: undefined,
+                base64: undefined
+              };
+            } else if (file && typeof file === 'object') {
+              // New format - full file object with proper type checking
+              const fileObj = file as Record<string, unknown>;
+              return {
+                id: typeof fileObj.id === 'string' ? fileObj.id : `existing-${index}-${fileIndex}`,
+                name: typeof fileObj.name === 'string' ? fileObj.name : 'Unknown file',
+                size: typeof fileObj.size === 'number' ? fileObj.size : 0,
+                type: typeof fileObj.type === 'string' ? fileObj.type : 'application/octet-stream',
+                url: typeof fileObj.url === 'string' ? fileObj.url : undefined,
+                base64: typeof fileObj.base64 === 'string' ? fileObj.base64 : undefined,
+                compressionRatio: typeof fileObj.compressionRatio === 'number' ? fileObj.compressionRatio : undefined,
+                originalSize: typeof fileObj.originalSize === 'number' ? fileObj.originalSize : undefined
+              };
+            } else {
+              // Fallback for unexpected format
+              return {
+                id: `existing-${index}-${fileIndex}`,
+                name: 'Unknown file',
+                size: 0,
+                type: 'application/octet-stream',
+                url: undefined,
+                base64: undefined
+              };
+            }
+          })
+          .filter((file): file is QuestionFileAttachment => 
+            // Type guard to ensure all files are valid QuestionFileAttachment
+            typeof file.id === 'string' && 
+            typeof file.name === 'string' &&
+            typeof file.size === 'number' &&
+            typeof file.type === 'string'
+          );
+        
+        if (files.length > 0) {
+          loadedFiles[index] = files;
+        }
+      }
+    });
+    
+    if (Object.keys(loadedFiles).length > 0) {
+      console.log('📎 Loading existing files for questions:', Object.keys(loadedFiles));
+      setQuestionFiles(loadedFiles);
+    }
+  }
+}, [existingAssessment, form]);
+
 
   // ========================================
   // RENDER CONDITIONS
@@ -1316,31 +1358,21 @@ const CSMEvaluatePage: React.FC = () => {
       </div>
 
       <div className="p-6 mx-auto max-w-7xl">
-        {/* Info Forms Section */}
-        <div className="mb-6 space-y-4">
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <AuditorForm
-              auditor={auditor}
-              onChange={setAuditor}
-              disabled={currentStatus === 'submitted'}
-            />
-            <AuditeeForm
-              auditee={auditee}
-              onChange={setAuditee}
-              disabled={currentStatus === 'submitted'}
-            />
-          </div>
-          
-          <AssessmentInfoForm
-            riskLevel={assessmentInfo.riskLevel}
-            workingArea={assessmentInfo.workingArea}
-            category={assessmentInfo.category}
-            onRiskChange={(risk) => setAssessmentInfo(prev => ({ ...prev, riskLevel: risk }))}
-            onWorkingAreaChange={(area) => setAssessmentInfo(prev => ({ ...prev, workingArea: area }))}
-            onCategoryChange={(cat) => setAssessmentInfo(prev => ({ ...prev, category: cat }))}
-            disabled={currentStatus === 'submitted'}
-          />
-        </div>
+        {/* Info Forms Section - FIXED Layout */}
+        <InfoFormsSection
+          auditor={auditor}
+          auditee={auditee}
+          assessmentInfo={assessmentInfo}
+          onAuditorChange={setAuditor}
+          onAuditeeChange={setAuditee}
+          onAssessmentInfoChange={handleAssessmentInfoChange}
+          disabled={currentStatus === 'submitted'}
+        />
+        
+        <FileAttachmentSummary 
+          questionFiles={questionFiles} 
+          totalQuestions={form.fields.length} 
+        />             
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-4">
           {/* Question Navigation Sidebar */}
@@ -1397,16 +1429,16 @@ const CSMEvaluatePage: React.FC = () => {
               <div className="pb-6 mb-6 border-b">
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-xl font-semibold text-gray-900">
-                    ข้อ {selectedQuestionIndex + 1}: {currentQuestion.ckItem}
+                    ข้อ {selectedQuestionIndex + 1}
                   </h2>
                   <div className="flex items-center space-x-2">
                     <span className={`
                       px-3 py-1 rounded-full text-xs font-medium
                       ${currentQuestion.ckType === 'M' 
                         ? 'bg-red-100 text-red-800' 
-                        : 'bg-blue-100 text-blue-800'}
+                        : 'bg-blue-100 text-blue-800'} 
                     `}>
-                      {currentQuestion.ckType === 'M' ? 'ข้อบังคับ' : 'ข้อประเมิน'}
+                      {currentQuestion.ckType === 'M' ? 'ข้อบังคับ [M]' : 'ข้อทั่วไป [P]'}
                     </span>
                     {hasCurrentScore && (
                       <span className="px-3 py-1 text-xs font-medium text-green-800 bg-green-100 rounded-full">
@@ -1418,14 +1450,13 @@ const CSMEvaluatePage: React.FC = () => {
                 
                 {currentQuestion.ckQuestion && (
                   <div className="mb-4">
-                    <h3 className="mb-2 text-lg font-medium text-gray-800">คำถาม:</h3>
-                    <p className="leading-relaxed text-gray-700">{currentQuestion.ckQuestion}</p>
+                    <h3 className="mb-2 text-xl font-medium text-gray-800">Q: {currentQuestion.ckQuestion} ?</h3>
                   </div>
                 )}
                 
                 {currentQuestion.ckRequirement && (
                   <div className="p-4 rounded-lg bg-blue-50">
-                    <h4 className="mb-2 text-sm font-medium text-blue-900">เกณฑ์การประเมิน:</h4>
+                    <h4 className="mb-2 text-sm font-medium text-blue-900"><u>เกณฑ์การประเมิน:</u></h4>
                     <p className="text-sm leading-relaxed text-blue-800">
                       {currentQuestion.ckRequirement}
                     </p>
@@ -1465,7 +1496,7 @@ const CSMEvaluatePage: React.FC = () => {
                   {/* Action Section */}
                   <div>
                     <label className="block mb-2 text-sm font-medium text-gray-700">
-                      การปฏิบัติที่แนะนำ (ถ้ามี)
+                      การปฏิบัติที่แนะนำ-ข้อเสนอแนะเพื่อปรับปรุง (ถ้ามี)
                     </label>
                     <textarea
                       value={currentAnswer.action || ''}
@@ -1473,18 +1504,20 @@ const CSMEvaluatePage: React.FC = () => {
                         action: e.target.value 
                       })}
                       placeholder="ข้อแนะนำสำหรับการปรับปรุง..."
-                      rows={2}
+                      rows={1}
                       disabled={isCurrentConfirmed || currentStatus === 'submitted'}
                       className="w-full p-3 transition-colors border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50 disabled:text-gray-500"
                     />
                   </div>
 
                   {/* File Upload Section */}
-                  <FileUploadComponent
+                  <QuestionFileUpload
                     files={questionFiles[selectedQuestionIndex] || []}
                     onChange={(files) => handleFileChange(selectedQuestionIndex, files)}
                     disabled={isCurrentConfirmed || currentStatus === 'submitted'}
+                    questionIndex={selectedQuestionIndex}
                   />
+             
 
                   {/* Confirmation Button */}
                   {currentStatus !== 'submitted' && (

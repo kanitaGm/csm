@@ -1,24 +1,28 @@
-// 📁 src/features/csm/pages/CSMListPage.tsx - เพิ่ม Debug Panel
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+// ========================================
+// //src/features/csm/pages/CSMListPage.tsx 
+
+import React, { useState,  useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useVirtualizer } from '@tanstack/react-virtual';
+import { useQuery } from '@tanstack/react-query';
 import { 
-  Search,  RefreshCw, BarChart3,  
-  AlertTriangle, CheckCircle, Clock, Plus, Grid, List,
-   TrendingUp, Users, Building2
+  Search, RefreshCw, BarChart3, AlertTriangle, CheckCircle, 
+  Clock, Plus, Grid, List, TrendingUp,  Building2,
+  FileText,  X, Download
 } from 'lucide-react';
-import type { CSMVendor, CSMAssessmentSummary } from '../../../types';
-import  csmService  from '../../../services/csmService';
+import type { CSMVendor, CSMAssessmentSummary, CSMAssessment } from '../../../types';
+import { enhancedCSMService } from '../../../services/enhancedCsmService';
 import { useToast } from '../../../hooks/useToast';
 import { useDebounce } from '../../../hooks/useDebounce';
-import { SearchableSelect } from '../../../components/ui/SearchableSelect';
 import { CSM_VENDOR_CATEGORIES } from '../../../types/csm';
-import CSMDebugPanel from '../components/CSMDebugPanel'; // ✅ เพิ่ม import
+import { exportVendorsToExcel } from '../../../utils/exportUtils';
 
-// Types และ Interfaces
+// ========================================
+// TYPES & INTERFACES
+// ========================================
 interface VendorWithStatus extends CSMVendor {
-  assessmentStatus: 'completed' | 'due-soon' | 'overdue' | 'not-assessed';
+  assessmentStatus: 'completed' | 'in-progress' | 'due-soon' | 'overdue' | 'not-assessed';
   summary?: CSMAssessmentSummary;
+  currentAssessment?: CSMAssessment;
   daysUntilDue?: number;
   lastAssessmentDate?: Date;
 }
@@ -33,22 +37,213 @@ interface FilterState {
 interface StatisticsData {
   total: number;
   assessed: number;
+  inProgress: number;
   overdue: number;
   dueSoon: number;
   avgScore: number;
   highRisk: number;
 }
 
+interface StatCardProps {
+  title: string;
+  value: number | string;
+  icon: React.ElementType;
+  color: 'blue' | 'green' | 'yellow' | 'red' | 'purple';
+  trend?: number;
+}
+
+// ========================================
+// STAT CARD COMPONENT
+// ========================================
+const StatCard: React.FC<StatCardProps> = ({ title, value, icon: Icon, color, trend }) => {
+  const colorClasses = {
+    blue: 'bg-blue-50 text-blue-600 border-blue-200',
+    green: 'bg-green-50 text-green-600 border-green-200',
+    yellow: 'bg-yellow-50 text-yellow-600 border-yellow-200',
+    red: 'bg-red-50 text-red-600 border-red-200',
+    purple: 'bg-purple-50 text-purple-600 border-purple-200'
+  };
+
+  return (
+    <div className="p-4 transition-shadow bg-white border rounded-lg shadow-sm hover:shadow-md">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center space-x-3">
+          <div className={`p-2 rounded-lg ${colorClasses[color]}`}>
+            <Icon className="w-5 h-5" />
+          </div>
+          <div>
+            <p className="text-xs font-medium tracking-wider text-gray-500 uppercase">{title}</p>
+            <p className="text-xl font-bold text-gray-900">{value}</p>
+          </div>
+        </div>
+        {trend && trend > 0 && (
+          <div className="flex items-center text-sm text-green-600">
+            <TrendingUp className="w-4 h-4 mr-1" />
+            <span>+{trend}</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ========================================
+// VENDOR CARD COMPONENT
+// ========================================
+const VendorCard: React.FC<{ vendor: VendorWithStatus; onClick: (vendor: CSMVendor) => void }> = ({ vendor, onClick }) => {
+  const getStatusConfig = (status: string) => {
+    switch (status) {
+      case 'completed':
+        return { color: 'text-green-700 bg-green-100 border-green-200', icon: CheckCircle, text: 'ประเมินแล้ว' };
+      case 'in-progress':
+        return { color: 'text-blue-700 bg-blue-100 border-blue-200', icon: Clock, text: 'กำลังประเมิน' };
+      case 'due-soon':
+        return { color: 'text-yellow-700 bg-yellow-100 border-yellow-200', icon: Clock, text: 'ใกล้กำหนด' };
+      case 'overdue':
+        return { color: 'text-red-700 bg-red-100 border-red-200', icon: AlertTriangle, text: 'เกินกำหนด' };
+      default:
+        return { color: 'text-gray-700 bg-gray-100 border-gray-200', icon: Clock, text: 'ยังไม่ประเมิน' };
+    }
+  };
+
+  const getRiskColor = (score?: number) => {
+    if (!score) return 'text-gray-500';
+    if (score >= 80) return 'text-green-600';
+    if (score >= 60) return 'text-yellow-600';
+    return 'text-red-600';
+  };
+
+  const statusConfig = getStatusConfig(vendor.assessmentStatus);
+
+  return (
+    <div 
+      className="transition-all duration-200 bg-white border rounded-lg shadow-sm cursor-pointer hover:shadow-md hover:border-blue-300"
+      onClick={() => onClick(vendor)}
+    >
+      <div className="p-6">
+        <div className="flex items-start justify-between mb-4">
+          <div className="flex-1">
+            <h3 className="mb-1 text-lg font-semibold text-gray-900">{vendor.vdName}</h3>
+            <p className="mb-2 text-sm text-gray-500">{vendor.vdCode}</p>
+            <span className="inline-flex items-center px-2 py-1 text-xs font-medium text-gray-700 bg-gray-100 rounded-full">
+              {CSM_VENDOR_CATEGORIES.find(cat => cat.code === vendor.category)?.name || vendor.category}
+            </span>
+          </div>
+          <div className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium border ${statusConfig.color}`}>
+            <statusConfig.icon className="w-3 h-3 mr-1" />
+            {statusConfig.text}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4 text-sm">
+          <div>
+            <span className="text-gray-500">คะแนนล่าสุด:</span>
+            <span className={`ml-2 font-semibold ${getRiskColor(vendor.summary?.avgScore)}`}>
+              {vendor.summary?.avgScore ? `${vendor.summary.avgScore.toFixed(1)}%` : 'ยังไม่มี'}
+            </span>
+          </div>
+          <div>
+            <span className="text-gray-500">ความถี่การประเมิน:</span>
+            <span className="ml-2 text-gray-900">{vendor.freqAss} วัน</span>
+          </div>
+        </div>
+
+        {vendor.daysUntilDue !== undefined && (
+          <div className="pt-4 mt-4 border-t border-gray-100">
+            <span className="text-xs text-gray-500">
+              {vendor.daysUntilDue > 0 
+                ? `ครบกำหนดใน ${vendor.daysUntilDue} วัน`
+                : `เกินกำหนดแล้ว ${Math.abs(vendor.daysUntilDue)} วัน`
+              }
+            </span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ========================================
+// VENDOR TABLE ROW COMPONENT
+// ========================================
+const VendorTableRow: React.FC<{ vendor: VendorWithStatus; onClick: (vendor: CSMVendor) => void }> = ({ vendor, onClick }) => {
+  const getStatusBadge = (status: string) => {
+    const configs = {
+      'completed': 'bg-green-100 text-green-700',
+      'in-progress': 'bg-blue-100 text-blue-700',
+      'due-soon': 'bg-yellow-100 text-yellow-700',
+      'overdue': 'bg-red-100 text-red-700',
+      'not-assessed': 'bg-gray-100 text-gray-700'
+    };
+    return configs[status as keyof typeof configs] || configs['not-assessed'];
+  };
+
+  const getStatusText = (status: string) => {
+    const texts = {
+      'completed': 'ประเมินแล้ว',
+      'in-progress': 'กำลังประเมิน',
+      'due-soon': 'ใกล้กำหนด',
+      'overdue': 'เกินกำหนด',
+      'not-assessed': 'ยังไม่ประเมิน'
+    };
+    return texts[status as keyof typeof texts] || texts['not-assessed'];
+  };
+
+  return (
+    <tr className="cursor-pointer hover:bg-gray-50" onClick={() => onClick(vendor)}>
+      <td className="px-6 py-4 whitespace-nowrap">
+        <div>
+          <div className="text-sm font-medium text-gray-900">{vendor.vdName}</div>
+          <div className="text-sm text-gray-500">{vendor.vdCode}</div>
+        </div>
+      </td>
+      <td className="px-6 py-4 text-sm text-gray-900 whitespace-nowrap">
+        {CSM_VENDOR_CATEGORIES.find(cat => cat.code === vendor.category)?.name || vendor.category}
+      </td>
+      <td className="px-6 py-4 whitespace-nowrap">
+        <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${getStatusBadge(vendor.assessmentStatus)}`}>
+          {getStatusText(vendor.assessmentStatus)}
+        </span>
+      </td>
+      <td className="px-6 py-4 text-sm text-gray-900 whitespace-nowrap">
+        {vendor.summary ? (
+          <span className="font-medium">{vendor.summary.avgScore.toFixed(1)}%</span>
+        ) : (
+          <span className="text-gray-400">-</span>
+        )}
+      </td>
+      <td className="px-6 py-4 text-sm text-gray-900 whitespace-nowrap">
+        {vendor.lastAssessmentDate ? (
+          vendor.lastAssessmentDate.toLocaleDateString('th-TH')
+        ) : (
+          <span className="text-gray-400">-</span>
+        )}
+      </td>
+      <td className="px-6 py-4 text-sm text-gray-900 whitespace-nowrap">
+        {vendor.daysUntilDue !== undefined ? (
+          <span className={vendor.daysUntilDue < 0 ? 'text-red-600' : 'text-gray-600'}>
+            {vendor.daysUntilDue > 0 
+              ? `${vendor.daysUntilDue} วัน`
+              : `เกิน ${Math.abs(vendor.daysUntilDue)} วัน`
+            }
+          </span>
+        ) : (
+          <span className="text-gray-400">-</span>
+        )}
+      </td>
+    </tr>
+  );
+};
+
+// ========================================
+// MAIN COMPONENT
+// ========================================
 const CSMListPage: React.FC = () => {
   const navigate = useNavigate();
   const { addToast } = useToast();
-  const parentRef = useRef<HTMLDivElement>(null);
+  //onst parentRef = useRef<HTMLDivElement>(null);
 
   // State Management
-  const [vendors, setVendors] = useState<CSMVendor[]>([]);
-  const [assessmentSummaries, setAssessmentSummaries] = useState<CSMAssessmentSummary[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [viewMode, setViewMode] = useState<'card' | 'table'>('card');
   const [filters, setFilters] = useState<FilterState>({
@@ -60,65 +255,100 @@ const CSMListPage: React.FC = () => {
 
   const debouncedSearch = useDebounce(searchTerm, 300);
 
-  // Data Loading
-  const loadData = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      
-      console.log('🔄 Loading CSM data...');
-      
-      const [vendorData, summaryData] = await Promise.all([
-        csmService.vendors.getAll(),
-        csmService.assessmentSummaries.getAll()
-      ]);
+  // ========================================
+  // DATA FETCHING
+  // ========================================
+  
+  // Load vendors
+  const { data: vendors = [], isLoading: vendorsLoading, error: vendorsError } = useQuery({
+    queryKey: ['csm-vendors'],
+    queryFn: async () => {
+      console.log('🔍 Loading vendors...');
+      const result = await enhancedCSMService.vendors.getAll();
+      console.log('👥 Vendors loaded:', result.length);
+      return result;
+    },
+    staleTime: 5 * 60 * 1000, // 5 minutes
+  });
 
-      console.log(`📊 Loaded ${vendorData.length} vendors and ${summaryData.length} summaries`);
-      
-      if (vendorData.length === 0) {
-        console.warn('⚠️ No vendors found in database');
-        setError('ไม่พบข้อมูลผู้รับเหมา กรุณาเพิ่มข้อมูลหรือตรวจสอบการเชื่อมต่อ');
-      }
-      
-      setVendors(vendorData);
-      setAssessmentSummaries(summaryData);
-      
-    } catch (err) {
-      console.error('❌ Error loading CSM data:', err);
-      setError('เกิดข้อผิดพลาดในการโหลดข้อมูล');
-      addToast({
-        type: 'error',
-        title: 'เกิดข้อผิดพลาด',
-        message: 'ไม่สามารถโหลดข้อมูลได้ กรุณาลองใหม่อีกครั้ง'
-      });
-    } finally {
-      setLoading(false);
-    }
-  }, [addToast]);
+  // Load assessment summaries
+  const { data: assessmentSummaries = [], isLoading: summariesLoading } = useQuery({
+    queryKey: ['csm-assessment-summaries'],
+    queryFn: async () => {
+      console.log('🔍 Loading assessment summaries...');
+      const result = await enhancedCSMService.assessmentSummaries.getAll();
+      console.log('📊 Summaries loaded:', result.length);
+      return result;
+    },
+    staleTime: 2 * 60 * 1000, // 2 minutes
+  });
 
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
+  // Load current assessments (in-progress)
+  const { data: currentAssessments = [], isLoading: assessmentsLoading } = useQuery({
+    queryKey: ['csm-current-assessments'],
+    queryFn: async () => {
+      console.log('🔍 Loading current assessments...');
+      const result = await enhancedCSMService.assessments.getAllCurrent();
+      console.log('📋 Current assessments loaded:', result.length);
+      return result;
+    },
+    staleTime: 1 * 60 * 1000, // 1 minute
+  });
 
-  // Assessment Status Logic
-  const getAssessmentStatus = useCallback((vendor: CSMVendor, summary?: CSMAssessmentSummary): 'completed' | 'due-soon' | 'overdue' | 'not-assessed' => {
-    if (!summary) return 'not-assessed';
+  const isLoading = vendorsLoading || summariesLoading || assessmentsLoading;
+  const error = vendorsError;
+
+  // ========================================
+  // ASSESSMENT STATUS LOGIC - FIXED
+  // ========================================
+  
+  const getAssessmentStatus = useCallback((
+    vendor: CSMVendor, 
+    summary?: CSMAssessmentSummary,
+    currentAssessment?: CSMAssessment
+  ): 'completed' | 'in-progress' | 'due-soon' | 'overdue' | 'not-assessed' => {
     
+    // 1. Check if there's a current in-progress assessment
+    if (currentAssessment) {
+      if (!currentAssessment.isFinish) {
+        console.log(`📝 Vendor ${vendor.vdCode} has in-progress assessment`);
+        return 'in-progress';
+      }
+    }
+    
+    // 2. Check if vendor has completed assessment (summary exists)
+    if (!summary) {
+      console.log(`❌ Vendor ${vendor.vdCode} has no assessment summary - not assessed`);
+      return 'not-assessed';
+    }
+    
+    // 3. Calculate time-based status for completed assessments
     const now = new Date();
     const lastAssessment = new Date(summary.lastAssessmentDate);
     const daysSince = Math.floor((now.getTime() - lastAssessment.getTime()) / (1000 * 60 * 60 * 24));
     const frequency = parseInt(vendor.freqAss) || 365;
     
-    if (daysSince >= frequency) return 'overdue';
-    if (daysSince >= frequency - 30) return 'due-soon';
+    console.log(`📅 Vendor ${vendor.vdCode}: ${daysSince} days since last assessment, frequency: ${frequency} days`);
+    
+    if (daysSince >= frequency) {
+      return 'overdue';
+    }
+    if (daysSince >= frequency - 30) {
+      return 'due-soon';
+    }
     return 'completed';
   }, []);
 
-  // Process vendors with status
+  // ========================================
+  // PROCESS VENDORS WITH STATUS
+  // ========================================
+  
   const processedVendors = useMemo((): VendorWithStatus[] => {
     return vendors.map(vendor => {
       const summary = assessmentSummaries.find(s => s.vdCode === vendor.vdCode);
-      const assessmentStatus = getAssessmentStatus(vendor, summary);
+      const currentAssessment = currentAssessments.find(a => a.vdCode === vendor.vdCode && !a.isFinish);
+      
+      const assessmentStatus = getAssessmentStatus(vendor, summary, currentAssessment);
       
       let daysUntilDue: number | undefined;
       let lastAssessmentDate: Date | undefined;
@@ -136,13 +366,17 @@ const CSMListPage: React.FC = () => {
         ...vendor,
         assessmentStatus,
         summary: summary || undefined,
+        currentAssessment: currentAssessment || undefined,
         daysUntilDue,
         lastAssessmentDate
       };
     });
-  }, [vendors, assessmentSummaries, getAssessmentStatus]);
+  }, [vendors, assessmentSummaries, currentAssessments, getAssessmentStatus]);
+
+  // ========================================
+  // FILTERED VENDORS
+  // ========================================
   
-  // Filtered vendors
   const filteredVendors = useMemo((): VendorWithStatus[] => {
     return processedVendors.filter(vendor => {
       const matchesSearch = debouncedSearch === '' || 
@@ -153,544 +387,495 @@ const CSMListPage: React.FC = () => {
       const matchesAssessmentStatus = filters.assessmentStatus === 'all' || vendor.assessmentStatus === filters.assessmentStatus;
       const matchesRiskLevel = filters.riskLevel === 'all' || vendor.summary?.riskLevel === filters.riskLevel;
       const matchesNeedsAssessment = !filters.needsAssessment || 
-        ['due-soon', 'overdue', 'not-assessed'].includes(vendor.assessmentStatus);
+        ['due-soon', 'overdue', 'not-assessed', 'in-progress'].includes(vendor.assessmentStatus);
       
       return matchesSearch && matchesCategory && matchesAssessmentStatus && matchesRiskLevel && matchesNeedsAssessment;
     });
   }, [processedVendors, debouncedSearch, filters]);
+
+  // ========================================
+  // STATISTICS CALCULATION
+  // ========================================
   
-  // Virtual list for performance
-  const virtualizer = useVirtualizer({
-    count: filteredVendors.length,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => (viewMode === 'card' ? 200 : 80),
-    overscan: 5,
-  });
-  
-  // Statistics
   const statistics = useMemo((): StatisticsData => {
-    const total = processedVendors.length;
+    const total = vendors.length;
     const assessed = processedVendors.filter(v => v.assessmentStatus === 'completed').length;
+    const inProgress = processedVendors.filter(v => v.assessmentStatus === 'in-progress').length;
     const overdue = processedVendors.filter(v => v.assessmentStatus === 'overdue').length;
     const dueSoon = processedVendors.filter(v => v.assessmentStatus === 'due-soon').length;
-    const avgScore = assessmentSummaries.length > 0 
-      ? assessmentSummaries.reduce((sum, s) => sum + s.avgScore, 0) / assessmentSummaries.length 
-      : 0;
-    const highRisk = assessmentSummaries.filter(s => s.riskLevel === 'High').length;
     
-    return { total, assessed, overdue, dueSoon, avgScore, highRisk };
-  }, [processedVendors, assessmentSummaries]);
+    const summariesWithScores = assessmentSummaries.filter(s => s.avgScore > 0);
+    const avgScore = summariesWithScores.length > 0 
+      ? summariesWithScores.reduce((sum, s) => sum + s.avgScore, 0) / summariesWithScores.length 
+      : 0;
+    
+    const highRisk = assessmentSummaries.filter(s => s.avgScore < 60).length;
+    
+    return {
+      total,
+      assessed,
+      inProgress,
+      overdue,
+      dueSoon,
+      avgScore,
+      highRisk
+    };
+  }, [vendors.length, processedVendors, assessmentSummaries]);
 
-  // Event Handlers
-  const handleVendorClick = (vendor: CSMVendor) => {
+  // ========================================
+  // EVENT HANDLERS
+  // ========================================
+  
+  const handleVendorSelect = useCallback((vendor: CSMVendor) => {
+    // Check if vendor has in-progress assessment
+    const inProgressAssessment = currentAssessments.find(a => a.vdCode === vendor.vdCode && !a.isFinish);
+    
+    if (inProgressAssessment) {
+      // Continue existing assessment
+      addToast({
+        type: 'info',
+        title: 'การประเมินที่ยังไม่เสร็จ',
+        message: `พบการประเมินที่ยังไม่เสร็จสำหรับ ${vendor.vdName} จะเปิดหน้าการประเมินต่อ`
+      });
+    }
+    
     navigate(`/csm/e/${vendor.vdCode}`);
-  };
+  }, [currentAssessments, navigate, addToast]);
 
-  const handleAddVendor = () => {
-    navigate('/csm/vendors/add');
-  };
+  // Refresh data handler
+  const handleRefresh = useCallback(() => {
+    // Refresh all data
+    addToast({
+      type: 'info',
+      title: 'รีเฟรชข้อมูล',
+      message: 'กำลังโหลดข้อมูลใหม่...'
+    });
+    // The React Query will automatically refetch
+  }, [addToast]);
 
-  // Loading State
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-center">
-          <div className="w-12 h-12 mx-auto mb-4 border-4 border-blue-600 rounded-full border-t-transparent animate-spin"></div>
-          <p className="text-gray-600">กำลังโหลดข้อมูล CSM...</p>
-        </div>
-      </div>
-    );
-  }
+  const handleExport = useCallback(async () => {
+    try {
+      addToast({
+        type: 'info',
+        title: 'ส่งออกข้อมูล',
+        message: 'กำลังเตรียมไฟล์ Excel...'
+      });
+      
+      // Export filtered vendors data
+      await exportVendorsToExcel(
+        filteredVendors, 
+        assessmentSummaries, 
+      'CSM_Vendors_Report'
+      );
+      
+      addToast({
+        type: 'success',
+        title: 'ส่งออกสำเร็จ',
+        message: 'ดาวน์โหลดไฟล์ Excel เรียบร้อยแล้ว'
+      });
+    } catch (error) {
+      addToast({
+        type: 'error',
+        title: 'ส่งออกไม่สำเร็จ',
+        message: 'เกิดข้อผิดพลาดในการส่งออกข้อมูล'
+      });
+      console.error('Export error:', error);
+    }
+  }, [filteredVendors, addToast, assessmentSummaries]);
 
-  // Error State with Debug Info
+  // ========================================
+  // RENDER CONDITIONS
+  // ========================================
+  
   if (error) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="max-w-md text-center">
-          <AlertTriangle className="w-16 h-16 mx-auto mb-4 text-red-500" />
-          <h2 className="mb-2 text-xl font-semibold text-gray-900">เกิดข้อผิดพลาด</h2>
-          <p className="mb-4 text-gray-600">{error}</p>
-          
-          <div className="space-y-2">
-            <button
-              onClick={loadData}
-              className="w-full px-4 py-2 text-white transition-colors bg-blue-600 rounded-lg hover:bg-blue-700"
-            >
-              <RefreshCw className="inline w-4 h-4 mr-2" />
-              ลองใหม่อีกครั้ง
-            </button>
-            
-            <button
-              onClick={handleAddVendor}
-              className="w-full px-4 py-2 text-white transition-colors bg-green-600 rounded-lg hover:bg-green-700"
-            >
-              <Plus className="inline w-4 h-4 mr-2" />
-              เพิ่มผู้รับเหมาใหม่
-            </button>
-          </div>
-          
-          {/* Debug Panel แสดงเมื่อมี error */}
-          <CSMDebugPanel />
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center">
+          <AlertTriangle className="w-12 h-12 mx-auto mb-4 text-red-500" />
+          <h3 className="text-lg font-medium text-gray-900">เกิดข้อผิดพลาด</h3>
+          <p className="text-gray-500">ไม่สามารถโหลดข้อมูลได้</p>
+          <button 
+            onClick={handleRefresh}
+            className="px-4 py-2 mt-4 text-white bg-blue-600 rounded-lg hover:bg-blue-700"
+          >
+            ลองใหม่
+          </button>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-full bg-gray-50">
+    <div className="min-h-screen bg-gray-50">
       {/* Header */}
-      <div className="px-6 py-4 bg-white border-b border-gray-200">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">จัดการผู้รับเหมา CSM</h1>
-            <p className="mt-1 text-gray-600">ระบบประเมินผู้รับเหมาด้านความปลอดภัย</p>
-          </div>
-          
-          <div className="flex items-center space-x-3">
-            <button
-              onClick={() => navigate('/csm/reports')}
-              className="inline-flex items-center px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md shadow-sm hover:bg-gray-50"
-            >
-              <BarChart3 className="w-4 h-4 mr-2" />
-              รายงาน
-            </button>
-            
-            <button
-              onClick={handleAddVendor}
-              className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md shadow-sm hover:bg-blue-700"
-            >
-              <Plus className="w-4 h-4 mr-2" />
-              เพิ่มผู้รับเหมา
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Statistics Cards */}
-      <div className="px-6 py-4">
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-6">
-          <div className="p-4 bg-white rounded-lg shadow">
-            <div className="flex items-center">
-              <Users className="w-8 h-8 text-blue-600" />
-              <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">ผู้รับเหมาทั้งหมด</p>
-                <p className="text-2xl font-bold text-gray-900">{statistics.total}</p>
-              </div>
-            </div>
-          </div>
-          
-          <div className="p-4 bg-white rounded-lg shadow">
-            <div className="flex items-center">
-              <CheckCircle className="w-8 h-8 text-green-600" />
-              <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">ประเมินแล้ว</p>
-                <p className="text-2xl font-bold text-gray-900">{statistics.assessed}</p>
-              </div>
-            </div>
-          </div>
-          
-          <div className="p-4 bg-white rounded-lg shadow">
-            <div className="flex items-center">
-              <AlertTriangle className="w-8 h-8 text-red-600" />
-              <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">เกินกำหนด</p>
-                <p className="text-2xl font-bold text-gray-900">{statistics.overdue}</p>
-              </div>
-            </div>
-          </div>
-          
-          <div className="p-4 bg-white rounded-lg shadow">
-            <div className="flex items-center">
-              <Clock className="w-8 h-8 text-yellow-600" />
-              <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">ใกล้กำหนด</p>
-                <p className="text-2xl font-bold text-gray-900">{statistics.dueSoon}</p>
-              </div>
-            </div>
-          </div>
-          
-          <div className="p-4 bg-white rounded-lg shadow">
-            <div className="flex items-center">
-              <TrendingUp className="w-8 h-8 text-purple-600" />
-              <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">คะแนนเฉลี่ย</p>
-                <p className="text-2xl font-bold text-gray-900">{statistics.avgScore.toFixed(1)}</p>
-              </div>
-            </div>
-          </div>
-          
-          <div className="p-4 bg-white rounded-lg shadow">
-            <div className="flex items-center">
-              <AlertTriangle className="w-8 h-8 text-orange-600" />
-              <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">ความเสี่ยงสูง</p>
-                <p className="text-2xl font-bold text-gray-900">{statistics.highRisk}</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Filters and Search */}
-      <div className="px-6 py-4 bg-white border-b border-gray-200">
-        <div className="flex flex-col space-y-4 md:flex-row md:items-center md:justify-between md:space-y-0">
-          {/* Search */}
-          <div className="flex-1 max-w-md">
-            <div className="relative">
-              <Search className="absolute w-4 h-4 text-gray-400 transform -translate-y-1/2 left-3 top-1/2" />
-              <input
-                type="text"
-                placeholder="ค้นหาผู้รับเหมา..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full py-2 pl-10 pr-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              />
-            </div>
-          </div>
-
-          {/* Filters */}
-          <div className="flex items-center space-x-4">
-            {/* Category Filter */}
-            <SearchableSelect
-              value={
-                [
-                  { value: 'all', label: 'ทุกหมวดหมู่' },
-                  ...CSM_VENDOR_CATEGORIES.map(cat => ({
-                    value: cat.code,
-                    label: cat.name
-                  }))
-                ].find(opt => opt.value === filters.category) || null
-              }
-              onChange={(option) => setFilters(prev => ({ ...prev, category: option ? option.value : 'all' }))}
-              options={[
-                { value: 'all', label: 'ทุกหมวดหมู่' },
-                ...CSM_VENDOR_CATEGORIES.map(cat => ({
-                  value: cat.code,
-                  label: cat.name
-                }))
-              ]}
-              placeholder="หมวดหมู่"
-            />
-
-            {/* Assessment Status Filter */}
-            <SearchableSelect
-              value={
-                [
-                  { value: 'all', label: 'ทุกสถานะ' },
-                  { value: 'completed', label: 'ประเมินแล้ว' },
-                  { value: 'due-soon', label: 'ใกล้กำหนด' },
-                  { value: 'overdue', label: 'เกินกำหนด' },
-                  { value: 'not-assessed', label: 'ยังไม่ประเมิน' }
-                ].find(opt => opt.value === filters.assessmentStatus) || null
-              }
-              onChange={(option) => setFilters(prev => ({ ...prev, assessmentStatus: option ? option.value : 'all' }))}
-              options={[
-                { value: 'all', label: 'ทุกสถานะ' },
-                { value: 'completed', label: 'ประเมินแล้ว' },
-                { value: 'due-soon', label: 'ใกล้กำหนด' },
-                { value: 'overdue', label: 'เกินกำหนด' },
-                { value: 'not-assessed', label: 'ยังไม่ประเมิน' }
-              ]}
-              placeholder="สถานะการประเมิน"
-             
-            />
-
-            {/* Risk Level Filter */}
-            <SearchableSelect
-              value={
-                [
-                  { value: 'all', label: 'ทุกระดับ' },
-                  { value: 'Low', label: 'ความเสี่ยงต่ำ' },
-                  { value: 'Moderate', label: 'ความเสี่ยงกลาง' },
-                  { value: 'High', label: 'ความเสี่ยงสูง' }
-                ].find(opt => opt.value === filters.riskLevel) || null
-              }
-              onChange={(option) => setFilters(prev => ({ ...prev, riskLevel: option ? option.value : 'all' }))}
-              options={[
-                { value: 'all', label: 'ทุกระดับ' },
-                { value: 'Low', label: 'ความเสี่ยงต่ำ' },
-                { value: 'Moderate', label: 'ความเสี่ยงกลาง' },
-                { value: 'High', label: 'ความเสี่ยงสูง' }
-              ]}
-              placeholder="ระดับความเสี่ยง"
-            />
-
-            {/* Needs Assessment Toggle */}
-            <label className="flex items-center">
-              <input
-                type="checkbox"
-                checked={filters.needsAssessment}
-                onChange={(e) => setFilters(prev => ({ ...prev, needsAssessment: e.target.checked }))}
-                className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-              />
-              <span className="ml-2 text-sm text-gray-700">ต้องประเมิน</span>
-            </label>
-
-            {/* View Mode Toggle */}
-            <div className="flex p-1 bg-gray-100 rounded-lg">
-              <button
-                onClick={() => setViewMode('card')}
-                className={`p-2 rounded-md transition-colors ${
-                  viewMode === 'card' 
-                    ? 'bg-white text-blue-600 shadow-sm' 
-                    : 'text-gray-600 hover:text-gray-900'
-                }`}
-              >
-                <Grid className="w-4 h-4" />
-              </button>
-              <button
-                onClick={() => setViewMode('table')}
-                className={`p-2 rounded-md transition-colors ${
-                  viewMode === 'table' 
-                    ? 'bg-white text-blue-600 shadow-sm' 
-                    : 'text-gray-600 hover:text-gray-900'
-                }`}
-              >
-                <List className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Refresh Button */}
-            <button
-              onClick={loadData}
-              className="p-2 text-gray-600 transition-colors hover:text-gray-900"
-              title="รีเฟรชข้อมูล"
-            >
-              <RefreshCw className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Results Count */}
-      <div className="px-6 py-2 border-b border-gray-200 bg-gray-50">
-        <p className="text-sm text-gray-600">
-          แสดง {filteredVendors.length} จาก {processedVendors.length} รายการ
-          {debouncedSearch && ` (ค้นหา: "${debouncedSearch}")`}
-        </p>
-      </div>
-
-      {/* Vendor List */}
-      <div className="flex-1 overflow-hidden">
-        {filteredVendors.length === 0 ? (
-          <div className="flex items-center justify-center h-full">
-            <div className="text-center">
-              <Building2 className="w-16 h-16 mx-auto mb-4 text-gray-400" />
-              <h3 className="mb-2 text-lg font-medium text-gray-900">ไม่พบข้อมูล</h3>
-              <p className="mb-4 text-gray-600">
-                {processedVendors.length === 0 
-                  ? 'ยังไม่มีผู้รับเหมาในระบบ กรุณาเพิ่มผู้รับเหมาใหม่'
-                  : 'ไม่พบผู้รับเหมาที่ตรงกับเงื่อนไขการค้นหา'
-                }
+      <div className="bg-white border-b shadow-sm">
+        <div className="p-6 mx-auto max-w-7xl">
+          <div className="flex items-start justify-between mb-6">
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900">
+                CSM - Contractor Safety Management
+              </h1>
+              <p className="mt-1 text-gray-600">
+                ระบบจัดการความปลอดภัยผู้รับเหมา
               </p>
+            </div>
+            
+            <div className="flex items-center space-x-3">
+              <button
+                onClick={handleExport}
+                disabled={isLoading}
+                className="inline-flex items-center px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg shadow-sm hover:bg-gray-50 disabled:opacity-50"
+              >
+                <Download className="w-4 h-4 mr-2" />
+                ส่งออก Excel
+              </button>
               
-              {processedVendors.length === 0 && (
-                <div className="space-y-2">
-                  <button
-                    onClick={handleAddVendor}
-                    className="px-4 py-2 text-white transition-colors bg-blue-600 rounded-lg hover:bg-blue-700"
-                  >
-                    <Plus className="inline w-4 h-4 mr-2" />
-                    เพิ่มผู้รับเหมาใหม่
-                  </button>
-                </div>
-              )}
+              <button
+                onClick={handleRefresh}
+                disabled={isLoading}
+                className="inline-flex items-center px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg shadow-sm hover:bg-gray-50 disabled:opacity-50"
+              >
+                <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+                รีเฟรช
+              </button>
+              
+              <button
+                onClick={() => navigate('/csm/vendors/add')}
+                className="inline-flex items-center px-4 py-2 font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700"
+              >
+                <Plus className="w-4 h-4 mr-2" />
+                เพิ่มผู้รับเหมา
+              </button>
             </div>
           </div>
-        ) : (
-          <div ref={parentRef} className="h-full overflow-auto">
-            <div
-              style={{
-                height: `${virtualizer.getTotalSize()}px`,
-                width: '100%',
-                position: 'relative',
-              }}
-            >
-              {virtualizer.getVirtualItems().map((virtualItem) => {
-                const vendor = filteredVendors[virtualItem.index];
-                return (
-                  <div
-                    key={virtualItem.key}
-                    style={{
-                      position: 'absolute',
-                      top: 0,
-                      left: 0,
-                      width: '100%',
-                      height: `${virtualItem.size}px`,
-                      transform: `translateY(${virtualItem.start}px)`,
-                    }}
+
+          {/* Statistics Cards */}
+          <div className="grid grid-cols-1 gap-4 mb-6 md:grid-cols-3 lg:grid-cols-6">
+            <StatCard
+              title="ทั้งหมด"
+              value={statistics.total}
+              icon={Building2}
+              color="blue"
+            />
+            <StatCard
+              title="ประเมินแล้ว"
+              value={statistics.assessed}
+              icon={CheckCircle}
+              color="green"
+            />
+            <StatCard
+              title="กำลังประเมิน"
+              value={statistics.inProgress}
+              icon={Clock}
+              color="yellow"
+              trend={statistics.inProgress > 0 ? statistics.inProgress : undefined}
+            />
+            <StatCard
+              title="เกินกำหนด"
+              value={statistics.overdue}
+              icon={AlertTriangle}
+              color="red"
+            />
+            <StatCard
+              title="ใกล้ครบกำหนด"
+              value={statistics.dueSoon}
+              icon={Clock}
+              color="yellow"
+            />
+            <StatCard
+              title="คะแนนเฉลี่ย"
+              value={`${statistics.avgScore.toFixed(1)}%`}
+              icon={BarChart3}
+              color="purple"
+            />
+          </div>
+
+          {/* Search and Filters */}
+          <div className="flex flex-col gap-4 mb-6 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex-1 max-w-md">
+              <div className="relative">
+                <Search className="absolute w-4 h-4 text-gray-400 transform -translate-y-1/2 left-3 top-1/2" />
+                <input
+                  type="text"
+                  placeholder="ค้นหาผู้รับเหมา..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full py-2 pl-10 pr-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center space-x-4">
+              {/* Category Filter */}
+              <select
+                value={filters.category}
+                onChange={(e) => setFilters(prev => ({ ...prev, category: e.target.value }))}
+                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              >
+                <option value="all">ทุกประเภท</option>
+                {CSM_VENDOR_CATEGORIES.map(cat => (
+                  <option key={cat.code} value={cat.code}>{cat.name}</option>
+                ))}
+              </select>
+
+              {/* Status Filter */}
+              <select
+                value={filters.assessmentStatus}
+                onChange={(e) => setFilters(prev => ({ ...prev, assessmentStatus: e.target.value }))}
+                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              >
+                <option value="all">ทุกสถานะ</option>
+                <option value="completed">ประเมินแล้ว</option>
+                <option value="in-progress">กำลังประเมิน</option>
+                <option value="due-soon">ใกล้กำหนด</option>
+                <option value="overdue">เกินกำหนด</option>
+                <option value="not-assessed">ยังไม่ประเมิน</option>
+              </select>
+
+{/* View Mode Toggle */}
+              <div className="flex items-center border border-gray-300 rounded-lg">
+                <button
+                  onClick={() => setViewMode('card')}
+                  className={`p-2 ${viewMode === 'card' ? 'bg-blue-100 text-blue-600' : 'text-gray-400'}`}
+                >
+                  <Grid className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => setViewMode('table')}
+                  className={`p-2 ${viewMode === 'table' ? 'bg-blue-100 text-blue-600' : 'text-gray-400'}`}
+                >
+                  <List className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Active Filters Display */}
+          {(filters.category !== 'all' || filters.assessmentStatus !== 'all' || filters.riskLevel !== 'all' || filters.needsAssessment) && (
+            <div className="flex flex-wrap items-center gap-2 mb-4">
+              <span className="text-sm font-medium text-gray-700">กรองโดย:</span>
+              
+              {filters.category !== 'all' && (
+                <span className="inline-flex items-center px-3 py-1 text-xs font-medium text-blue-800 bg-blue-100 rounded-full">
+                  {CSM_VENDOR_CATEGORIES.find(cat => cat.code === filters.category)?.name}
+                  <button
+                    onClick={() => setFilters(prev => ({ ...prev, category: 'all' }))}
+                    className="ml-2 text-blue-600 hover:text-blue-800"
                   >
-                    {viewMode === 'card' ? (
-                      <VendorCard vendor={vendor} onClick={handleVendorClick} />
-                    ) : (
-                      <VendorTableRow vendor={vendor} onClick={handleVendorClick} />
-                    )}
-                  </div>
-                );
-              })}
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              )}
+              
+              {filters.assessmentStatus !== 'all' && (
+                <span className="inline-flex items-center px-3 py-1 text-xs font-medium text-green-800 bg-green-100 rounded-full">
+                  สถานะ: {filters.assessmentStatus}
+                  <button
+                    onClick={() => setFilters(prev => ({ ...prev, assessmentStatus: 'all' }))}
+                    className="ml-2 text-green-600 hover:text-green-800"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              )}
+              
+              {filters.needsAssessment && (
+                <span className="inline-flex items-center px-3 py-1 text-xs font-medium text-yellow-800 bg-yellow-100 rounded-full">
+                  ต้องการประเมิน
+                  <button
+                    onClick={() => setFilters(prev => ({ ...prev, needsAssessment: false }))}
+                    className="ml-2 text-yellow-600 hover:text-yellow-800"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              )}
+              
+              <button
+                onClick={() => setFilters({
+                  category: 'all',
+                  assessmentStatus: 'all',
+                  riskLevel: 'all',
+                  needsAssessment: false
+                })}
+                className="text-sm text-gray-500 hover:text-gray-700"
+              >
+                ล้างตัวกรองทั้งหมด
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Content */}
+      <div className="p-6 mx-auto max-w-7xl">
+        {/* Results Summary */}
+        <div className="flex items-center justify-between mb-6">
+          <div className="text-sm text-gray-600">
+            แสดง {filteredVendors.length} จาก {vendors.length} ผู้รับเหมา
+          </div>
+          
+          {isLoading && (
+            <div className="flex items-center text-sm text-gray-500">
+              <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+              กำลังโหลด...
+            </div>
+          )}
+        </div>
+
+        {/* Loading State */}
+        {isLoading && (
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+            {[...Array(6)].map((_, i) => (
+              <div key={i} className="p-6 bg-white border rounded-lg shadow-sm animate-pulse">
+                <div className="w-3/4 h-4 mb-2 bg-gray-200 rounded"></div>
+                <div className="w-1/2 h-3 mb-4 bg-gray-200 rounded"></div>
+                <div className="w-1/4 h-3 bg-gray-200 rounded"></div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Empty State */}
+        {!isLoading && filteredVendors.length === 0 && (
+          <div className="py-12 text-center">
+            <Building2 className="w-12 h-12 mx-auto mb-4 text-gray-400" />
+            <h3 className="mb-2 text-lg font-medium text-gray-900">ไม่พบผู้รับเหมา</h3>
+            <p className="mb-6 text-gray-500">
+              {searchTerm || filters.category !== 'all' || filters.assessmentStatus !== 'all' 
+                ? 'ไม่พบผู้รับเหมาที่ตรงกับเงื่อนไขการค้นหา'
+                : 'ยังไม่มีผู้รับเหมาในระบบ'
+              }
+            </p>
+            {!searchTerm && filters.category === 'all' && filters.assessmentStatus === 'all' && (
+              <button
+                onClick={() => navigate('/csm/vendors/add')}
+                className="inline-flex items-center px-4 py-2 font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700"
+              >
+                <Plus className="w-4 h-4 mr-2" />
+                เพิ่มผู้รับเหมาแรก
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Card View */}
+        {!isLoading && viewMode === 'card' && filteredVendors.length > 0 && (
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+            {filteredVendors.map((vendor) => (
+              <VendorCard 
+                key={vendor.vdCode} 
+                vendor={vendor} 
+                onClick={handleVendorSelect} 
+              />
+            ))}
+          </div>
+        )}
+
+        {/* Table View */}
+        {!isLoading && viewMode === 'table' && filteredVendors.length > 0 && (
+          <div className="overflow-hidden bg-white border rounded-lg shadow-sm">
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">
+                      ผู้รับเหมา
+                    </th>
+                    <th className="px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">
+                      ประเภท
+                    </th>
+                    <th className="px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">
+                      สถานะ
+                    </th>
+                    <th className="px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">
+                      คะแนน
+                    </th>
+                    <th className="px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">
+                      ประเมินล่าสุด
+                    </th>
+                    <th className="px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">
+                      กำหนดเวลา
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {filteredVendors.map((vendor) => (
+                    <VendorTableRow 
+                      key={vendor.vdCode} 
+                      vendor={vendor} 
+                      onClick={handleVendorSelect} 
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Pagination */}
+        {filteredVendors.length > 50 && (
+          <div className="flex items-center justify-center mt-8">
+            <div className="px-4 py-2 text-sm text-gray-500 bg-white border rounded-lg">
+              แสดงครบทุกรายการแล้ว ({filteredVendors.length} รายการ)
             </div>
           </div>
         )}
       </div>
 
-      {/* Debug Panel - แสดงใน development mode */}
-      <CSMDebugPanel />
-    </div>
-  );
-};
-
-// Vendor Card Component
-const VendorCard: React.FC<{ vendor: VendorWithStatus; onClick: (vendor: CSMVendor) => void }> = ({ vendor, onClick }) => {
-  const getStatusConfig = (status: string) => {
-    switch (status) {
-      case 'completed':
-        return { color: 'text-green-700 bg-green-100', icon: CheckCircle, text: 'ประเมินแล้ว' };
-      case 'due-soon':
-        return { color: 'text-yellow-700 bg-yellow-100', icon: Clock, text: 'ใกล้กำหนด' };
-      case 'overdue':
-        return { color: 'text-red-700 bg-red-100', icon: AlertTriangle, text: 'เกินกำหนด' };
-      default:
-        return { color: 'text-gray-700 bg-gray-100', icon: Clock, text: 'ยังไม่ประเมิน' };
-    }
-  };
-
-  const getRiskConfig = (level?: string) => {
-    switch (level) {
-      case 'Low':
-        return { color: 'text-green-700 bg-green-100', text: 'ต่ำ' };
-      case 'Moderate':
-        return { color: 'text-yellow-700 bg-yellow-100', text: 'กลาง' };
-      case 'High':
-        return { color: 'text-red-700 bg-red-100', text: 'สูง' };
-      default:
-        return { color: 'text-gray-700 bg-gray-100', text: '-' };
-    }
-  };
-
-  const statusConfig = getStatusConfig(vendor.assessmentStatus);
-  const riskConfig = getRiskConfig(vendor.summary?.riskLevel);
-  const StatusIcon = statusConfig.icon;
-
-  return (
-    <div className="p-4 mx-6 my-2 transition-shadow bg-white border border-gray-200 rounded-lg cursor-pointer hover:shadow-md"
-         onClick={() => onClick(vendor)}>
-      <div className="flex items-start justify-between">
-        <div className="flex-1">
-          <div className="flex items-center space-x-3">
-            <h3 className="text-lg font-semibold text-gray-900">{vendor.vdName}</h3>
-            <span className="text-sm text-gray-500">({vendor.vdCode})</span>
-          </div>
-          
-          <p className="mt-1 text-sm text-gray-600">
-            หมวดหมู่: {CSM_VENDOR_CATEGORIES.find(cat => cat.code === vendor.category)?.name || vendor.category}
-          </p>
-          
-          {vendor.workingArea && vendor.workingArea.length > 0 && (
-            <p className="text-sm text-gray-600">
-              พื้นที่ปฏิบัติงาน: {vendor.workingArea.join(', ')}
-            </p>
-          )}
-        </div>
-
-        <div className="flex flex-col items-end space-y-2">
-          <div className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${statusConfig.color}`}>
-            <StatusIcon className="w-3 h-3 mr-1" />
-            {statusConfig.text}
-          </div>
-          
-          {vendor.summary && (
-            <div className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${riskConfig.color}`}>
-              ความเสี่ยง: {riskConfig.text}
-            </div>
-          )}
-        </div>
+      {/* Quick Action Buttons - Floating */}
+      <div className="fixed z-10 flex flex-col space-y-3 bottom-6 right-6">
+        <button
+          onClick={() => navigate('/csm/reports')}
+          className="flex items-center justify-center w-12 h-12 text-white transition-all duration-200 bg-purple-600 rounded-full shadow-lg hover:bg-purple-700 hover:scale-110"
+          title="รายงาน CSM"
+        >
+          <FileText className="w-5 h-5" />
+        </button>
+        
+        <button
+          onClick={() => navigate('/csm/dashboard')}
+          className="flex items-center justify-center w-12 h-12 text-white transition-all duration-200 bg-blue-600 rounded-full shadow-lg hover:bg-blue-700 hover:scale-110"
+          title="แดชบอร์ด CSM"
+        >
+          <BarChart3 className="w-5 h-5" />
+        </button>
+        
+        <button
+          onClick={() => navigate('/csm/vendors/add')}
+          className="flex items-center justify-center w-12 h-12 text-white transition-all duration-200 bg-green-600 rounded-full shadow-lg hover:bg-green-700 hover:scale-110"
+          title="เพิ่มผู้รับเหมาใหม่"
+        >
+          <Plus className="w-5 h-5" />
+        </button>
       </div>
 
-      {vendor.summary && (
-        <div className="flex items-center justify-between mt-4 text-sm">
-          <div>
-            <span className="text-gray-600">คะแนนล่าสุด: </span>
-            <span className="font-medium">{vendor.summary.avgScore.toFixed(1)}%</span>
-          </div>
-          
-          {vendor.lastAssessmentDate && (
-            <div>
-              <span className="text-gray-600">ประเมินล่าสุด: </span>
-              <span className="font-medium">{vendor.lastAssessmentDate.toLocaleDateString('th-TH')}</span>
+      {/* Debug Panel - Development Only */}
+      {process.env.NODE_ENV === 'development' && (
+        <div className="fixed z-10 max-w-xs p-4 text-xs text-white bg-black rounded-lg bottom-6 left-6 bg-opacity-90">
+          <div className="mb-2 font-bold text-yellow-400">🔧 CSM Debug Panel</div>
+          <div className="space-y-1">
+            <div>📊 Total Vendors: <span className="text-blue-300">{vendors.length}</span></div>
+            <div>📋 Summaries: <span className="text-green-300">{assessmentSummaries.length}</span></div>
+            <div>⏳ Current Assessments: <span className="text-yellow-300">{currentAssessments.length}</span></div>
+            <div>🔍 Filtered Results: <span className="text-purple-300">{filteredVendors.length}</span></div>
+            <div>🔄 Loading: <span className={isLoading ? 'text-red-300' : 'text-green-300'}>{isLoading ? 'Yes' : 'No'}</span></div>
+            <div>🎯 View Mode: <span className="text-cyan-300">{viewMode}</span></div>
+            {error && (
+              <div className="p-2 mt-2 text-red-300 bg-red-900 rounded bg-opacity-30">
+                ❌ Error: {error || 'Unknown error'}
+              </div>
+            )}
+            <div className="pt-2 mt-2 text-gray-400 border-t border-gray-600">
+              🔧 Use for debugging only
             </div>
-          )}
+          </div>
         </div>
       )}
 
-      {vendor.daysUntilDue !== undefined && (
-        <div className="mt-2">
-          <span className="text-sm text-gray-600">
-            {vendor.daysUntilDue > 0 
-              ? `ครบกำหนดใน ${vendor.daysUntilDue} วัน`
-              : `เกินกำหนดแล้ว ${Math.abs(vendor.daysUntilDue)} วัน`
-            }
-          </span>
-        </div>
-      )}
-    </div>
-  );
-};
-
-// Vendor Table Row Component
-const VendorTableRow: React.FC<{ vendor: VendorWithStatus; onClick: (vendor: CSMVendor) => void }> = ({ vendor, onClick }) => {
-  const getStatusBadge = (status: string) => {
-    const configs = {
-      'completed': 'bg-green-100 text-green-700',
-      'due-soon': 'bg-yellow-100 text-yellow-700',
-      'overdue': 'bg-red-100 text-red-700',
-      'not-assessed': 'bg-gray-100 text-gray-700'
-    };
-    return configs[status as keyof typeof configs] || configs['not-assessed'];
-  };
-
-  return (
-    <div className="px-6 py-4 bg-white border-b border-gray-200 cursor-pointer hover:bg-gray-50"
-         onClick={() => onClick(vendor)}>
-      <div className="flex items-center justify-between">
-        <div className="grid items-center flex-1 grid-cols-5 gap-4">
-          <div>
-            <p className="text-sm font-medium text-gray-900">{vendor.vdName}</p>
-            <p className="text-sm text-gray-500">{vendor.vdCode}</p>
-          </div>
-          
-          <div>
-            <p className="text-sm text-gray-900">
-              {CSM_VENDOR_CATEGORIES.find(cat => cat.code === vendor.category)?.name || vendor.category}
-            </p>
-          </div>
-          
-          <div>
-            <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${getStatusBadge(vendor.assessmentStatus)}`}>
-              {vendor.assessmentStatus === 'completed' && 'ประเมินแล้ว'}
-              {vendor.assessmentStatus === 'due-soon' && 'ใกล้กำหนด'}
-              {vendor.assessmentStatus === 'overdue' && 'เกินกำหนด'}
-              {vendor.assessmentStatus === 'not-assessed' && 'ยังไม่ประเมิน'}
-            </span>
-          </div>
-          
-          <div>
-            {vendor.summary ? (
-              <span className="text-sm font-medium">{vendor.summary.avgScore.toFixed(1)}%</span>
-            ) : (
-              <span className="text-sm text-gray-400">-</span>
-            )}
-          </div>
-          
-          <div>
-            {vendor.lastAssessmentDate ? (
-              <span className="text-sm text-gray-600">
-                {vendor.lastAssessmentDate.toLocaleDateString('th-TH')}
-              </span>
-            ) : (
-              <span className="text-sm text-gray-400">-</span>
-            )}
-          </div>
-        </div>
+      {/* Toast Notifications Container */}
+      <div id="toast-container" className="fixed z-50 space-y-2 top-4 right-4">
+        {/* Toast messages will be rendered here by useToast hook */}
       </div>
     </div>
   );

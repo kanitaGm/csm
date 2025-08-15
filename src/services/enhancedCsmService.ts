@@ -1,7 +1,7 @@
 // 📁 src/services/enhancedCsmService.ts
 // High-Performance CSM Service with Caching and Batch Operations
 import { 
-  collection, doc, getDocs,  addDoc, updateDoc, writeBatch,
+  collection, doc, getDocs,  getDoc, addDoc, updateDoc, writeBatch,
   query, where, orderBy, limit, startAfter, Timestamp, 
   QueryDocumentSnapshot
 } from 'firebase/firestore';
@@ -343,6 +343,7 @@ export class EnhancedFormsService {
 
 // =================== ENHANCED ASSESSMENTS SERVICE ===================
 export class EnhancedAssessmentsService {
+    
   /**
    * Create new assessment
    */
@@ -426,6 +427,163 @@ export class EnhancedAssessmentsService {
     }
   }
 
+    async getAllCurrent(): Promise<CSMAssessment[]> {
+    const cacheKey = 'csm-current-assessments';
+    const cached = cacheService.get<CSMAssessment[]>(cacheKey);
+    
+    if (cached) {
+      console.log(`🔄 Loading ${cached.length} current assessments from cache`);
+      return cached;
+    }
+
+    try {
+      console.log('🔍 Fetching current assessments from Firestore...');
+      
+      const querySnapshot = await getDocs(
+        query(
+          collection(db, COLLECTIONS.CSM_ASSESSMENTS),
+          where('isActive', '==', true),
+          where('isFinish', '==', false),
+          orderBy('updatedAt', 'desc')
+        )
+      );
+
+      const assessments: CSMAssessment[] = [];
+      
+      querySnapshot.docs.forEach(doc => {
+        const rawData = { id: doc.id, ...doc.data() };
+        const normalizedAssessment = normalizeAssessmentData(rawData);
+        
+        if (normalizedAssessment) {
+          assessments.push(normalizedAssessment);
+        }
+      });
+
+      console.log(`✅ Loaded ${assessments.length} current assessments from Firestore`);      
+      cacheService.set(cacheKey, assessments, CACHE_DURATIONS.ASSESSMENTS);
+      return assessments;
+
+    } catch (error) {
+      console.error('❌ Error fetching current assessments:', error);
+      return [];
+    }
+  }
+
+
+  /**
+   * Update assessment and create summary if completed
+   */
+  async updateWithSummary(id: string, data: Partial<CSMAssessment>): Promise<CSMAssessment> {
+    try {
+      const docRef = doc(db, COLLECTIONS.CSM_ASSESSMENTS, id);
+      const updateData = {
+        ...data,
+        updatedAt: new Date(),
+        lastModified: new Date()
+      };
+      
+      await updateDoc(docRef, updateData);
+      
+      // If assessment is completed, create/update summary
+      if (data.isFinish && data.vdCode) {
+        await this.createOrUpdateSummary(data as CSMAssessment);
+      }
+      
+      // Clear relevant caches
+      cacheService.delete(`csm-assessment-${id}`);
+      cacheService.delete(`csm-assessments-vdcode-${data.vdCode}`);
+      cacheService.delete('csm-current-assessments');
+      cacheService.delete('csm-assessment-summaries-all');
+      
+      // Get updated assessment
+      const updatedDoc = await getDoc(docRef);
+      if (updatedDoc.exists()) {
+        return { id: updatedDoc.id, ...updatedDoc.data() } as CSMAssessment;
+      }
+      
+      throw new Error('Failed to get updated assessment');
+      
+    } catch (error) {
+      console.error('Error updating assessment with summary:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Create or update assessment summary
+   */
+  async createOrUpdateSummary(assessment: CSMAssessment): Promise<void> {
+    if (!assessment.vdCode) return;
+    
+    try {
+      console.log('📊 Creating/updating summary for', assessment.vdCode);
+      
+      // Calculate summary data
+      const totalQuestions = assessment.answers.length;
+      const completedQuestions = assessment.answers.filter(a => a.isFinish).length;
+      
+      // Calculate scores
+      let totalScore = 0;
+      let maxScore = 0;
+      
+      assessment.answers.forEach(answer => {
+        if (answer.score && answer.score !== 'n/a') {
+          const score = parseInt(answer.score) || 0;
+          const fScore = parseInt(answer.tScore || '0') || parseInt(answer.score || '0') || 0;
+
+          totalScore += score;
+          maxScore += fScore;
+        }
+      });
+      
+      const avgScore = maxScore > 0 ? (totalScore / maxScore) * 100 : 0;
+      
+      // Determine risk level
+      let riskLevel: 'Low' | 'Medium' | 'High' = 'High';
+      if (avgScore >= 80) riskLevel = 'Low';
+      else if (avgScore >= 60) riskLevel = 'Medium';
+      
+      const summaryData: Omit<CSMAssessmentSummary, 'id'> = {
+        vdCode: assessment.vdCode,
+        lastAssessmentId: assessment.id || '',
+        lastAssessmentDate: new Date(),
+        totalScore,
+        maxScore,
+        avgScore,
+        completedQuestions,
+        totalQuestions,
+        riskLevel,
+        updatedAt: new Date()
+      };
+      
+      // Check if summary exists
+      const existingSummary = await getDocs(
+        query(
+          collection(db, COLLECTIONS.CSM_SUMMARIES),
+          where('vdCode', '==', assessment.vdCode),
+          limit(1)
+        )
+      );
+      
+      if (!existingSummary.empty) {
+        // Update existing summary
+        const summaryDoc = existingSummary.docs[0];
+        await updateDoc(summaryDoc.ref, summaryData);
+        console.log('✅ Updated assessment summary for', assessment.vdCode);
+      } else {
+        // Create new summary
+        await addDoc(collection(db, COLLECTIONS.CSM_SUMMARIES), summaryData);
+        console.log('✅ Created new assessment summary for', assessment.vdCode);
+      }
+      
+      // Clear summary cache
+      cacheService.delete('csm-assessment-summaries-all');
+      
+    } catch (error) {
+      console.error('Error creating/updating summary:', error);
+    }
+  }
+
   /**
    * Update assessment summary after assessment completion
    */
@@ -483,6 +641,53 @@ export class EnhancedAssessmentsService {
     }
   }
 }
+
+
+// Normalize assessment data function
+const normalizeAssessmentData = (data: Partial<CSMAssessment> = {}): CSMAssessment | null => {
+ if (!data || !data.vdCode) {
+    return null;
+  }
+
+  try {
+    return {
+      id: data.id,
+      companyId: data.companyId || '',
+      vdCode: data.vdCode,
+      vdName: data.vdName || '',
+      docReference: data.docReference || data.vdCode,
+      formCode: data.formCode || 'CSMChecklist',
+      formVersion: data.formVersion || '1.0',
+      answers: Array.isArray(data.answers) ? data.answers : [],
+      auditor: data.auditor || { name: '', email: '' },
+      auditee: data.auditee,
+      assessor: data.assessor,
+      vdCategory: data.vdCategory,
+      vdRefDoc: data.vdRefDoc,
+      vdWorkingArea: data.vdWorkingArea,
+      riskLevel: data.riskLevel,
+      totalScore: data.totalScore,
+      maxScore: data.maxScore,
+      avgScore: data.avgScore,
+      finalScore: data.finalScore,
+      status: data.status,
+      progress: data.progress,
+      lastModified: data.lastModified ? convertToDate(data.lastModified) : new Date(),
+      submittedAt: data.submittedAt ? convertToDate(data.submittedAt) : undefined,
+      isActive: data.isActive !== false,
+      isFinish: data.isFinish || false,
+      finishedAt: data.finishedAt ? convertToDate(data.finishedAt) : undefined,
+      isApproved: data.isApproved || false,
+      approvedBy: data.approvedBy,
+      approvedAt: data.approvedAt ? convertToDate(data.approvedAt) : undefined,
+      createdAt: data.createdAt ? convertToDate(data.createdAt) : new Date(),
+      updatedAt: data.updatedAt ? convertToDate(data.updatedAt) : new Date()
+    };
+  } catch (error) {
+    console.error('Error normalizing assessment data:', error);
+    return null;
+  }
+};
 
 // =================== ENHANCED ASSESSMENT SUMMARIES SERVICE ===================
 export class EnhancedAssessmentSummariesService {

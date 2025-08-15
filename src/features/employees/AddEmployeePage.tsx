@@ -1,4 +1,4 @@
-// src/pages/employees/AddEmployeePage.tsx
+// src/pages/employees/AddEmployeePage.tsx - Updated with UniversalFileUpload
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { collection, addDoc, query, where, getDocs, serverTimestamp } from 'firebase/firestore';
@@ -8,8 +8,12 @@ import SingleEmployeeForm from './components/SingleEmployeeForm';
 import ImportEmployeePage from './components/ImportEmployeeForm';
 import type { EmployeeFormState, OptionType } from '../../types/';
 import { normalizeEmployeePayload, validateSingleEmployee } from '../../utils/employeeUtils';
-import { uploadEmployeePhoto, compressAndCreatePreview } from '../../utils/fileUtils';
-import { FaArrowLeft, FaFileUpload,FaUser, FaSpinner, FaUsers, FaPlus} from 'react-icons/fa';
+// Updated imports for new file system
+import { uploadEmployeePhoto } from '../../utils/fileUtils';
+import { UniversalFileUpload } from '../../components/ui/UniversalFileUpload';
+import type { FileAttachment } from '../../hooks/useFileUpload';
+import { useToast } from '../../hooks/useToast';
+import { FaArrowLeft, FaFileUpload, FaUser, FaSpinner, FaUsers, FaPlus } from 'react-icons/fa';
 
 type TabType = 'single' | 'import';
 
@@ -23,16 +27,16 @@ const INITIAL_FORM_DATA: EmployeeFormState = {
   dateOfBirth: '', startDate: '', cardExpiryDate: '',
 };
 
-// Enhanced loading states
+// Enhanced loading states - updated to remove photo processing state
 interface LoadingStates {
   companies: boolean;
   submitting: boolean;
-  photoProcessing: boolean;
 }
 
 export default function AddEmployeePage() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { addToast } = useToast();
   
   // State management
   const [activeTab, setActiveTab] = useState<TabType>('single');
@@ -42,26 +46,14 @@ export default function AddEmployeePage() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [feedback, setFeedback] = useState<{type: 'success' | 'error', message: string} | null>(null);
   
-  // Photo handling states
-  const [selectedPhoto, setSelectedPhoto] = useState<File | null>(null);
-  const [previewImage, setPreviewImage] = useState<string | null>(null);
-  const [compressionProgress, setCompressionProgress] = useState<number | null>(null);
+  // Updated photo handling states - using UniversalFileUpload format
+  const [profilePhoto, setProfilePhoto] = useState<FileAttachment[]>([]);
   
-  // Loading states
+  // Loading states - removed photo processing
   const [loadingStates, setLoadingStates] = useState<LoadingStates>({
     companies: true,
-    submitting: false,
-    photoProcessing: false
+    submitting: false
   });
-
-  // Cleanup effect for preview images
-  useEffect(() => {
-    return () => {
-      if (previewImage) {
-        URL.revokeObjectURL(previewImage);
-      }
-    };
-  }, [previewImage]);
 
   // Enhanced company fetching with error handling
   const fetchCompanies = useCallback(async () => {
@@ -76,19 +68,20 @@ export default function AddEmployeePage() {
           value: doc.id,
           label: doc.data().name || 'Unnamed Company'
         }))
-        .sort((a, b) => a.label.localeCompare(b.label)); // Sort alphabetically
+        .sort((a, b) => a.label.localeCompare(b.label));
       
       setCompanies(companyList);
     } catch (error) {
       console.error("Error fetching companies:", error);
-      setFeedback({
+      addToast({
         type: 'error',
+        title: 'Loading Error',
         message: 'Failed to load companies. Please refresh the page.'
       });
     } finally {
       setLoadingStates(prev => ({ ...prev, companies: false }));
     }
-  }, []);
+  }, [addToast]);
 
   useEffect(() => {
     fetchCompanies();
@@ -110,7 +103,7 @@ export default function AddEmployeePage() {
       delete newErrors.companyId;
       return newErrors;
     });
-  }, []); // No dependencies needed as all functions are stable
+  }, []);
 
   // Enhanced input change handler with better validation
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
@@ -158,62 +151,32 @@ export default function AddEmployeePage() {
       delete newErrors[name];
       return newErrors;
     });
-  }, []); // No dependencies needed as all functions are stable
+  }, []);
 
-  // Enhanced photo change handler with better error handling
-  const handlePhotoChange = useCallback(async (file: File | null) => {
-    // Cleanup previous preview
-    if (previewImage) {
-      URL.revokeObjectURL(previewImage);
-      setPreviewImage(null);
-    }
+  // Updated photo change handler using UniversalFileUpload
+  const handlePhotoChange = useCallback((files: FileAttachment[]) => {
+    setProfilePhoto(files);
     
-    if (!file) {
-      setSelectedPhoto(null);
-      return;
-    }
-    
-    // Validate file size (max 10MB)
-    if (file.size > 10 * 1024 * 1024) {
-      setFeedback({
-        type: 'error',
-        message: 'Image file size must be less than 10MB.'
-      });
-      return;
-    }
-    
-    // Validate file type
-    if (!file.type.startsWith('image/')) {
-      setFeedback({
-        type: 'error',
-        message: 'Please select a valid image file.'
-      });
-      return;
-    }
-    
-    try {
-      setLoadingStates(prev => ({ ...prev, photoProcessing: true }));
-      setCompressionProgress(0);
+    // Update form data with the photo URL
+    if (files.length > 0) {
+      const photoFile = files[0];
+      setFormData(prev => ({
+        ...prev,
+        profileImageUrl: photoFile.url || null
+      }));
       
-      const { compressedFile, previewURL } = await compressAndCreatePreview(
-        file, 
-        setCompressionProgress
-      );
-      
-      setSelectedPhoto(compressedFile);
-      setPreviewImage(previewURL);
-      
-    } catch (error) {
-      console.error('Error processing image:', error);
-      setFeedback({
-        type: 'error',
-        message: 'Error processing image. Please try again.'
+      addToast({
+        type: 'success',
+        title: 'Photo Added',
+        message: `Profile photo "${photoFile.name}" has been added.`
       });
-    } finally {
-      setLoadingStates(prev => ({ ...prev, photoProcessing: false }));
-      setCompressionProgress(null);
+    } else {
+      setFormData(prev => ({
+        ...prev,
+        profileImageUrl: null
+      }));
     }
-  }, [previewImage]);
+  }, [addToast]);
 
   // Enhanced form validation with proper dependencies
   const validateForm = useCallback(async (): Promise<boolean> => {
@@ -276,26 +239,19 @@ export default function AddEmployeePage() {
     return Object.keys(allErrors).length === 0;
   }, [formData]);
 
-  // Enhanced reset handler (moved above handleSubmit to fix dependency order)
+  // Enhanced reset handler
   const handleReset = useCallback(() => {
     setFormData(INITIAL_FORM_DATA);
     setSelectedCompany(null);
     setErrors({});
-    setSelectedPhoto(null);
+    setProfilePhoto([]); // Clear photo files
     
-    if (previewImage) {
-      URL.revokeObjectURL(previewImage);
-      setPreviewImage(null);
-    }
-    
-    setFeedback({
+    addToast({
       type: 'success',
+      title: 'Form Reset',
       message: 'Form has been reset successfully.'
     });
-    
-    // Auto-hide reset message
-    setTimeout(() => setFeedback(null), 2000);
-  }, [previewImage]);
+  }, [addToast]);
 
   // Enhanced form submission with better error handling
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
@@ -310,8 +266,9 @@ export default function AddEmployeePage() {
       // Validate form
       const isValid = await validateForm();
       if (!isValid) {
-        setFeedback({
+        addToast({
           type: 'error',
+          title: 'Validation Error',
           message: 'Please fix the errors below before submitting.'
         });
         return;
@@ -319,13 +276,29 @@ export default function AddEmployeePage() {
       
       // Upload photo if selected
       let uploadedPhotoUrl: string | null = formData.profileImageUrl || null;
-      if (selectedPhoto && formData.empId) {
+      if (profilePhoto.length > 0 && formData.empId) {
         try {
-          uploadedPhotoUrl = await uploadEmployeePhoto(selectedPhoto, formData.empId);
+          const photoFile = profilePhoto[0];
+          
+          // Convert FileAttachment to File for upload
+          if (photoFile.url && photoFile.url.startsWith('blob:')) {
+            const response = await fetch(photoFile.url);
+            const blob = await response.blob();
+            const file = new File([blob], photoFile.name, { type: photoFile.type });
+            
+            uploadedPhotoUrl = await uploadEmployeePhoto(file, formData.empId);
+            
+            addToast({
+              type: 'success',
+              title: 'Photo Uploaded',
+              message: 'Profile photo has been uploaded successfully.'
+            });
+          }
         } catch (photoError) {
           console.error('Error uploading photo:', photoError);
-          setFeedback({
-            type: 'error',
+          addToast({
+            type: 'warning',
+            title: 'Photo Upload Failed',
             message: 'Failed to upload photo. Employee will be saved without photo.'
           });
         }
@@ -348,30 +321,26 @@ export default function AddEmployeePage() {
       // Save to database
       await addDoc(collection(db, 'employees'), finalPayload);
       
-      setFeedback({
+      addToast({
         type: 'success',
+        title: 'Employee Added',
         message: `Employee "${formData.firstName} ${formData.lastName}" has been added successfully!`
       });
       
       // Reset form after successful submission
       handleReset();
       
-      // Auto-hide success message after 5 seconds
-      setTimeout(() => setFeedback(null), 5000);
-      
     } catch (error) {
       console.error('Error adding employee:', error);
-      setFeedback({
+      addToast({
         type: 'error',
+        title: 'Submission Failed',
         message: 'Failed to add employee. Please try again or contact support.'
       });
     } finally {
       setLoadingStates(prev => ({ ...prev, submitting: false }));
     }
-  }, [loadingStates.submitting, validateForm, formData, selectedPhoto, user?.email, handleReset]);
-
-  // Enhanced reset handler (now properly positioned after handleSubmit)
-
+  }, [loadingStates.submitting, validateForm, formData, profilePhoto, user?.email, handleReset, addToast]);
 
   // Enhanced tab configuration
   const tabs = useMemo(() => [
@@ -423,7 +392,6 @@ export default function AddEmployeePage() {
               </div>
             </div>
             
-            {/* Stats or info section could go here */}
             <div className="items-center hidden space-x-4 text-sm text-gray-500 md:flex">
               <div className="flex items-center gap-2">
                 <FaUsers className="w-4 h-4" />
@@ -474,20 +442,60 @@ export default function AddEmployeePage() {
               <>
                 {activeTab === 'single' && (
                   <div className="space-y-6">
+                    {/* Profile Photo Upload Section */}
+                    <div className="p-6 border border-gray-200 rounded-lg bg-gray-50">
+                      <h3 className="mb-4 text-lg font-medium text-gray-900">Profile Photo</h3>
+                      <UniversalFileUpload
+                        files={profilePhoto}
+                        onFilesChange={handlePhotoChange}
+                        options={{
+                          maxFiles: 1,
+                          label: 'Employee Profile Photo',
+                          description: 'Upload a profile photo for the employee (JPG, PNG, WebP - max 10MB)',
+                          acceptedFileTypes: 'image/*',
+                          allowedTypes: ['image/jpeg', 'image/png', 'image/webp'],
+                          maxFileSize: 10 * 1024 * 1024, // 10MB
+                          showPreview: true,
+                          showCompressionInfo: true,
+                          disabled: loadingStates.submitting,
+                          imageOptions: {
+                            maxSizeMB: 0.2,
+                            maxWidthOrHeight: 400,
+                            quality: 0.8,
+                            fileType: 'image/webp'
+                          }
+                        }}
+                      />
+                      
+                      {/* Photo Preview Summary */}
+                      {profilePhoto.length > 0 && (
+                        <div className="p-3 mt-4 border border-blue-200 rounded-lg bg-blue-50">
+                          <p className="text-sm text-blue-800">
+                            ✅ Profile photo ready for upload: <strong>{profilePhoto[0].name}</strong>
+                          </p>
+                          {profilePhoto[0].compressionRatio && profilePhoto[0].compressionRatio > 0 && (
+                            <p className="mt-1 text-xs text-blue-700">
+                              File size optimized by {Math.round(profilePhoto[0].compressionRatio)}%
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
                     <SingleEmployeeForm
                       formData={formData}
                       errors={errors}
                       isSubmitting={loadingStates.submitting}
                       feedback={feedback}
-                      previewImage={previewImage}
+                      previewImage={profilePhoto.length > 0 ? profilePhoto[0].url || null : null}
                       onInputChange={handleInputChange}
-                      onPhotoChange={handlePhotoChange}
+                      onPhotoChange={() => {}} // Disabled since we handle it above
                       onSubmit={handleSubmit}
                       onReset={handleReset}
                       companies={companies}
                       selectedCompany={selectedCompany}
                       onCompanyChange={handleCompanyChange}
-                      compressionProgress={compressionProgress}
+                      compressionProgress={null} // No longer used
                     />
                   </div>
                 )}
