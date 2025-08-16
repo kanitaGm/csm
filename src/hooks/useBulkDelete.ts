@@ -16,7 +16,7 @@ export interface DeleteCondition {
   operator: WhereFilterOp;
   value: string | number | boolean | null;
 }
-
+ 
 export interface DeleteStats {
   found: number;
   deleted: number;
@@ -80,11 +80,11 @@ export const useBulkDelete = (): UseBulkDeleteReturn => {
     }
 
     for (let i = 0; i < conditions.length; i++) {
-      const condition = conditions[i];
-      if (!condition.field.trim()) {
+      const c = conditions[i];
+      if (!c?.field.trim() || '') {
         return `เงื่อนไขที่ ${i + 1}: กรุณาระบุชื่อฟิลด์`;
       }
-      if (condition.value === '' && !['in', 'not-in', 'array-contains-any'].includes(condition.operator)) {
+      if (c.value === '' && !['in', 'not-in', 'array-contains-any'].includes(c.operator)) {
         return `เงื่อนไขที่ ${i + 1}: กรุณาระบุค่า`;
       }
     }

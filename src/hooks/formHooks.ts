@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import type { FormDoc, EnhancedFilterState,PaginationState,FieldValidationResult,FormValidationResult } from '../types';
 import { formatDate } from '../utils/dateUtils';
 import type { DateInput } from '../utils/dateUtils';
-
+ 
 // =================== UTILITY HOOKS ===================
 export function useDebounce(value: string, delay: number): string {
   const [debouncedValue, setDebouncedValue] = useState(value);
@@ -193,7 +193,8 @@ export function getFormStatusColor(status: string): string {
     inactive: 'bg-gray-100 text-gray-800 border-gray-200'
   };
   
-  return statusColors[status] || statusColors.draft;
+
+  return statusColors[status] ?? statusColors.draft!;
 }
 
 export function getFieldTypeIcon(type: string): string {

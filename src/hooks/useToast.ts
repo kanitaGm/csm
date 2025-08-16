@@ -1,46 +1,96 @@
+// ========================================
 // 📁 src/hooks/useToast.ts
-// Toast hook without duplicate interface
-import { useState, useCallback, useRef } from 'react';
-import type { Toast } from '../types/props'; // ใช้ Toast จาก props.ts
+// ========================================
 
-type ToastInput = Omit<Toast, 'id'>;
+import { useState, useCallback, useRef, useEffect } from 'react';
 
-interface UseToastReturn {
-  toasts: readonly Toast[];
-  addToast: (toast: ToastInput) => void;
-  removeToast: (id: string) => void;
+export interface Toast {
+  readonly id: string;
+  readonly title?: string;
+  readonly message: string;
+  readonly type: 'success' | 'error' | 'warning' | 'info';
+  readonly duration?: number;
+  readonly dismissible?: boolean;
+  readonly action?: {
+    label: string;
+    onClick: () => void;
+  };
 }
 
-export const useToast = (): UseToastReturn => {
-  const [toasts, setToasts] = useState<readonly Toast[]>([]);
-  const timeoutRefs = useRef<Map<string, NodeJS.Timeout>>(new Map());
-  
-  const removeToast = useCallback((id: string): void => {
-    // Clear timeout if exists
-    const timeoutId = timeoutRefs.current.get(id);
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-      timeoutRefs.current.delete(id);
-    }
-    
-    setToasts(prev => prev.filter(toast => toast.id !== id));
-  }, []);
-  
-  const addToast = useCallback((toast: ToastInput): void => {
+export interface UseToastResult {
+  readonly toasts: readonly Toast[];
+  readonly addToast: (toast: Omit<Toast, 'id'>) => string;
+  readonly removeToast: (id: string) => void;
+  readonly clearAllToasts: () => void;
+  readonly updateToast: (id: string, updates: Partial<Toast>) => void;
+}
+
+export const useToast = (): UseToastResult => {
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const timeoutsRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
+
+  const addToast = useCallback((toastData: Omit<Toast, 'id'>): string => {
     const id = `toast-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    const newToast: Toast = { ...toast, id };
+    const duration = toastData.duration ?? 5000;
     
-    setToasts(prev => [...prev, newToast]);
-    
-    // Set timeout for auto-removal
-    if (toast.duration !== 0) {
-      const timeoutId = setTimeout(() => {
+    const toast: Toast = {
+      id,
+      dismissible: true,
+      ...toastData
+    };
+
+    setToasts(prev => [...prev, toast]);
+
+    // Auto-dismiss toast after duration
+    if (duration > 0) {
+      const timeout = setTimeout(() => {
         removeToast(id);
-      }, toast.duration ?? 5000);
+      }, duration);
       
-      timeoutRefs.current.set(id, timeoutId);
+      timeoutsRef.current.set(id, timeout);
     }
-  }, [removeToast]);
-  
-  return { toasts, addToast, removeToast };
+
+    return id;
+  }, []);
+
+  const removeToast = useCallback((id: string): void => {
+    setToasts(prev => prev.filter(toast => toast.id !== id));
+    
+    // Clear timeout if exists
+    const timeout = timeoutsRef.current.get(id);
+    if (timeout) {
+      clearTimeout(timeout);
+      timeoutsRef.current.delete(id);
+    }
+  }, []);
+
+  const clearAllToasts = useCallback((): void => {
+    setToasts([]);
+    
+    // Clear all timeouts
+    timeoutsRef.current.forEach(timeout => clearTimeout(timeout));
+    timeoutsRef.current.clear();
+  }, []);
+
+  const updateToast = useCallback((id: string, updates: Partial<Toast>): void => {
+    setToasts(prev => prev.map(toast => 
+      toast.id === id ? { ...toast, ...updates } : toast
+    ));
+  }, []);
+
+  // Cleanup timeouts on unmount
+  useEffect(() => {
+    return () => {
+      timeoutsRef.current.forEach(timeout => clearTimeout(timeout));
+      timeoutsRef.current.clear();
+    };
+  }, []);
+
+  return {
+    toasts,
+    addToast,
+    removeToast,
+    clearAllToasts,
+    updateToast
+  };
 };

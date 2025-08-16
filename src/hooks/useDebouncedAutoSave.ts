@@ -1,113 +1,127 @@
-// src/hooks/useDebouncedAutoSave.ts (แก้ไข TypeScript Strict)
-// ================================
+// ========================================
+// 📁 src/hooks/useDebouncedAutoSave.ts
+// ========================================
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 
 export interface AutoSaveOptions {
-  readonly delay?: number;
-  readonly enabled?: boolean;
-  readonly onSuccess?: () => void;
+  readonly delay: number;
+  readonly onSave: (data: unknown) => Promise<void>;
   readonly onError?: (error: Error) => void;
+  readonly maxRetries?: number;
+  readonly enabled?: boolean;
 }
 
 export interface AutoSaveState {
   readonly isSaving: boolean;
   readonly lastSaved: Date | null;
   readonly error: Error | null;
-  readonly hasUnsavedChanges: boolean;
+  readonly retryCount: number;
+  readonly saveData: (data: unknown) => void;
+  readonly forceSave: () => Promise<void>;
 }
 
-interface AutoSaveResult extends AutoSaveState {
-  readonly forceSave: () => void;
-}
-
-export const useDebouncedAutoSave = <T>(
-  data: T,
-  saveFunction: (data: T) => Promise<void>,
-  options: AutoSaveOptions = {}
-): AutoSaveResult => {
+export const useDebouncedAutoSave = (options: AutoSaveOptions): AutoSaveState => {
   const {
-    delay = 2000,
-    enabled = true,
-    onSuccess,
-    onError
+    delay,
+    onSave,
+    onError,
+    maxRetries = 3,
+    enabled = true
   } = options;
 
-  const [state, setState] = useState<AutoSaveState>({
-    isSaving: false,
-    lastSaved: null,
-    error: null,
-    hasUnsavedChanges: false
-  });
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [lastSaved, setLastSaved] = useState<Date | null>(null);
+  const [error, setError] = useState<Error | null>(null);
+  const [retryCount, setRetryCount] = useState<number>(0);
+  
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const pendingDataRef = useRef<unknown>(null);
+  const isComponentMountedRef = useRef<boolean>(true);
 
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const previousDataRef = useRef<T>(data);
-  const savingRef = useRef<boolean>(false);
-
-  const save = useCallback(async (dataToSave: T): Promise<void> => {
-    if (savingRef.current) return;
-
-    savingRef.current = true;
-    setState(prev => ({ ...prev, isSaving: true, error: null }));
+  const performSave = useCallback(async (data: unknown, attempt = 0): Promise<void> => {
+    if (!enabled || !isComponentMountedRef.current) return;
 
     try {
-      await saveFunction(dataToSave);
-      setState(prev => ({
-        ...prev,
-        isSaving: false,
-        lastSaved: new Date(),
-        hasUnsavedChanges: false,
-        error: null
-      }));
-      onSuccess?.();
-    } catch (error) {
-      const err = error instanceof Error ? error : new Error('Auto-save failed');
-      setState(prev => ({
-        ...prev,
-        isSaving: false,
-        error: err
-      }));
-      onError?.(err);
+      setIsSaving(true);
+      setError(null);
+      
+      await onSave(data);
+      
+      if (isComponentMountedRef.current) {
+        setLastSaved(new Date());
+        setRetryCount(0);
+        pendingDataRef.current = null;
+      }
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error('Auto-save failed');
+      
+      if (attempt < maxRetries) {
+        // Exponential backoff retry
+        const retryDelay = Math.pow(2, attempt) * 1000;
+        setTimeout(() => {
+          if (isComponentMountedRef.current) {
+            setRetryCount(attempt + 1);
+            void performSave(data, attempt + 1);
+          }
+        }, retryDelay);
+      } else {
+        if (isComponentMountedRef.current) {
+          setError(error);
+          setRetryCount(0);
+          onError?.(error);
+        }
+      }
     } finally {
-      savingRef.current = false;
+      if (isComponentMountedRef.current) {
+        setIsSaving(false);
+      }
     }
-  }, [saveFunction, onSuccess, onError]);
+  }, [enabled, onSave, maxRetries, onError]);
 
-  const forceSave = useCallback((): void => {
+  const saveData = useCallback((data: unknown): void => {
+    if (!enabled) return;
+
+    pendingDataRef.current = data;
+    
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+    }
+
+    timeoutRef.current = setTimeout(() => {
+      if (pendingDataRef.current !== null && isComponentMountedRef.current) {
+        void performSave(pendingDataRef.current);
+      }
+    }, delay);
+  }, [enabled, delay, performSave]);
+
+  const forceSave = useCallback(async (): Promise<void> => {
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
       timeoutRef.current = null;
     }
-    void save(data);
-  }, [data, save]);
 
-  useEffect(() => {
-    if (!enabled) return;
-
-    const hasChanged = JSON.stringify(data) !== JSON.stringify(previousDataRef.current);
-    
-    if (hasChanged) {
-      setState(prev => ({ ...prev, hasUnsavedChanges: true }));
-      previousDataRef.current = data;
-
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
-
-      timeoutRef.current = setTimeout(() => {
-        void save(data);
-      }, delay);
+    if (pendingDataRef.current !== null) {
+      await performSave(pendingDataRef.current);
     }
+  }, [performSave]);
 
+  // Cleanup on unmount
+  useEffect(() => {
     return () => {
+      isComponentMountedRef.current = false;
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current);
       }
     };
-  }, [data, delay, enabled, save]);
+  }, []);
 
   return {
-    ...state,
+    isSaving,
+    lastSaved,
+    error,
+    retryCount,
+    saveData,
     forceSave
   };
 };

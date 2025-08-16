@@ -1,341 +1,125 @@
-// src/hooks/usePerformanceMonitor.ts - Simple Version
-import { useEffect, useRef, useCallback } from 'react';
+// ========================================
+// 📁 src/hooks/usePerformanceMonitor.ts
+// ========================================
 
-interface PerformanceMetric {
-  name: string;
-  startTime: number;
-  endTime?: number;
-  duration?: number;
-  metadata?: Record<string, unknown>;
-} 
+import { useState, useEffect, useCallback, useRef } from 'react';
 
-interface PerformanceThresholds {
-  warning: number; // milliseconds
-  critical: number; // milliseconds
+// ----------------------------
+// Types
+// ----------------------------
+export interface PerformanceMemoryUsage {
+  used: number;
+  total: number;
+  limit: number;
 }
 
-// ✅ Simple MemoryInfo interface
-interface MemoryInfo {
-  usedJSHeapSize: number;
-  totalJSHeapSize: number;
-  jsHeapSizeLimit: number;
+export interface PerformanceMetrics {
+  readonly renderCount: number;
+  readonly lastRenderTime: number;
+  readonly averageRenderTime: number;
+  readonly memoryUsage?: PerformanceMemoryUsage; // optional
 }
 
-export interface PerformanceEntry {
-  readonly name: string
-  readonly startTime: number
-  readonly duration: number
-  readonly success: boolean
-  readonly error?: string | undefined // Fixed: explicit undefined
-  readonly timestamp: number
-  readonly metadata?: Record<string, unknown> | undefined // Fixed: explicit undefined
+export interface UsePerformanceTrackingResult {
+  readonly metrics: PerformanceMetrics;
+  readonly renderCount: number;
+  readonly markRender: () => void;
+  readonly markApiCall: (endpoint: string) => void;
+  readonly getReport: () => string;
 }
 
-export interface TimingResult {
-  readonly duration: number
-  readonly success: boolean
-  readonly error?: string | undefined // Fixed: explicit undefined
-  readonly metadata?: Record<string, unknown> | undefined // Fixed: explicit undefined
-}
+// ----------------------------
+// Hook
+// ----------------------------
+export const usePerformanceMonitor = (
+  componentName: string
+): UsePerformanceTrackingResult => {
+  const [renderCount, setRenderCount] = useState<number>(0);
+  const [renderTimes, setRenderTimes] = useState<number[]>([]);
+  const lastRenderTimeRef = useRef<number>(performance.now());
+  const apiCallsRef = useRef<Map<string, number>>(new Map());
 
-const DEFAULT_THRESHOLDS: PerformanceThresholds = {
-  warning: 100,
-  critical: 500
-};
+  // ----------------------------
+  // Mark render
+  const markRender = useCallback((): void => {
+    const now = performance.now();
+    const renderTime = now - lastRenderTimeRef.current;
 
-class SimplePerformanceTracker {
-  private metrics: Map<string, PerformanceMetric> = new Map();
+    setRenderCount((prev) => prev + 1);
+    setRenderTimes((prev) => [...prev.slice(-9), renderTime]); // Keep last 10 render times
+    lastRenderTimeRef.current = now;
+  }, []);
 
-  startMeasure(name: string, metadata?: Record<string, unknown>): void {
-    const startTime = performance.now();
-    this.metrics.set(name, {
-      name,
-      startTime,
-      metadata
-    });
-  }
+  // ----------------------------
+  // Track API call
+  const markApiCall = useCallback((endpoint: string): void => {
+    const current = apiCallsRef.current.get(endpoint) || 0;
+    apiCallsRef.current.set(endpoint, current + 1);
+  }, []);
 
-  endMeasure(name: string, thresholds: PerformanceThresholds = DEFAULT_THRESHOLDS): PerformanceMetric | null {
-    const metric = this.metrics.get(name);
-    if (!metric) {
-      console.warn(`No metric found for: ${name}`);
-      return null;
-    }
-
-    const endTime = performance.now();
-    const duration = endTime - metric.startTime;
-
-    const completedMetric: PerformanceMetric = {
-      ...metric,
-      endTime,
-      duration
-    };
-
-    // Log performance warnings
-    if (duration > thresholds.critical) {
-      console.error(`🔴 Critical performance issue: ${name} took ${duration.toFixed(2)}ms`, completedMetric);
-    } else if (duration > thresholds.warning) {
-      console.warn(`🟡 Performance warning: ${name} took ${duration.toFixed(2)}ms`, completedMetric);
-    } else {
-      console.log(`✅ Performance OK: ${name} took ${duration.toFixed(2)}ms`);
-    }
-
-    this.metrics.delete(name);
-    return completedMetric;
-  }
-
-  measureAsync<T>(
-    name: string,
-    asyncFn: () => Promise<T>,
-    thresholds?: PerformanceThresholds,
-    metadata?: Record<string, unknown>
-  ): Promise<T> {
-    this.startMeasure(name, metadata);
-    
-    return asyncFn()
-      .finally(() => {
-        this.endMeasure(name, thresholds);
-      });
-  }
-
-  measureSync<T>(
-    name: string,
-    syncFn: () => T,
-    thresholds?: PerformanceThresholds,
-    metadata?: Record<string, unknown>
-  ): T {
-    this.startMeasure(name, metadata);
-    
-    try {
-      return syncFn();
-    } finally {
-      this.endMeasure(name, thresholds);
-    }
-  }
-
-  getMemoryUsage(): MemoryInfo | null {
-    try {
-      // Check if performance.memory is available (Chrome)
-      const perf = performance as Performance & { memory?: MemoryInfo };
+  // ----------------------------
+  // Memory usage (Chrome-only)
+  const getMemoryUsage = useCallback(
+    (): PerformanceMemoryUsage | undefined => {
+      const perf = performance as Performance & {
+        memory?: { usedJSHeapSize: number; totalJSHeapSize: number; jsHeapSizeLimit: number };
+      };
       if (perf.memory) {
-        return perf.memory;
+        return {
+          used: Math.round(perf.memory.usedJSHeapSize / 1024 / 1024),
+          total: Math.round(perf.memory.totalJSHeapSize / 1024 / 1024),
+          limit: Math.round(perf.memory.jsHeapSizeLimit / 1024 / 1024),
+        };
       }
-    } catch (error) {
-      console.warn('Memory info not available:', error);
-    }
-    return null;
-  }
+      return undefined;
+    },
+    []
+  );
 
-  cleanup(): void {
-    this.metrics.clear();
-  }
-}
+  // ----------------------------
+  // Performance report string
+  const getReport = useCallback((): string => {
+    const avgRenderTime =
+      renderTimes.length > 0
+        ? renderTimes.reduce((a, b) => a + b, 0) / renderTimes.length
+        : 0;
 
-export const endTiming = (
-  timingId: string, 
-  success: boolean = true, 
-  error?: string | undefined, // Fixed: explicit undefined
-  metadata?: Record<string, unknown> | undefined // Fixed: explicit undefined
-): TimingResult => {
-  const endTime = performance.now()
-  
-  try {
-    const startMarkName = `${timingId}-start`
-    const endMarkName = `${timingId}-end`
-    
-    performance.mark(endMarkName)
-    performance.measure(timingId, startMarkName, endMarkName)
-    
-    const measure = performance.getEntriesByName(timingId, 'measure')[0]
-    const duration = measure?.duration ?? 0
-    
-    // Fixed: Create performance entry with proper undefined handling
-    const entry: PerformanceEntry = {
-      name: extractNameFromTimingId(timingId),
-      startTime: measure?.startTime ?? endTime - duration,
-      duration,
-      success,
-      error: error ?? undefined,
-      timestamp: Date.now(),
-      metadata: metadata ?? undefined
-    }
-    
-    addEntry(entry)
-    cleanupTiming(timingId)
-    
-    return {
-      duration,
-      success,
-      error: error ?? undefined,
-      metadata: metadata ?? undefined
-    }
-  } catch (performanceError) {
-    const fallbackDuration = endTime - (getStartTime(timingId) ?? endTime)
-    const errorMessage = error ?? `Performance API error: ${performanceError instanceof Error ? performanceError.message : 'Unknown error'}`
-    
-    const entry: PerformanceEntry = {
-      name: extractNameFromTimingId(timingId),
-      startTime: endTime - fallbackDuration,
-      duration: fallbackDuration,
-      success,
-      error: errorMessage,
-      timestamp: Date.now(),
-      metadata: metadata ?? undefined
-    }
-    
-    addEntry(entry)
-    
-    return {
-      duration: fallbackDuration,
-      success,
-      error: errorMessage,
-      metadata: metadata ?? undefined
-    }
-  }
-}
+    const memoryUsage = getMemoryUsage();
+    const apiCalls = Array.from(apiCallsRef.current.entries());
 
-// Fixed: Page load measurement without deprecated navigationStart
-export const measurePageLoad = (): void => {
-  if (typeof window !== 'undefined' && 'performance' in window) {
-    window.addEventListener('load', () => {
-      setTimeout(() => {
-        const navigation = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined
-        
-        if (navigation) {
-          const metrics = {
-            dns: navigation.domainLookupEnd - navigation.domainLookupStart,
-            tcp: navigation.connectEnd - navigation.connectStart,
-            ssl: navigation.secureConnectionStart > 0 ? navigation.connectEnd - navigation.secureConnectionStart : 0,
-            ttfb: navigation.responseStart - navigation.requestStart,
-            download: navigation.responseEnd - navigation.responseStart,
-            dom: navigation.domContentLoadedEventEnd - navigation.domContentLoadedEventStart,
-            load: navigation.loadEventEnd - navigation.loadEventStart,
-            total: navigation.loadEventEnd - navigation.fetchStart // Fixed: use fetchStart instead of navigationStart
-          }
+    return `
+Performance Report for ${componentName}:
+- Render Count: ${renderCount}
+- Average Render Time: ${avgRenderTime.toFixed(2)}ms
+- Memory Usage: ${memoryUsage ? `${memoryUsage.used}MB / ${memoryUsage.total}MB` : 'N/A'}
+- API Calls: ${apiCalls.map(([endpoint, count]) => `${endpoint}: ${count}`).join(', ')}
+    `.trim();
+  }, [componentName, renderCount, renderTimes, getMemoryUsage]);
 
-          performanceMonitor.measureSync('page-load', () => metrics.total, {
-            ...metrics,
-            url: window.location.href,
-            userAgent: navigator.userAgent
-          })
-        }
-      }, 0)
-    })
-  }
-}
-
-
-// Singleton instance
-const performanceTracker = new SimplePerformanceTracker();
-
-interface PerformanceMonitorOptions {
-  enableMemoryMonitoring?: boolean;
-  memoryCheckInterval?: number;
-  thresholds?: PerformanceThresholds;
-}
-
-export const usePerformanceMonitor = (options: PerformanceMonitorOptions = {}) => {
-  const {
-    enableMemoryMonitoring = true,
-    memoryCheckInterval = 10000, // 10 seconds
-    thresholds = DEFAULT_THRESHOLDS
-  } = options;
-
-  const memoryIntervalRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Memory monitoring
+  // ----------------------------
+  // Mark render on each component update
   useEffect(() => {
-    if (enableMemoryMonitoring) {
-      const checkMemory = () => {
-        const memoryInfo = performanceTracker.getMemoryUsage();
-        if (memoryInfo) {
-          const usedMB = Math.round(memoryInfo.usedJSHeapSize / 1024 / 1024);
-          const limitMB = Math.round(memoryInfo.jsHeapSizeLimit / 1024 / 1024);
-          const usagePercent = (usedMB / limitMB) * 100;
+    markRender();
+  });
 
-          if (usagePercent > 90) {
-            console.error(`🔴 Critical memory usage: ${usedMB}MB (${usagePercent.toFixed(1)}% of ${limitMB}MB limit)`);
-          } else if (usagePercent > 80) {
-            console.warn(`🟡 High memory usage: ${usedMB}MB (${usagePercent.toFixed(1)}% of ${limitMB}MB limit)`);
-          }
-        }
-      };
-
-      checkMemory(); // Initial check
-      memoryIntervalRef.current = setInterval(checkMemory, memoryCheckInterval);
-
-      return () => {
-        if (memoryIntervalRef.current) {
-          clearInterval(memoryIntervalRef.current);
-        }
-      };
-    }
-  }, [enableMemoryMonitoring, memoryCheckInterval]);
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (memoryIntervalRef.current) {
-        clearInterval(memoryIntervalRef.current);
-      }
-    };
-  }, []);
-
-  const startMeasure = useCallback((name: string, metadata?: Record<string, unknown>) => {
-    performanceTracker.startMeasure(name, metadata);
-  }, []);
-
-  const endMeasure = useCallback((name: string) => {
-    return performanceTracker.endMeasure(name, thresholds);
-  }, [thresholds]);
-
-  const measureAsync = useCallback(<T>(
-    name: string,
-    asyncFn: () => Promise<T>,
-    metadata?: Record<string, unknown>
-  ): Promise<T> => {
-    return performanceTracker.measureAsync(name, asyncFn, thresholds, metadata);
-  }, [thresholds]);
-
-  const measureSync = useCallback(<T>(
-    name: string,
-    syncFn: () => T,
-    metadata?: Record<string, unknown>
-  ): T => {
-    return performanceTracker.measureSync(name, syncFn, thresholds, metadata);
-  }, [thresholds]);
-
-  const getMemoryUsage = useCallback(() => {
-    return performanceTracker.getMemoryUsage();
-  }, []);
+  // ----------------------------
+  // Metrics
+  const memoryUsage = getMemoryUsage();
+  const metrics: PerformanceMetrics = {
+    renderCount,
+    lastRenderTime: renderTimes[renderTimes.length - 1] || 0,
+    averageRenderTime:
+      renderTimes.length > 0
+        ? renderTimes.reduce((a, b) => a + b, 0) / renderTimes.length
+        : 0,
+    ...(memoryUsage ? { memoryUsage } : {}), // only add property if defined
+  };
 
   return {
-    startMeasure,
-    endMeasure,
-    measureAsync,
-    measureSync,
-    getMemoryUsage
-  };
-};
-
-// Export singleton for direct access
-export { performanceTracker };
-
-// ✅ Simple example usage
-export const withPerformanceLogging = <T extends unknown[], R>(
-  fn: (...args: T) => R,
-  name: string
-) => {
-  return (...args: T): R => {
-    return performanceTracker.measureSync(name, () => fn(...args));
-  };
-};
-
-export const withAsyncPerformanceLogging = <T extends unknown[], R>(
-  fn: (...args: T) => Promise<R>,
-  name: string
-) => {
-  return (...args: T): Promise<R> => {
-    return performanceTracker.measureAsync(name, () => fn(...args));
+    metrics,
+    renderCount,
+    markRender,
+    markApiCall,
+    getReport,
   };
 };

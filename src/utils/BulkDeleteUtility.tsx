@@ -17,7 +17,7 @@ import {
   FaTimes,
   FaEye,
   FaDownload
-} from 'react-icons/fa';
+} from 'react-icons/fa'; 
 
 // Types
 interface DeleteCondition {
@@ -180,7 +180,7 @@ const DocumentPreview: React.FC<DocumentPreviewProps> = ({
           <div className="flex space-x-2">
             <button
               onClick={exportToCSV}
-              className="flex items-center px-3 py-2 space-x-2 text-sm text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100"
+              className="flex items-center px-3 py-2 space-x-2 text-sm text-blue-600 rounded-lg bg-blue-50 hover:bg-blue-100"
             >
               <FaDownload />
               <span>Export CSV</span>
@@ -470,7 +470,7 @@ const StandaloneBulkDelete: React.FC<StandaloneBulkDeleteProps> = ({
   return (
     <div className="p-6 bg-white rounded-lg shadow-lg">
       <div className="mb-6">
-        <h2 className="text-xl font-semibold text-gray-900 mb-2">
+        <h2 className="mb-2 text-xl font-semibold text-gray-900">
           ลบข้อมูลแบบกลุ่ม
         </h2>
         <p className="text-sm text-gray-600">
@@ -480,7 +480,7 @@ const StandaloneBulkDelete: React.FC<StandaloneBulkDeleteProps> = ({
 
       {/* Collection Input */}
       <div className="mb-6">
-        <label className="block text-sm font-medium text-gray-700 mb-2">
+        <label className="block mb-2 text-sm font-medium text-gray-700">
           ชื่อ Collection <span className="text-red-500">*</span>
         </label>
         <div className="flex gap-2 mb-2">
@@ -495,12 +495,12 @@ const StandaloneBulkDelete: React.FC<StandaloneBulkDeleteProps> = ({
         
         {/* Quick Fill Buttons */}
         <div className="flex flex-wrap gap-2">
-          <span className="text-xs text-gray-500 self-center">ทางลัด:</span>
+          <span className="self-center text-xs text-gray-500">ทางลัด:</span>
           {commonCollections.map(name => (
             <button
               key={name}
               onClick={() => quickFillCollection(name)}
-              className="px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
+              className="px-2 py-1 text-xs text-gray-700 bg-gray-100 rounded hover:bg-gray-200"
             >
               {name}
             </button>
@@ -510,7 +510,7 @@ const StandaloneBulkDelete: React.FC<StandaloneBulkDeleteProps> = ({
 
       {/* Error Display */}
       {error && (
-        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+        <div className="p-3 mb-4 border border-red-200 rounded-lg bg-red-50">
           <div className="flex items-center space-x-2">
             <FaExclamationTriangle className="text-red-600" />
             <span className="text-red-700">{error}</span>
@@ -520,12 +520,12 @@ const StandaloneBulkDelete: React.FC<StandaloneBulkDeleteProps> = ({
 
       {/* Conditions */}
       <div className="mb-6">
-        <h3 className="text-md font-medium text-gray-700 mb-3">
+        <h3 className="mb-3 font-medium text-gray-700 text-md">
           เงื่อนไขการลบ <span className="text-red-500">*</span>
         </h3>
         
         {conditions.map((condition, index) => (
-          <div key={index} className="flex items-center space-x-2 mb-3">
+          <div key={index} className="flex items-center mb-3 space-x-2">
             <div className="flex-1">
               <input
                 type="text"
@@ -561,7 +561,7 @@ const StandaloneBulkDelete: React.FC<StandaloneBulkDeleteProps> = ({
             {conditions.length > 1 && (
               <button
                 onClick={() => removeCondition(index)}
-                className="p-2 text-red-600 hover:bg-red-50 rounded-lg"
+                className="p-2 text-red-600 rounded-lg hover:bg-red-50"
                 title="ลบเงื่อนไข"
               >
                 <FaTimes />
@@ -580,11 +580,11 @@ const StandaloneBulkDelete: React.FC<StandaloneBulkDeleteProps> = ({
       </div>
 
       {/* Action Buttons */}
-      <div className="flex items-center space-x-3 mb-6">
+      <div className="flex items-center mb-6 space-x-3">
         <button
           onClick={handlePreviewDocuments}
           disabled={isLoading || !collectionName.trim()}
-          className="flex items-center px-4 py-2 space-x-2 text-blue-600 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="flex items-center px-4 py-2 space-x-2 text-blue-600 border border-blue-200 rounded-lg bg-blue-50 hover:bg-blue-100 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isLoading ? <FaSpinner className="animate-spin" /> : <FaEye />}
           <span>ดูตัวอย่าง</span>
@@ -609,9 +609,9 @@ const StandaloneBulkDelete: React.FC<StandaloneBulkDeleteProps> = ({
 
       {/* Delete Results */}
       {deleteStats && (
-        <div className="p-4 bg-gray-50 rounded-lg mb-6">
-          <h3 className="text-md font-medium text-gray-700 mb-3">ผลการลบข้อมูล</h3>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
+        <div className="p-4 mb-6 rounded-lg bg-gray-50">
+          <h3 className="mb-3 font-medium text-gray-700 text-md">ผลการลบข้อมูล</h3>
+          <div className="grid grid-cols-2 gap-4 mb-3 md:grid-cols-4">
             <div className="text-center">
               <div className="text-2xl font-bold text-blue-600">{deleteStats.found}</div>
               <div className="text-sm text-gray-600">พบ</div>
@@ -632,8 +632,8 @@ const StandaloneBulkDelete: React.FC<StandaloneBulkDeleteProps> = ({
           
           {deleteStats.errors.length > 0 && (
             <div className="mt-3">
-              <h4 className="text-sm font-medium text-red-700 mb-2">ข้อผิดพลาด:</h4>
-              <ul className="text-sm text-red-600 space-y-1">
+              <h4 className="mb-2 text-sm font-medium text-red-700">ข้อผิดพลาด:</h4>
+              <ul className="space-y-1 text-sm text-red-600">
                 {deleteStats.errors.map((errorMsg, index) => (
                   <li key={index}>• {errorMsg}</li>
                 ))}
@@ -644,9 +644,9 @@ const StandaloneBulkDelete: React.FC<StandaloneBulkDeleteProps> = ({
       )}
 
       {/* Examples */}
-      <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-        <h4 className="font-medium text-blue-800 mb-2">ตัวอย่างการใช้งาน:</h4>
-        <div className="text-sm text-blue-700 space-y-1">
+      <div className="p-4 mt-6 border border-blue-200 rounded-lg bg-blue-50">
+        <h4 className="mb-2 font-medium text-blue-800">ตัวอย่างการใช้งาน:</h4>
+        <div className="space-y-1 text-sm text-blue-700">
           <p>• ลบพนักงานบริษัท AAA: <code>company == "AAA"</code></p>
           <p>• ลบข้อมูลที่ไม่ใช้งาน: <code>status == "inactive"</code></p>
           <p>• ลบข้อมูลทดสอบ: <code>type == "test"</code></p>

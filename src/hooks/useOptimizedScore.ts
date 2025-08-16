@@ -1,82 +1,96 @@
-// src/hooks/useOptimizedScore.ts (แก้ไข TypeScript Strict)
-// ================================
+// ========================================
+// 📁 src/hooks/useOptimizedScore.ts
+// ========================================
+import { useMemo, useCallback } from 'react';
+import type { Score, CalculatedScore } from '../types';
 
-import { useMemo } from 'react';
-import type { CSMAssessmentAnswer, CSMFormField } from '../types/csm';
-
- interface ScoreCalculation {
-  readonly totalScore: number;
-  readonly avgScore: number;
-  readonly maxScore: number;
-  readonly completionRate: number;
-  readonly scoreDistribution: Record<string, number>;
-  readonly riskLevel: 'Low' | 'Moderate' | 'High' | '';
+export interface ScoreCalculationOptions {
+  readonly weights?: Record<string, number>;
+  readonly scalingFactor?: number;
+  readonly enableCaching?: boolean; // future use
 }
 
-export const useOptimizedScoreCalculation = (
-  answers: readonly CSMAssessmentAnswer[], 
-  formFields: readonly CSMFormField[]
-): ScoreCalculation => {
-  return useMemo<ScoreCalculation>(() => {
-    if (formFields.length === 0 || answers.length === 0) {
-      return {
-        totalScore: 0,
-        avgScore: 0,
-        maxScore: 0,
-        completionRate: 0,
-        scoreDistribution: {},
-        riskLevel: ''
-      };
-    }
+export interface UseOptimizedScoreResult {
+  readonly calculateScore: (answers: Record<string, Score>) => CalculatedScore;
+  readonly calculateTotalScore: (scores: CalculatedScore[]) => number;
+  readonly getScoreBreakdown: (answers: Record<string, Score>) => Record<string, number>;
+  readonly isScoreValid: (score: CalculatedScore) => boolean;
+}
 
+// แปลง Score string → number
+const parseScoreValue = (score: Score): number => {
+  if (score === 'n/a' || score === '' || score == null) return 0;
+  const numeric = parseFloat(score);
+  return isNaN(numeric) ? 0 : numeric;
+};
+
+export const useOptimizedScore = (options: ScoreCalculationOptions = {}): UseOptimizedScoreResult => {
+  const { weights = {}, scalingFactor = 1 } = options;
+
+  // คำนวณน้ำหนักรวม
+  const normalizedWeights = useMemo(() => {
+    const totalWeight = Object.values(weights).reduce((sum, weight) => sum + weight, 0);
+    if (totalWeight === 0) return weights;
+    return Object.fromEntries(
+      Object.entries(weights).map(([key, weight]) => [key, weight / totalWeight])
+    );
+  }, [weights]);
+
+  const calculateScore = useCallback((answers: Record<string, Score>): CalculatedScore => {
     let totalScore = 0;
-    let totalWeightedScore = 0;
-    let totalWeight = 0;
     let maxPossibleScore = 0;
-    let completedAnswers = 0;
-    const scoreDistribution: Record<string, number> = { '0': 0, '1': 0, '2': 0, 'n/a': 0 };
+    const breakdown: Record<string, number> = {};
 
-    answers.forEach((answer: CSMAssessmentAnswer) => {
-      const field = formFields.find((f: CSMFormField) => f.ckItem === answer.ckItem);
-      if (!field) return;
+    Object.entries(answers).forEach(([questionId, answer]) => {
+      const weight = normalizedWeights[questionId] || 1;
+      const questionScore = parseScoreValue(answer); // แปลงจาก string → number
 
-      const weight = parseFloat(field.fScore || '1');
-      const score = parseFloat(answer.score || '0');
-      
-      if (answer.score && answer.score !== '' && answer.comment.trim()) {
-        completedAnswers++;
-        
-        if (answer.score !== 'n/a') {
-          totalScore += score;
-          totalWeightedScore += score * weight;
-          totalWeight += weight;
-          maxPossibleScore += 2 * weight;
-        }
-        
-        const scoreKey = answer.score;
-        scoreDistribution[scoreKey] = (scoreDistribution[scoreKey] || 0) + 1;
-      }
+      const weightedScore = questionScore * weight * scalingFactor;
+      totalScore += weightedScore;
+      maxPossibleScore += 5 * weight * scalingFactor; // สมมติคะแนนเต็มต่อข้อ = 5
+      breakdown[questionId] = weightedScore;
     });
 
-    const avgScore = totalWeight > 0 ? totalWeightedScore / totalWeight : 0;
-    const completionRate = formFields.length > 0 ? (completedAnswers / formFields.length) * 100 : 0;
-
-    let riskLevel: 'Low' | 'Moderate' | 'High' | '' = '';
-    if (avgScore >= 1.5) {
-      riskLevel = 'Low';
-    } else if (avgScore >= 1.0) {
-      riskLevel = 'Moderate';
-    } else if (avgScore > 0) {
-      riskLevel = 'High';
-    }
+    const percentage = maxPossibleScore > 0 ? (totalScore / maxPossibleScore) * 100 : 0;
 
     return {
-      totalScore,
-      avgScore,
-      maxScore: maxPossibleScore,
-      completionRate,
-      scoreDistribution,
-      riskLevel
+      value: Math.round(totalScore * 100) / 100,
+      maxValue: Math.round(maxPossibleScore * 100) / 100,
+      percentage: Math.round(percentage * 100) / 100,
+      breakdown
     };
-  }, [answers, formFields]);
+  }, [normalizedWeights, scalingFactor]);
+
+  const calculateTotalScore = useCallback((scores: CalculatedScore[]): number => {
+    if (scores.length === 0) return 0;
+    const totalValue = scores.reduce((sum, score) => sum + score.value, 0);
+    const totalMaxValue = scores.reduce((sum, score) => sum + score.maxValue, 0);
+    return totalMaxValue > 0 ? (totalValue / totalMaxValue) * 100 : 0;
+  }, []);
+
+  const getScoreBreakdown = useCallback((answers: Record<string, Score>): Record<string, number> => {
+    return calculateScore(answers).breakdown;
+  }, [calculateScore]);
+
+  const isScoreValid = useCallback((score: CalculatedScore): boolean => {
+    return (
+      typeof score.value === 'number' &&
+      typeof score.maxValue === 'number' &&
+      typeof score.percentage === 'number' &&
+      !isNaN(score.value) &&
+      !isNaN(score.maxValue) &&
+      !isNaN(score.percentage) &&
+      score.value >= 0 &&
+      score.maxValue >= 0 &&
+      score.percentage >= 0 &&
+      score.percentage <= 100
+    );
+  }, []);
+
+  return {
+    calculateScore,
+    calculateTotalScore,
+    getScoreBreakdown,
+    isScoreValid
+  };
 };

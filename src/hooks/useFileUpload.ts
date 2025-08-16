@@ -7,7 +7,7 @@ export interface FileAttachment {
   id: string;
   name: string;
   size: number;
-  type: string;
+  type: string; 
   url?: string;
   base64?: string;
   compressionApplied?: boolean;
@@ -166,7 +166,7 @@ export const useFileUpload = (options: UseFileUploadOptions = {}) => {
             base64: base64Data,
             compressionApplied: result.compressionApplied,
             originalSize: result.originalSize,
-            compressionRatio: result.compressionRatio
+            compressionRatio: result.compressionRatio,            
           };
 
           newFiles.push(fileAttachment);

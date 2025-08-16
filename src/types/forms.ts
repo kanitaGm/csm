@@ -42,6 +42,12 @@ export interface ScoreOption {
   description: string
   color: string
 }
+export interface CalculatedScore {
+  value: number;
+  maxValue: number;
+  percentage: number;
+  breakdown: Record<string, number>;
+}
 
 export interface FileAttachment {
   id: string

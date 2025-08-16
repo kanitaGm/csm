@@ -1,129 +1,132 @@
+// ========================================
 // 📁 src/hooks/useCSMData.ts
-// Strict TypeScript CSM Data hook - Real data only
-import { useState, useEffect, useCallback, useRef } from 'react';
-import type { CSMVendor, CSMAssessmentSummary } from '../types/csm';
-import { vendorsService, assessmentSummariesService } from '../services/csmService';
+// ========================================
 
-interface CSMDataState {
-  readonly vendors: readonly CSMVendor[];
-  readonly assessmentSummaries: readonly CSMAssessmentSummary[];
-  readonly loading: boolean;
-  readonly error: string | null;
-  readonly lastUpdated: Date | null;
+import { useState, useCallback } from 'react';
+import type { CSMVendor, CSMAssessment } from '../types/csm';
+import { useApi } from './useApi';
+
+export interface CSMDataOptions {
+  enableCache?: boolean;
+  refreshInterval?: number;
+  onError?: (error: Error) => void;
 }
 
-interface CSMDataActions {
-  readonly loadData: () => Promise<void>;
-  readonly refreshData: () => Promise<void>;
-  readonly clearError: () => void;
-  readonly updateVendor: (vendor: CSMVendor) => void;
-  readonly updateAssessmentSummary: (summary: CSMAssessmentSummary) => void;
+export interface CSMDataResult {
+  vendors: CSMVendor[];
+  assessments: CSMAssessment[];
+  loading: boolean;
+  error: Error | null;
+  refresh: () => Promise<void>;
+  addVendor: (vendor: Omit<CSMVendor, 'id'>) => Promise<void>;
+  updateVendor: (id: string, updates: Partial<CSMVendor>) => Promise<void>;
+  deleteVendor: (id: string) => Promise<void>;
 }
 
-type UseCSMDataReturn = CSMDataState & CSMDataActions;
+export const useCSMData = (options: CSMDataOptions = {}): CSMDataResult => {
+  const { enableCache = true, refreshInterval, onError } = options;
+  
+  const [vendors, setVendors] = useState<CSMVendor[]>([]);
+  const [assessments, setAssessments] = useState<CSMAssessment[]>([]);
 
-export const useCSMData = (companyId?: string): UseCSMDataReturn => {
-  const [state, setState] = useState<CSMDataState>({
-    vendors: [],
-    assessmentSummaries: [],
-    loading: false,
-    error: null,
-    lastUpdated: null
-  });
+  //  สร้าง options objects แยกเพื่อหลีกเลี่ยง undefined
+  const vendorsApiOptions = {
+    cacheTime: enableCache ? 5 * 60 * 1000 : 0,
+    onSuccess: (data: unknown) => setVendors((data as CSMVendor[]) || []),
+    ...(onError && { onError }),
+    ...(refreshInterval && {
+      enablePolling: true,
+      pollingInterval: refreshInterval
+    })
+  };
 
-  const isLoadingRef = useRef<boolean>(false);
-  const isMountedRef = useRef<boolean>(true);
+  const assessmentsApiOptions = {
+    cacheTime: enableCache ? 5 * 60 * 1000 : 0,
+    onSuccess: (data: unknown) => setAssessments((data as CSMAssessment[]) || []),
+    ...(onError && { onError }),
+    ...(refreshInterval && {
+      enablePolling: true,
+      pollingInterval: refreshInterval
+    })
+  };
 
-  // Set mounted flag
-  useEffect(() => {
-    isMountedRef.current = true;
-    return () => {
-      isMountedRef.current = false;
-    };
-  }, []);
+  const vendorsApi = useApi<CSMVendor[]>('/api/csm/vendors', vendorsApiOptions);
+  const assessmentsApi = useApi<CSMAssessment[]>('/api/csm/assessments', assessmentsApiOptions);
 
-  const loadData = useCallback(async (): Promise<void> => {
-    if (isLoadingRef.current) {
-      console.log('🔄 Already loading data, skipping...');
-      return;
-    }
+  const refresh = useCallback(async (): Promise<void> => {
+    await Promise.all([vendorsApi.refetch(), assessmentsApi.refetch()]);
+  }, [vendorsApi, assessmentsApi]);
 
-    isLoadingRef.current = true;
-    
-    if (!isMountedRef.current) return;
-    
-    setState(prev => ({ ...prev, loading: true, error: null }));
-
+  const addVendor = useCallback(async (vendor: Omit<CSMVendor, 'id'>): Promise<void> => {
     try {
-      console.log('📡 Loading CSM data from Firestore...');
-      
-      const [vendorsData, summariesData] = await Promise.all([
-        vendorsService.getAll(),
-        assessmentSummariesService.getAll()
-      ]);
+      const response = await fetch('/api/csm/vendors', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(vendor)
+      });
 
-      if (!isMountedRef.current) return;
+      if (!response.ok) {
+        throw new Error(`Failed to add vendor: ${response.statusText}`);
+      }
 
-      console.log(`✅ Loaded ${vendorsData.length} vendors and ${summariesData.length} summaries`);
-
-      setState(prev => ({
-        ...prev,
-        vendors: vendorsData,
-        assessmentSummaries: summariesData,
-        loading: false,
-        error: null,
-        lastUpdated: new Date()
-      }));
-
+      await refresh();
     } catch (error) {
-      console.error('❌ Error loading CSM data:', error);
-      
-      if (!isMountedRef.current) return;
-
-      const errorMessage = error instanceof Error ? error.message : 'เกิดข้อผิดพลาดในการโหลดข้อมูล';
-      
-      setState(prev => ({
-        ...prev,
-        loading: false,
-        error: errorMessage
-      }));
-    } finally {
-      isLoadingRef.current = false;
+      const err = error instanceof Error ? error : new Error('Unknown error');
+      onError?.(err);
+      throw err;
     }
-  }, [companyId]);
+  }, [refresh, onError]);
 
-  const refreshData = useCallback(async (): Promise<void> => {
-    console.log('🔄 Refreshing CSM data...');
-    vendorsService.clearCache();
-    await loadData();
-  }, [loadData]);
+  const updateVendor = useCallback(async (id: string, updates: Partial<CSMVendor>): Promise<void> => {
+    try {
+      const response = await fetch(`/api/csm/vendors/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates)
+      });
 
-  const clearError = useCallback((): void => {
-    setState(prev => ({ ...prev, error: null }));
-  }, []);
+      if (!response.ok) {
+        throw new Error(`Failed to update vendor: ${response.statusText}`);
+      }
 
-  const updateVendor = useCallback((vendor: CSMVendor): void => {
-    setState(prev => ({
-      ...prev,
-      vendors: prev.vendors.map(v => v.vdCode === vendor.vdCode ? vendor : v)
-    }));
-  }, []);
+      // Optimistic update
+      setVendors(prev => prev.map(vendor => 
+        vendor.id === id ? { ...vendor, ...updates } : vendor
+      ));
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error('Unknown error');
+      onError?.(err);
+      throw err;
+    }
+  }, [onError]);
 
-  const updateAssessmentSummary = useCallback((summary: CSMAssessmentSummary): void => {
-    setState(prev => ({
-      ...prev,
-      assessmentSummaries: prev.assessmentSummaries.map(s => 
-        s.vdCode === summary.vdCode ? summary : s
-      )
-    }));
-  }, []);
+  const deleteVendor = useCallback(async (id: string): Promise<void> => {
+    try {
+      const response = await fetch(`/api/csm/vendors/${id}`, {
+        method: 'DELETE'
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to delete vendor: ${response.statusText}`);
+      }
+
+      // Optimistic update
+      setVendors(prev => prev.filter(vendor => vendor.id !== id));
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error('Unknown error');
+      onError?.(err);
+      throw err;
+    }
+  }, [onError]);
 
   return {
-    ...state,
-    loadData,
-    refreshData,
-    clearError,
+    vendors,
+    assessments,
+    loading: vendorsApi.loading || assessmentsApi.loading,
+    error: vendorsApi.error || assessmentsApi.error,
+    refresh,
+    addVendor,
     updateVendor,
-    updateAssessmentSummary
+    deleteVendor
   };
 };

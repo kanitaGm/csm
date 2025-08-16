@@ -1,7 +1,9 @@
-// Fixed useDebouncedValue Hook
-// ไฟล์: src/hooks/useDebouncedValue.ts
-// ================================
-import { useState, useEffect} from 'react';
+// ========================================
+// 📁 src/hooks/useDebouncedValue.ts
+// ========================================
+
+import { useState, useEffect } from 'react';
+
 export const useDebouncedValue = <T>(value: T, delay: number): T => {
   const [debouncedValue, setDebouncedValue] = useState<T>(value);
 

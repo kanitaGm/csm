@@ -24,7 +24,7 @@ interface ValidationRule {
   validator?: (value: unknown) => string | null;
   transformer?: (value: unknown) => unknown;
 }
-
+ 
 interface DuplicateResult {
   csvDuplicates: Array<{
     row: number;

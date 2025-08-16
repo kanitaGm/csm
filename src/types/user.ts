@@ -1,7 +1,11 @@
-// 📁 src/types/user.ts - Roles เป็น Role[] เสมอ
+// 📁 src/types/user.ts - Complete User Types with Role Management
 
 import { Timestamp } from 'firebase/firestore';
 import type { EmployeeProfile } from './employees';
+
+// ========================================
+// ROLE TYPES
+// ========================================
 
 export type Role =
   | 'superAdmin'
@@ -12,7 +16,10 @@ export type Role =
   | 'plantAdmin'
   | 'guest';
 
-// User Role Interface
+// ========================================
+// USER ROLE INTERFACE
+// ========================================
+
 export interface UserRole {
   uid?: string; // Firebase Auth UID
   empId: string;
@@ -25,7 +32,7 @@ export interface UserRole {
   updatedAt?: Timestamp | Date | string;
   updatedBy?: string;
   isActive: boolean;
-  roles: Role[]; // ✅ array เสมอ
+  roles: Role[]; //  array เสมอ
 
   // Enhanced Permissions Structure
   permissions: {
@@ -59,7 +66,10 @@ export interface UserRole {
   managedPlants?: string[];
 }
 
-// ✅ แก้ไข UserPermissions ให้ใช้ Role[] เท่านั้น
+// ========================================
+// USER PERMISSIONS & APP USER
+// ========================================
+
 export interface UserPermissions {
   empId: string;
   email: string;
@@ -69,7 +79,6 @@ export interface UserPermissions {
   displayName?: string;
 }
 
-// ✅ แก้ไข AppUser ให้ใช้ Role[] เท่านั้น
 export interface AppUser {
   uid: string;
   empId: string | null;
@@ -81,13 +90,15 @@ export interface AppUser {
   loginType: 'provider' | 'firebase' | 'internal' | null;
 }
 
-// Employee Login Interface
+// ========================================
+// AUTH INTERFACES
+// ========================================
+
 export interface EmployeeLogin {
   empId: string;
   passcode: string;
 }
 
-// Login Result Interface
 export interface LoginResult {
   success: boolean;
   user?: AppUser;
@@ -96,7 +107,6 @@ export interface LoginResult {
   message?: string;
 }
 
-// Auth Context Type
 export interface AuthContextType {
   user: AppUser | null;
   currentUser: unknown; // Firebase User object
@@ -114,7 +124,28 @@ export interface AuthContextType {
   logout: () => Promise<void>;
 }
 
-// ✅ Default Permissions
+// ========================================
+// ADDITIONAL INTERFACES
+// ========================================
+
+export interface CreateUserRequest {
+  email: string;
+  name: string;
+  roles: Role[];
+}
+
+export interface UserProfile extends UserRole {
+  preferences: {
+    theme: 'light' | 'dark';
+    language: 'th' | 'en';
+    notifications: boolean;
+  };
+}
+
+// ========================================
+// DEFAULT PERMISSIONS
+// ========================================
+
 export const DEFAULT_PERMISSIONS: UserRole['permissions'] = {
   csm: {
     canEvaluate: false,
@@ -139,7 +170,10 @@ export const DEFAULT_PERMISSIONS: UserRole['permissions'] = {
   },
 };
 
-// ✅ Role Permissions Mapping
+// ========================================
+// ROLE PERMISSIONS MAPPING
+// ========================================
+
 export const ROLE_PERMISSIONS: Record<Role, UserRole['permissions']> = {
   superAdmin: {
     csm: {
@@ -171,20 +205,20 @@ export const ROLE_PERMISSIONS: Record<Role, UserRole['permissions']> = {
       canManageVendors: true,
       canViewReports: true,
       canExportData: true,
-      canManageForms: false,
+      canManageForms: true,
     },
     employees: {
       canView: true,
       canCreate: true,
       canEdit: true,
-      canDelete: false,
+      canDelete: true,
       canImport: true,
     },
     system: {
-      canManageUsers: false,
+      canManageUsers: true,
       canViewLogs: true,
       canBackupRestore: false,
-      canManageSettings: false,
+      canManageSettings: true,
     },
   },
   csmAdmin: {
@@ -304,27 +338,48 @@ export const ROLE_PERMISSIONS: Record<Role, UserRole['permissions']> = {
   },
 };
 
-// Permission Manager Class
+// ========================================
+// PERMISSION MANAGER CLASS
+// ========================================
+
 export class PermissionManager {
+  /**
+   * รวม permissions จากหลาย role
+   */
   static combinePermissions(roles: Role[]): UserRole['permissions'] {
     const combined = JSON.parse(JSON.stringify(DEFAULT_PERMISSIONS)) as UserRole['permissions'];
-    roles.forEach((roles) => {
-      const rolePermissions = ROLE_PERMISSIONS[roles];
+    
+    roles.forEach((role) => {
+      const rolePermissions = ROLE_PERMISSIONS[role];
       if (rolePermissions) {
+        // Merge CSM permissions
         Object.assign(combined.csm!, rolePermissions.csm || {});
+        // Merge Employee permissions
         Object.assign(combined.employees!, rolePermissions.employees || {});
+        // Merge System permissions
         Object.assign(combined.system!, rolePermissions.system || {});
       }
     });
+    
     return combined;
   }
 
-  static hasPermission(userRoles: Role[], module: keyof UserRole['permissions'], action: string): boolean {
+  /**
+   * ตรวจสอบ permission เฉพาะ
+   */
+  static hasPermission(
+    userRoles: Role[], 
+    module: keyof UserRole['permissions'], 
+    action: string
+  ): boolean {
     const permissions = this.combinePermissions(userRoles);
     const modulePermissions = permissions[module];
     return modulePermissions ? (modulePermissions as any)[action] === true : false;
   }
 
+  /**
+   * ตรวจสอบ role hierarchy (สำคัญสำหรับ ProtectedRoute)
+   */
   static checkRoleHierarchy(userRoles: Role[], requiredRole: Role | Role[]): boolean {
     const roleHierarchy = new Map<Role, number>([
       ['guest', 0],
@@ -335,21 +390,32 @@ export class PermissionManager {
       ['admin', 6],
       ['superAdmin', 10],
     ]);
+
     const userMaxLevel = Math.max(...userRoles.map((r) => roleHierarchy.get(r) || 0));
+
     if (Array.isArray(requiredRole)) {
       return requiredRole.some((r) => userMaxLevel >= (roleHierarchy.get(r) || 0));
     }
+
     return userMaxLevel >= (roleHierarchy.get(requiredRole) || 0);
   }
 
+  /**
+   * หา role ที่สูงที่สุด
+   */
   static getHighestRole(roles: Role[]): Role {
     const hierarchy: Role[] = ['superAdmin', 'admin', 'csmAdmin', 'csmAuditor', 'auditor', 'plantAdmin', 'guest'];
-    for (const r of hierarchy) {
-      if (roles.includes(r)) return r;
+    
+    for (const role of hierarchy) {
+      if (roles.includes(role)) return role;
     }
+    
     return 'guest';
   }
 
+  /**
+   * แปลง roles เป็นข้อความแสดงผล
+   */
   static formatRolesForDisplay(roles: Role[]): string {
     const roleLabels = new Map<Role, string>([
       ['superAdmin', 'ผู้ดูแลระบบสูงสุด'],
@@ -360,82 +426,231 @@ export class PermissionManager {
       ['plantAdmin', 'ผู้ดูแลโรงงาน'],
       ['guest', 'ผู้เข้าชม'],
     ]);
+
     return roles.map((r) => roleLabels.get(r) || r).join(', ');
+  }
+
+  /**
+   * ตรวจสอบว่า role นั้นมีระดับสูงกว่าที่กำหนดหรือไม่
+   */
+  static hasMinimumRole(userRoles: Role[], minimumRole: Role): boolean {
+    return this.checkRoleHierarchy(userRoles, minimumRole);
+  }
+
+  /**
+   * รับ role ทั้งหมดที่สามารถเข้าถึงได้
+   */
+  static getAccessibleRoles(userRoles: Role[]): Role[] {
+    const hierarchy = new Map<Role, number>([
+      ['guest', 0],
+      ['plantAdmin', 2],
+      ['auditor', 3],
+      ['csmAuditor', 4],
+      ['csmAdmin', 5],
+      ['admin', 6],
+      ['superAdmin', 10],
+    ]);
+
+    const userMaxLevel = Math.max(...userRoles.map((r) => hierarchy.get(r) || 0));
+    
+    return Array.from(hierarchy.entries())
+      .filter(([, level]) => level <= userMaxLevel)
+      .map(([role]) => role);
   }
 }
 
-// RoleMigrationHelper เวอร์ชันใหม่ — ใช้แปลงข้อมูลจาก DB ให้เป็น Role[] เท่านั้น
+// ========================================
+// ROLE MIGRATION HELPER
+// ========================================
+
 export class RoleMigrationHelper {
+  /**
+   * แปลงข้อมูล role จากรูปแบบต่างๆ เป็น Role[]
+   */
   static toArray(input: unknown): Role[] {
-    if (Array.isArray(input)) return input.filter((r): r is Role => this.isValidRole(r));
+    if (Array.isArray(input)) {
+      return input.filter((r): r is Role => this.isValidRole(r));
+    }
+    
     if (typeof input === 'string') {
       if (input.includes(',')) {
-        return input.split(',').map((r) => r.trim()).filter((r): r is Role => this.isValidRole(r));
+        return input
+          .split(',')
+          .map((r) => r.trim())
+          .filter((r): r is Role => this.isValidRole(r));
       }
       return this.isValidRole(input) ? [input] : ['guest'];
     }
+    
     return ['guest'];
   }
 
-  static isValidRole(roles: string): roles is Role {
-    return ['superAdmin', 'admin', 'csmAdmin', 'csmAuditor', 'auditor', 'plantAdmin', 'guest'].includes(roles);
+  /**
+   * ตรวจสอบว่าเป็น valid role หรือไม่
+   */
+  static isValidRole(role: string): role is Role {
+    return ['superAdmin', 'admin', 'csmAdmin', 'csmAuditor', 'auditor', 'plantAdmin', 'guest'].includes(role);
+  }
+
+  /**
+   * แปลง legacy role เป็น modern roles
+   */
+  static migrateLegacyRole(legacyRole: string): Role[] {
+    const migrations: Record<string, Role[]> = {
+      'manager': ['plantAdmin'],
+      'supervisor': ['auditor'],
+      'operator': ['guest'],
+      'administrator': ['admin'],
+      'superuser': ['superAdmin'],
+    };
+
+    return migrations[legacyRole] || ['guest'];
   }
 }
 
-// UserRoleService
+// ========================================
+// USER ROLE SERVICE
+// ========================================
+
 export class UserRoleService {
+  /**
+   * อัปเดต user roles (จะใช้จริงใน service layer)
+   */
   static async updateUserRoles(userId: string, newRoles: Role[]): Promise<void> {
     const validation = RoleValidator.validateRoleCombination(newRoles);
-    if (!validation.valid) console.warn('Role validation warnings:', validation.warnings);
+    if (!validation.valid) {
+      console.warn('Role validation warnings:', validation.warnings);
+    }
+
     const optimizedRoles = RoleValidator.suggestOptimalRoles(newRoles);
     const permissions = PermissionManager.combinePermissions(optimizedRoles);
-    const updateData: Partial<UserRole> = { roles: optimizedRoles, permissions, updatedAt: new Date() };
+    
+    const updateData: Partial<UserRole> = {
+      roles: optimizedRoles,
+      permissions,
+      updatedAt: new Date(),
+    };
+
+    // TODO: Implement actual database update
     console.log('Updating user roles:', { userId, updateData });
   }
 
+  /**
+   * ตรวจสอบสิทธิ์ CSM
+   */
   static canAccessCSMEvaluation(userRoles: Role[]): boolean {
     return PermissionManager.hasPermission(userRoles, 'csm', 'canEvaluate');
   }
+
   static canManageVendors(userRoles: Role[]): boolean {
     return PermissionManager.hasPermission(userRoles, 'csm', 'canManageVendors');
   }
+
   static canApproveAssessments(userRoles: Role[]): boolean {
     return PermissionManager.hasPermission(userRoles, 'csm', 'canApprove');
   }
+
+  /**
+   * ตรวจสอบสิทธิ์ Employee Management
+   */
+  static canManageEmployees(userRoles: Role[]): boolean {
+    return PermissionManager.hasPermission(userRoles, 'employees', 'canEdit');
+  }
+
+  static canImportEmployees(userRoles: Role[]): boolean {
+    return PermissionManager.hasPermission(userRoles, 'employees', 'canImport');
+  }
+
+  /**
+   * ตรวจสอบสิทธิ์ System
+   */
+  static canManageUsers(userRoles: Role[]): boolean {
+    return PermissionManager.hasPermission(userRoles, 'system', 'canManageUsers');
+  }
+
+  static canViewLogs(userRoles: Role[]): boolean {
+    return PermissionManager.hasPermission(userRoles, 'system', 'canViewLogs');
+  }
 }
 
-// RoleValidator
+// ========================================
+// ROLE VALIDATOR
+// ========================================
+
 export class RoleValidator {
+  /**
+   * ตรวจสอบความถูกต้องของการรวม roles
+   */
   static validateRoleCombination(roles: Role[]): { valid: boolean; warnings: string[] } {
     const warnings: string[] = [];
-    if (roles.includes('guest') && roles.length > 1) warnings.push('Guest role should not be combined with other roles');
-    if (roles.includes('superAdmin') && roles.includes('admin'))
+
+    // ตรวจสอบ guest role
+    if (roles.includes('guest') && roles.length > 1) {
+      warnings.push('Guest role should not be combined with other roles');
+    }
+
+    // ตรวจสอบ superAdmin vs admin
+    if (roles.includes('superAdmin') && roles.includes('admin')) {
       warnings.push('SuperAdmin role already includes Admin permissions');
-    if (roles.includes('admin') && roles.includes('csmAuditor'))
+    }
+
+    // ตรวจสอบ admin vs lower roles
+    if (roles.includes('admin') && roles.includes('csmAuditor')) {
       warnings.push('Admin role already includes CSM Auditor permissions');
+    }
+
+    if (roles.includes('admin') && roles.includes('auditor')) {
+      warnings.push('Admin role already includes Auditor permissions');
+    }
+
     return { valid: warnings.length === 0, warnings };
   }
 
+  /**
+   * แนะนำ roles ที่เหมาะสม
+   */
   static suggestOptimalRoles(roles: Role[]): Role[] {
-    if (roles.includes('superAdmin')) return ['superAdmin'];
+    // ถ้ามี superAdmin ให้ใช้แค่ superAdmin
+    if (roles.includes('superAdmin')) {
+      return ['superAdmin'];
+    }
+
+    // ถ้ามี admin ให้เอา lower roles ออก
     if (roles.includes('admin')) {
       return roles.filter((r) => !['csmAuditor', 'auditor', 'plantAdmin'].includes(r));
     }
+
     return roles;
   }
-}
 
-// Additional interfaces
-export interface CreateUserRequest {
-  email: string;
-  name: string;
-  roles: Role[];
-}
+  /**
+   * ตรวจสอบว่า role transition ถูกต้องหรือไม่
+   */
+ static validateRoleTransition(currentRoles: Role[], newRoles: Role[]): boolean {
+    const currentLevel = Math.max(...currentRoles.map(r => this.getRoleLevel(r)));
+    const newLevel = Math.max(...newRoles.map(r => this.getRoleLevel(r)));
 
-export interface UserProfile extends UserRole {
-  preferences: {
-    theme: 'light' | 'dark';
-    language: 'th' | 'en';
-    notifications: boolean;
-  };
+    // ป้องกันการ downgrade จาก superAdmin หรือ admin โดยไม่ได้รับอนุญาต
+    if (currentLevel >= 6 && newLevel < currentLevel) {
+      console.warn(`Role downgrade detected: ${currentLevel} -> ${newLevel}`);
+      // ในอนาคตอาจเพิ่ม parameter สำหรับ force downgrade
+      return false;
+    }
+
+    return newLevel >= 0; // อนุญาตทุก level สำหรับการ upgrade
+  }
+
+
+  private static getRoleLevel(role: Role): number {
+    const levels: Record<Role, number> = {
+      guest: 0,
+      plantAdmin: 2,
+      auditor: 3,
+      csmAuditor: 4,
+      csmAdmin: 5,
+      admin: 9,
+      superAdmin: 10,
+    };
+    return levels[role] || 0;
+  }
 }
