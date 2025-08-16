@@ -53,7 +53,7 @@ export const parseDate = (dateInput: DateInput): Date | null => {
           if (isValid(date1)) return date1;
           
           // วิธีที่ 2: ตัดส่วน " at ..." ออก
-          const datePart = trimmed.split(' at ')[0];
+          const datePart = trimmed.split(' at ')[0] ?? '';
           const date2 = new Date(datePart);
           if (isValid(date2)) return date2;
           

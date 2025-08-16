@@ -127,8 +127,7 @@ export const useSimpleCSVProcessor = () => {
       }
 
       for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
-        const chunk = chunks[chunkIndex];
-        
+        const chunk = chunks[chunkIndex]?? [];        
         chunk.forEach((row, rowIndex) => {
           const globalRowIndex = chunkIndex * chunkSize + rowIndex;
           let hasError = false;
@@ -202,7 +201,8 @@ export const useSimpleCSVProcessor = () => {
     }
 
     for (let i = 0; i < chunks.length; i++) {
-      const chunkResults = await processor(chunks[i], i);
+      const chunk = chunks[i] ?? []; 
+      const chunkResults = await processor(chunk, i);
       results.push(...chunkResults);
 
       // Report progress

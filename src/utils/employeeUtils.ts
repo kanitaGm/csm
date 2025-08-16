@@ -198,12 +198,14 @@ export const validateSingleEmployee = (form: Partial<EmployeeFormState>): Record
  * Convert CSV data to system format
  * Enhanced for CSV import functionality
  */
-export const normalizeCSVEmployeeData = (csvData: Record<string, unknown>): Partial<EmployeeFormState> => {
+export const normalizeCSVEmployeeData = (
+  csvData: Record<string, unknown>
+): Partial<EmployeeFormState> => {
   // Validate and normalize employee type
   const validateEmployeeType = (
     value: unknown
-  ): 'employee' | 'contractor' | 'transporter' | 'driver' | 'pending' |'' => {
-    const validTypes = ['employee', 'contractor', 'transporter', 'driver', 'pending',''] as const;
+  ): 'employee' | 'contractor' | 'transporter' | 'driver' | 'pending' | '' => {
+    const validTypes = ['employee', 'contractor', 'transporter', 'driver', 'pending', ''] as const;
     type EmployeeType = typeof validTypes[number];
     const normalized = String(value || 'employee').trim().toLowerCase();
     if (validTypes.includes(normalized as EmployeeType)) {
@@ -212,11 +214,10 @@ export const normalizeCSVEmployeeData = (csvData: Record<string, unknown>): Part
     return 'employee';
   };
 
-
   // Validate and normalize status
   const validateStatus = (
     value: unknown
-  ): 'active' | 'inactive' | 'terminated' | 'pending'=> {
+  ): 'active' | 'inactive' | 'terminated' | 'pending' => {
     const validStatuses = ['active', 'inactive', 'terminated', 'pending'] as const;
     type StatusType = typeof validStatuses[number];
     const normalized = String(value || 'active').trim().toLowerCase();
@@ -226,6 +227,12 @@ export const normalizeCSVEmployeeData = (csvData: Record<string, unknown>): Part
     return 'active';
   };
 
+  // Helper to convert date string to Date | null
+  const parseDate = (value: unknown): string | Date | null => {
+    if (!value) return null;
+    const date = new Date(String(value));
+    return isNaN(date.getTime()) ? null : date;
+  };
 
   return {
     empId: String(csvData.empId || '').trim(),
@@ -242,20 +249,21 @@ export const normalizeCSVEmployeeData = (csvData: Record<string, unknown>): Part
     department: String(csvData.department || '').trim(),
     company: String(csvData.company || '').trim(),
     level: String(csvData.level || '').trim(),
-    employeeType: validateEmployeeType(csvData.employeeType) ,
-    companyId: String(csvData.companyId || '').trim(),    
+    employeeType: validateEmployeeType(csvData.employeeType),
+    companyId: String(csvData.companyId || '').trim(),
     countryId: String(csvData.countryId || '').trim(),
     zoneId: String(csvData.zoneId || '').trim(),
     siteId: String(csvData.siteId || '').trim(),
     plantId: String(csvData.plantId || '').trim(),
     profileImageUrl: String(csvData.profileImageUrl || '').trim(),
-    dateOfBirth: csvData.dateOfBirth ? String(csvData.dateOfBirth) : undefined,
-    startDate: csvData.startDate ? String(csvData.startDate) : undefined,
-    cardExpiryDate: csvData.cardExpiryDate ? String(csvData.cardExpiryDate) : undefined,
+    dateOfBirth: parseDate(csvData.dateOfBirth)|| '',
+    startDate: parseDate(csvData.startDate) || '',
+    cardExpiryDate: parseDate(csvData.cardExpiryDate)|| '',
     status: validateStatus(csvData.status),
-    lastUpdatedBy: String(csvData.lastUpdatedBy || 'CSV Import').trim()
+    lastUpdatedBy: String(csvData.lastUpdatedBy || 'CSV Import').trim(),
   };
 };
+
 
 /**
  * Validate employee data for CSV import

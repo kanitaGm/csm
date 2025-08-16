@@ -202,17 +202,19 @@ const DocumentPreview: React.FC<DocumentPreviewProps> = ({
               <table className="w-full text-sm border border-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    {Object.keys(documents[0]).slice(0, 6).map(key => (
-                      <th key={key} className="px-3 py-2 text-left border-b">
-                        {key}
-                      </th>
-                    ))}
+                    {documents.length > 0 &&
+                      Object.keys(documents[0] ?? {}).slice(0, 6).map(key => (
+                        <th key={key} className="px-3 py-2 text-left border-b">
+                          {key}
+                        </th>
+                      ))
+                    }
                   </tr>
                 </thead>
                 <tbody>
                   {documents.slice(0, 50).map((document, index) => (
                     <tr key={index} className="hover:bg-gray-50">
-                      {Object.keys(documents[0]).slice(0, 6).map(key => (
+                      {Object.keys(documents[0]??{}).slice(0, 6).map(key => (
                         <td key={key} className="px-3 py-2 border-b">
                           {String(document[key] || '').substring(0, 50)}
                           {String(document[key] || '').length > 50 && '...'}
@@ -299,6 +301,7 @@ const StandaloneBulkDelete: React.FC<StandaloneBulkDeleteProps> = ({
 
     for (let i = 0; i < conditions.length; i++) {
       const condition = conditions[i];
+      if (!condition) continue;
       if (!condition.field.trim()) {
         return `เงื่อนไขที่ ${i + 1}: กรุณาระบุชื่อฟิลด์`;
       }

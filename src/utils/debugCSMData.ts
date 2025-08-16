@@ -106,7 +106,7 @@ export const createSampleData = async () => {
       {
         companyId: 'COM001',
         name: 'บริษัท ทดสอบ จำกัด',
-        type: 'main',
+        type: 'client',
         contactPerson: 'นาย ทดสอบ ระบบ',
         email: 'test@company.com',
         phone: '02-123-4567',
@@ -119,7 +119,7 @@ export const createSampleData = async () => {
       {
         companyId: 'COM002',
         name: 'บริษัท ตัวอย่าง จำกัด',
-        type: 'sub',
+        type: 'client',
         contactPerson: 'นาง ตัวอย่าง ข้อมูล',
         email: 'sample@company.com',
         phone: '02-765-4321',
@@ -137,40 +137,34 @@ export const createSampleData = async () => {
         companyId: 'COM001',
         vdCode: 'VD001',
         vdName: 'ผู้รับเหมาทดสอบ 1',
+        name:'ss',
+        riskLevel:'High',
         freqAss: '365',
         isActive: true,
-        category: '1',
+        category: '2-SERVICES',
         workingArea: ['กรุงเทพ'],
         createdAt: new Date(),
         updatedAt: new Date(),
         createdBy: 'system',
-        lastUpdatedBy: 'system'
+        lastUpdatedBy: 'system',
+        lastAssessmentDate:'new '
+   
       },
       {
         companyId: 'COM001',
         vdCode: 'VD002',
         vdName: 'ผู้รับเหมาทดสอบ 2',
+        name:'ss',
+        riskLevel:'Low',
         freqAss: '180',
         isActive: true,
-        category: '2',
+        category: '1-ADMINISTRATION',
         workingArea: ['ปริมณฑล'],
         createdAt: new Date(),
         updatedAt: new Date(),
         createdBy: 'system',
-        lastUpdatedBy: 'system'
-      },
-      {
-        companyId: 'COM002',
-        vdCode: 'VD003',
-        vdName: 'ผู้รับเหมาตัวอย่าง',
-        freqAss: '365',
-        isActive: true,
-        category: 'maintenance',
-        workingArea: ['ภาคกลาง'],
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        createdBy: 'system',
-        lastUpdatedBy: 'system'
+        lastUpdatedBy: 'system',
+        lastAssessmentDate:'new '
       }
     ];
     
