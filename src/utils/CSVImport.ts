@@ -1,5 +1,4 @@
 // src/components/utils/useCSVImport.ts
-
 import { useState, useCallback } from 'react';
 import { collection, addDoc, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../config/firebase';
@@ -13,7 +12,6 @@ export interface DuplicateCheck {
   duplicateFields: string[];
 }
 
-
 export interface ImportResults {
   success: number; 
   failed: number; 
@@ -23,7 +21,6 @@ export interface ImportResults {
   throughput: number;
 }
 
- 
 export interface EditableData {
   [key: string]: unknown;
 }
@@ -40,10 +37,6 @@ export interface ImportConfig {
 const isRecord = (value: unknown): value is Record<string, unknown> => {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 };
-/*
-const isString = (value: unknown): value is string => {
-  return typeof value === 'string';
-};*/
 
 export const useCSVImport = (config: ImportConfig) => {
   // States
@@ -59,7 +52,6 @@ export const useCSVImport = (config: ImportConfig) => {
     errors: [],
     duration: 0,
     throughput: 0,
-
   });
   const [editedData, setEditedData] = useState<Map<string, EditableData>>(new Map());
 
@@ -141,7 +133,7 @@ export const useCSVImport = (config: ImportConfig) => {
 
     try {
       // Prepare data for checking
-      const fieldData: { [key: string]: string[] } = {};
+      const fieldData: Record<string, string[]> = {};
       config.duplicateCheckFields.forEach(field => {
         fieldData[field] = [...new Set(
           data.map((row, index) => 
@@ -153,15 +145,15 @@ export const useCSVImport = (config: ImportConfig) => {
       });
 
       // Batch check against database
-      const existingData: { [key: string]: Set<string> } = {};
+      const existingData: Record<string, Set<string>> = {};
       await Promise.all(
         config.duplicateCheckFields.map(async (field) => {
-          existingData[field] = await checkDuplicatesInBatch(fieldData[field], field);
+          existingData[field] = await checkDuplicatesInBatch(fieldData[field] ||[], field);
         })
       );
 
       // Track duplicates within CSV
-      const csvData: { [key: string]: Map<string, number> } = {};
+      const csvData: Record<string, Map<string, number>> = {};
       config.duplicateCheckFields.forEach(field => {
         csvData[field] = new Map<string, number>();
       });
@@ -170,7 +162,7 @@ export const useCSVImport = (config: ImportConfig) => {
       data.forEach((row, index) => {
         const duplicateFields: string[] = [];
         const csvDuplicateFields: string[] = [];
-        const fieldValues: { [key: string]: string } = {};
+        const fieldValues: Record<string, string> = {};
 
         // Get field values
         config.duplicateCheckFields.forEach(field => {
@@ -186,7 +178,7 @@ export const useCSVImport = (config: ImportConfig) => {
             ? value.toLowerCase().trim() 
             : value.trim();
 
-          if (existingData[field]?.has(normalizedValue)) {
+          if (existingData[field]!.has(normalizedValue)) {
             duplicateFields.push(field);
           }
         });
@@ -200,10 +192,10 @@ export const useCSVImport = (config: ImportConfig) => {
             ? value.toLowerCase().trim() 
             : value.trim();
 
-          if (csvData[field].has(normalizedValue)) {
+          if (csvData[field]!.has(normalizedValue)) {
             csvDuplicateFields.push(field);
           } else {
-            csvData[field].set(normalizedValue, index);
+            csvData[field]!.set(normalizedValue, index);
           }
         });
 
@@ -273,12 +265,12 @@ export const useCSVImport = (config: ImportConfig) => {
     setImportComplete(false);
 
     const results: ImportResults = {
-    success: 0,
-    failed: 0,
-    skipped: 0,
-    errors: [],
-    duration: 0,
-    throughput: 0,
+      success: 0,
+      failed: 0,
+      skipped: 0,
+      errors: [],
+      duration: 0,
+      throughput: 0,
     };
 
     const batchSize = config.batchSize || 10;
@@ -388,7 +380,7 @@ export const useCSVImport = (config: ImportConfig) => {
     setImportComplete(false);
     setIsCheckingDuplicates(false);
     setDuplicateChecks([]);
-    setImportResults({ success: 0, failed: 0, skipped: 0, errors: [],duration: 0,    throughput: 0, });
+    setImportResults({ success: 0, failed: 0, skipped: 0, errors: [], duration: 0, throughput: 0 });
     setEditedData(new Map());
   }, []);
 

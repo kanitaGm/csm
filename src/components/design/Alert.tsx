@@ -2,7 +2,7 @@
 // 6. ALERT COMPONENT
 // ================================
 
-// src/components/design-system/Alert.tsx
+// src/components/design/Alert.tsx
 import React from 'react'
 import { cva, type VariantProps } from 'class-variance-authority'
 import { cn } from '../../utils/cn'
@@ -26,12 +26,12 @@ const alertVariants = cva(
   }
 )
 
-const iconMap = {
+const iconMap: Record<NonNullable<VariantProps<typeof alertVariants>["variant"]>, React.ElementType> = {
   default: Info,
   success: CheckCircle,
   warning: AlertTriangle,
   error: AlertCircle,
-  info: Info
+  info: Info,
 }
 
 export interface AlertProps
@@ -44,7 +44,7 @@ export interface AlertProps
 
 const Alert = React.forwardRef<HTMLDivElement, AlertProps>(
   ({ className, variant = "default", title, dismissible, onDismiss, children, ...props }, ref) => {
-    const Icon = iconMap[variant]
+    const Icon = iconMap[variant ?? "default"]
 
     return (
       <div

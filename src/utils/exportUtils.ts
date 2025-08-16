@@ -210,8 +210,7 @@ export const exportToExcel = async (
     workbook.modified = new Date();
 
     if (data.length > 0) {
-      const headers = Object.keys(data[0]);
-      
+      const headers = Object.keys(data[0] ?? {})     
       progressCallback?.(20);
       
       // Add headers row with enhanced styling
@@ -495,9 +494,8 @@ export const exportToCSV = (
     }
 
     progressCallback?.(10);
+    const headers = Object.keys(data[0] ?? {})
 
-    const headers = Object.keys(data[0]);
-    
     // Enhanced CSV content generation with streaming approach
     const csvLines: string[] = [];
     

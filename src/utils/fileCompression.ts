@@ -4,7 +4,7 @@ import { PDFDocument } from 'pdf-lib';
 
 export interface CompressionResult {
   compressedFile: File;
-  previewURL?: string;
+  previewURL?: string | undefined;
   compressionRatio: number;
   originalSize: number;
   compressedSize: number;
@@ -41,11 +41,17 @@ export const validateFile = (
   options: { maxSize?: number; allowedTypes?: string[] } = {}
 ): ValidationResult => {
   const {
-    maxSize = 10 * 1024 * 1024, // 10MB
-    allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']
+    maxSize = 10 * 1024 * 1024,
+    allowedTypes = [
+      'image/jpeg',
+      'image/png',
+      'image/webp',
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    ]
   } = options;
 
-  // Check file size
   if (file.size > maxSize) {
     const maxSizeMB = Math.round(maxSize / 1024 / 1024);
     const fileSizeMB = Math.round(file.size / 1024 / 1024);
@@ -55,7 +61,6 @@ export const validateFile = (
     };
   }
 
-  // Check file type
   if (!allowedTypes.includes(file.type)) {
     return { 
       valid: false, 
@@ -63,7 +68,6 @@ export const validateFile = (
     };
   }
 
-  // Check if file is empty
   if (file.size === 0) {
     return { 
       valid: false, 
@@ -75,7 +79,7 @@ export const validateFile = (
 };
 
 /**
- * Enhanced image compression with better error handling
+ * Enhanced image compression with TypeScript-safe onProgress
  */
 export const compressImage = async (
   file: File,
@@ -99,16 +103,18 @@ export const compressImage = async (
       maxWidthOrHeight,
       initialQuality: quality,
       fileType,
-      useWebWorker: false, // Disable for compatibility
-      onProgress: onProgress ? (progress: number) => {
-        onProgress(Math.round(progress * 100));
-      } : undefined
+      useWebWorker: false,
+      onProgress: (progress: number) => {
+        if (onProgress) onProgress(Math.round(progress * 100));
+      }
     });
 
     return compressedFile;
   } catch (error) {
     console.error('Image compression failed:', error);
-    throw new Error(`การบีบอัดรูปภาพล้มเหลว: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw new Error(
+      `การบีบอัดรูปภาพล้มเหลว: ${error instanceof Error ? error.message : 'Unknown error'}`
+    );
   }
 };
 
@@ -132,7 +138,6 @@ export const compressPDF = async (
     const pdfDoc = await PDFDocument.load(arrayBuffer);
     onProgress?.(50);
 
-    // Remove metadata to reduce file size
     pdfDoc.setTitle('');
     pdfDoc.setAuthor('');
     pdfDoc.setSubject('');
@@ -144,7 +149,6 @@ export const compressPDF = async (
 
     onProgress?.(80);
 
-    // Fixed: Remove invalid objectStreamsEnabled property
     const compressedPdfBytes = await pdfDoc.save({ 
       useObjectStreams: false,
       addDefaultPage: false
@@ -152,7 +156,6 @@ export const compressPDF = async (
 
     onProgress?.(90);
 
-    // Create safe buffer to avoid SharedArrayBuffer issues
     const safeBuffer = new Uint8Array(compressedPdfBytes).slice().buffer;
     const compressedFile = new File([safeBuffer], file.name, { 
       type: 'application/pdf',
@@ -169,27 +172,22 @@ export const compressPDF = async (
 };
 
 /**
- * Universal file compression function
+ * Universal file compression
  */
 export const compressFile = async (
   file: File, 
   options: FileUploadOptions = {}
 ): Promise<CompressionResult> => {
   const {
-    imageOptions = { 
-      maxSizeMB: 0.2, 
-      maxWidthOrHeight: 600, 
-      quality: 0.8 
-    },
-    pdfMinSize = 500 * 1024, // 500KB
-    imageMinSize = 100 * 1024, // 100KB
+    imageOptions = { maxSizeMB: 0.2, maxWidthOrHeight: 600, quality: 0.8 },
+    pdfMinSize = 500 * 1024,
+    imageMinSize = 100 * 1024,
     onProgress
   } = options;
 
   const originalSize = file.size;
 
   try {
-    // Handle image compression
     if (file.type.startsWith('image/')) {
       if (file.size > imageMinSize) {
         try {
@@ -220,7 +218,6 @@ export const compressFile = async (
           };
         }
       } else {
-        // Small image, no compression needed
         return {
           compressedFile: file,
           previewURL: URL.createObjectURL(file),
@@ -233,7 +230,6 @@ export const compressFile = async (
       }
     }
 
-    // Handle PDF compression
     if (file.type === 'application/pdf') {
       if (file.size > pdfMinSize) {
         try {
@@ -262,7 +258,6 @@ export const compressFile = async (
           };
         }
       } else {
-        // Small PDF, no compression needed
         return {
           compressedFile: file,
           compressionRatio: 0,
@@ -274,7 +269,6 @@ export const compressFile = async (
       }
     }
 
-    // For other file types, return as-is
     return {
       compressedFile: file,
       compressionRatio: 0,
@@ -286,7 +280,6 @@ export const compressFile = async (
 
   } catch (error) {
     console.error('File compression error:', error);
-    // Fallback to original file
     return {
       compressedFile: file,
       compressionRatio: 0,
@@ -299,7 +292,7 @@ export const compressFile = async (
 };
 
 /**
- * Format file size for display
+ * Format file size
  */
 export const formatFileSize = (bytes: number): string => {
   if (bytes === 0) return '0 Bytes';
@@ -312,7 +305,7 @@ export const formatFileSize = (bytes: number): string => {
 };
 
 /**
- * Get file type icon helper for React components
+ * Get file type icon for React
  */
 import { FileText, Image, FileSpreadsheet } from 'lucide-react';
 
