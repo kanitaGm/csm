@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FaArrowLeft, FaInfoCircle, FaExclamationTriangle } from 'react-icons/fa';
 import { useBulkDelete, BulkDeleteHelpers, type DeleteCondition } from '../../hooks/useBulkDelete';
-import StandaloneBulkDelete from '../../utils/BulkDeleteUtility';
+import StandaloneBulkDelete from '../../components/ui/BulkDeleteUtility';
 
 // Example 1: Simple delete by company
 const DeleteByCompanyExample: React.FC = () => {

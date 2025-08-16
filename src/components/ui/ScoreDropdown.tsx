@@ -1,6 +1,6 @@
 // src/components/utils/ScoreDropdown.tsx 
 
-import type { Score } from '../types';
+import type { Score } from '../../types';
 
 interface Props {
   value: Score;

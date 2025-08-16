@@ -2,9 +2,9 @@
 import React, { useState, useEffect } from "react";
 import { Trash2, Plus, Upload, Eye } from 'lucide-react';
 import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
-import { storage } from "../config/firebase";
-import { compressFile, formatFileSize, getFileTypeIcon } from "../utils";
-import { useToast } from "../hooks/useToast";
+import { storage } from "../../config/firebase";
+import { compressFile, formatFileSize, getFileTypeIcon } from "../../utils";
+import { useToast } from "../../hooks/useToast";
 
 interface MultiFileInputProps {
   value?: string[];
@@ -191,7 +191,8 @@ export default function MultiFileInput({
             type: file.type,
             isUploading: false,
             uploadProgress: 100,
-            preview: previewURL || (file.type.startsWith('image/') ? uploadedURL : undefined)
+            preview: previewURL || (file.type.startsWith('image/') ? uploadedURL : undefined
+
           };
 
           newFileStates.push(finalState);

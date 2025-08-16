@@ -86,6 +86,30 @@ export const createSearchKeywords = (form: Partial<EmployeeProfile> | Record<str
   return Array.from(keywords);
 };
 
+/**
+ * Format full name from parts
+ */
+export const formatFullName = (
+  prefix?: string,
+  firstName?: string,
+  lastName?: string
+): string => {
+  const parts = [
+    prefix?.trim(),
+    firstName?.trim(),
+    lastName?.trim()
+  ].filter(Boolean);
+  
+  return parts.join(' ').trim();
+};
+
+/**
+ * Validate employee form data (alias for validateSingleEmployee)
+ */
+export const validateEmployeeForm = (form: Partial<EmployeeFormState>): Record<string, string> => {
+  return validateSingleEmployee(form);
+};
+
 // Function to format ID card number
 export const formatIdCard = (value: string): string => {
   if (!value) return '';

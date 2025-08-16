@@ -1,344 +1,537 @@
-// src/utils/dateUtils.ts
-import { Timestamp } from 'firebase/firestore';
-import { format, parseISO, isValid } from 'date-fns';
-//import { th } from 'date-fns/locale';
+// src/utils/dateUtils.ts - Enhanced Date Utilities
+import { format, parse, isValid, differenceInDays, subDays, startOfDay, endOfDay, type Locale  } from 'date-fns';
+import { th , enUS } from 'date-fns/locale';
 
-// Type definitions
-export type DateInput = Timestamp | Date | string | null | undefined | { seconds: number; nanoseconds?: number };
+// ========================================
+// TYPES & INTERFACES
+// ========================================
 
+export type DateInput = Date | string | number | null | undefined | { toDate(): Date };
+type LocaleOption = 'th' | 'en';
+
+export interface DateFormatOptions {
+  locale?: 'th' | 'en';
+  includeTime?: boolean;
+  format?: string;
+  fallback?: string;
+}
+
+export interface DateRangeOptions {
+  start: DateInput;
+  end: DateInput;
+  inclusive?: boolean;
+}
+
+export interface DateValidationOptions {
+  minDate?: DateInput;
+  maxDate?: DateInput;
+  allowFuture?: boolean;
+  allowPast?: boolean;
+}
+
+export interface DateCalculationResult {
+  days: number;
+  weeks: number;
+  months: number;
+  years: number;
+  isOverdue: boolean;
+  isUpcoming: boolean;
+}
+
+// ========================================
+// CONSTANTS
+// ========================================
+
+export const DATE_FORMATS = {
+  DISPLAY: 'dd/MM/yyyy',
+  DISPLAY_WITH_TIME: 'dd/MM/yyyy HH:mm',
+  DISPLAY_THAI: 'dd MMMM yyyy',
+  DISPLAY_THAI_SHORT: 'dd MMM yyyy',
+  ISO: 'yyyy-MM-dd',
+  ISO_WITH_TIME: "yyyy-MM-dd'T'HH:mm:ss.SSSxxx",
+  INPUT: 'yyyy-MM-dd',
+  FIREBASE: 'yyyy-MM-dd HH:mm:ss',
+  READABLE: 'EEEE, dd MMMM yyyy',
+  COMPACT: 'ddMMyy',
+  API: 'yyyy-MM-ddTHH:mm:ss.SSSZ'
+} as const;
+
+export const THAI_MONTHS = [
+  'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
+  'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'
+] as const;
+
+export const THAI_DAYS = [
+  'อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พอหัสบดี', 'ศุกร์', 'เสาร์'
+] as const;
+
+// ========================================
+// CORE FUNCTIONS
+// ========================================
 
 /**
- * Safely convert various date inputs to Date object
+ * Convert various date inputs to Date object
  */
-export const convertToDate = (value: DateInput): Date => {
-  if (value instanceof Date) return value;
-  if (value instanceof Timestamp) return value.toDate();
-  if (typeof value === 'string') return new Date(value);
-  if (value && typeof value === 'object' && 'seconds' in value) {
-    return new Date(value.seconds * 1000);
-  }
-  return new Date();
-};
-
-// ฟังก์ชันแปลง DateInput เป็น Date object
-export const parseDate = (dateInput: DateInput): Date | null => {
-  if (!dateInput) return null;
+export const toDate = (input: DateInput): Date | null => {
+  if (!input) return null;
 
   try {
-    // กรณีเป็น Firestore Timestamp
-    if (dateInput && typeof dateInput === 'object' && 'toDate' in dateInput && typeof dateInput.toDate === 'function') {
-      return (dateInput as Timestamp).toDate();
+    // Handle Firestore Timestamp-like objects
+    if (typeof input === 'object' && 'toDate' in input && typeof input.toDate === 'function') {
+      return input.toDate();
     }
 
-    // กรณีเป็น object แบบ { seconds, nanoseconds }
-    if (dateInput && typeof dateInput === 'object' && 'seconds' in dateInput && typeof dateInput.seconds === 'number') {
-      return new Date(dateInput.seconds * 1000);
+    // Handle Date objects
+    if (input instanceof Date) {
+      return isValid(input) ? input : null;
     }
 
-    // กรณีเป็น Date object
-    if (dateInput instanceof Date) {
-      return isValid(dateInput) ? dateInput : null;
-    }
+    // Handle string inputs
+    if (typeof input === 'string') {
+      // Try ISO format first
+      if (input.includes('T') || input.includes('-')) {
+        const isoDate = new Date(input);
+        if (isValid(isoDate)) return isoDate;
+      }
 
-    // กรณีเป็น string
-    if (typeof dateInput === 'string') {
-      const trimmed = dateInput.trim();
-      if (!trimmed) return null;
+      // Try common Thai formats
+      const thaiFormats = [
+        'dd/MM/yyyy',
+        'dd-MM-yyyy',
+        'dd.MM.yyyy',
+        'dd/MM/yyyy HH:mm',
+        'dd-MM-yyyy HH:mm'
+      ];
 
-      // จัดการกับรูปแบบ Firestore date string เช่น "July 16, 2025 at 12:00:00 AM UTC+7"
-      if (trimmed.includes(' at ') && (trimmed.includes('UTC') || trimmed.includes('GMT'))) {
+      for (const formatStr of thaiFormats) {
         try {
-          // วิธีที่ 1: แปลงทั้งหมด
-          const date1 = new Date(trimmed);
-          if (isValid(date1)) return date1;
-          
-          // วิธีที่ 2: ตัดส่วน " at ..." ออก
-          const datePart = trimmed.split(' at ')[0] ?? '';
-          const date2 = new Date(datePart);
-          if (isValid(date2)) return date2;
-          
-          // วิธีที่ 3: แปลงด้วย regex extraction
-          const monthMatch = trimmed.match(/^(\w+)\s+(\d{1,2}),\s+(\d{4})/);
-          if (monthMatch) {
-            const [, monthName, day, year] = monthMatch;
-            const date3 = new Date(`${monthName} ${day}, ${year}`);
-            if (isValid(date3)) return date3;
-          }
-        } catch (e) {
-          console.warn('Failed to parse Firestore date string:', trimmed, e);
+          const parsed = parse(input, formatStr, new Date());
+          if (isValid(parsed)) return parsed;
+        } catch {
+          continue;
         }
       }
 
-      // ลองแปลงด้วย parseISO ก่อน (สำหรับ ISO format)
-      if (trimmed.match(/^\d{4}-\d{2}-\d{2}/)) {
-        const parsed = parseISO(trimmed);
-        if (isValid(parsed)) return parsed;
-      }
+      // Fallback to Date constructor
+      const fallbackDate = new Date(input);
+      return isValid(fallbackDate) ? fallbackDate : null;
+    }
 
-      // ลองแปลงด้วย Date constructor
-      const date = new Date(trimmed);
+    // Handle number inputs (timestamps)
+    if (typeof input === 'number') {
+      // Handle both milliseconds and seconds timestamps
+      const date = new Date(input > 1e10 ? input : input * 1000);
       return isValid(date) ? date : null;
     }
 
     return null;
   } catch (error) {
-    console.warn('Error parsing date:', error, dateInput);
+    console.warn('Date conversion error:', error);
     return null;
   }
 };
 
-// ฟังก์ชันจัดรูปแบบวันที่แบบสากล (YYYY-MM-DD)
-export const formatDateLong = (dateInput: DateInput): string => {
-  const date = parseDate(dateInput);
-  if (!date) return 'ไม่ระบุ';
+/**
+ * Format date with comprehensive options
+ */
+export const formatDate = (
+  input: DateInput,
+  options: DateFormatOptions = {}
+): string => {
+  const {
+    locale = 'th',
+    includeTime = false,
+    format: customFormat,
+    fallback = '-'
+  } = options;
+
+  const date = toDate(input);
+  if (!date) return fallback;
+
+  const localeMap: Record<LocaleOption, Locale> = {
+    th,
+    en: enUS
+  };
 
   try {
-    return format(date, 'yyyy-MM-dd');
+    // ใช้ custom format หากมี
+    if (customFormat) {
+      return format(date, customFormat, { locale: localeMap[locale] });
+    }
+
+    // Default formats
+    if (locale === 'th') {
+      const formatStr = includeTime
+        ? DATE_FORMATS.DISPLAY_THAI_SHORT + ' HH:mm น.'
+        : DATE_FORMATS.DISPLAY_THAI_SHORT;
+      return format(date, formatStr, { locale: th });
+    } else {
+      const formatStr = includeTime
+        ? DATE_FORMATS.DISPLAY_WITH_TIME
+        : DATE_FORMATS.DISPLAY;
+      return format(date, formatStr, { locale: enUS });
+    }
   } catch (error) {
-    console.warn('Error formatting date:', error, dateInput);
-    return 'รูปแบบวันที่ไม่ถูกต้อง';
+    console.warn('Date formatting error:', error);
+    return fallback;
   }
 };
 
 
 /**
- * Format date for Thai locale
+ * Parse date string with multiple format support
  */
-export const formatDate = (date: DateInput, options?: Intl.DateTimeFormatOptions): string => {
+export const parseDate = (
+  dateString: string,
+  inputFormat?: string,
+  referenceDate: Date = new Date()
+): Date | null => {
+  if (!dateString?.trim()) return null;
+
   try {
-    const dateObj = convertToDate(date);
-    return dateObj.toLocaleDateString('th-TH', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-      ...options
-    });
+    // Use specific format if provided
+    if (inputFormat) {
+      const parsed = parse(dateString, inputFormat, referenceDate);
+      return isValid(parsed) ? parsed : null;
+    }
+
+    // Try multiple common formats
+    const formats = [
+      DATE_FORMATS.ISO,
+      DATE_FORMATS.DISPLAY,
+      'dd-MM-yyyy',
+      'dd.MM.yyyy',
+      'yyyy/MM/dd',
+      'MM/dd/yyyy',
+      DATE_FORMATS.DISPLAY_WITH_TIME,
+      'dd-MM-yyyy HH:mm',
+      'yyyy-MM-dd HH:mm'
+    ];
+
+    for (const fmt of formats) {
+      try {
+        const parsed = parse(dateString.trim(), fmt, referenceDate);
+        if (isValid(parsed)) return parsed;
+      } catch {
+        continue;
+      }
+    }
+
+    // Fallback to native Date parsing
+    const nativeDate = new Date(dateString);
+    return isValid(nativeDate) ? nativeDate : null;
   } catch (error) {
-    console.error('Error formatting date:', error);
-    return '';
+    console.warn('Date parsing error:', error);
+    return null;
   }
 };
 
-export const safeDate = (value: DateInput): Date => {
-  if (!value) return new Date();
-  return convertToDate(value);
-};
-export const displayDate = (date: DateInput, fallback = '-'): string => {
-  if (!date) return fallback;
-  return formatDate(date); 
-};
+// ========================================
+// VALIDATION FUNCTIONS
+// ========================================
 
-// ฟังก์ชันจัดรูปแบบวันที่แบบไทย (DD MMM YYYY) พร้อม debugging
-export const formatDateThai = (dateInput: DateInput, includeBuddhistYear: boolean = true): string => {
-  // Debug: แสดงข้อมูลที่เข้ามา
-  //console.log('formatDateThai input:', dateInput, typeof dateInput);
+/**
+ * Validate date with comprehensive options
+ */
+export const validateDate = (
+  input: DateInput,
+  options: DateValidationOptions = {}
+): { isValid: boolean; error?: string; date?: Date } => {
+  const {
+    minDate,
+    maxDate,
+    allowFuture = true,
+    allowPast = true
+  } = options;
+
+  const date = toDate(input);
   
-  const date = parseDate(dateInput);
   if (!date) {
-    console.warn('formatDateThai: Unable to parse date:', dateInput);
-    return 'ไม่ระบุ';
+    return { isValid: false, error: 'Invalid date format' };
   }
 
-  try {
-    const day = String(date.getDate()).padStart(2, '0');
-    const month = date.toLocaleString('th-TH', { month: 'short' });
-    const year = includeBuddhistYear ? date.getFullYear() + 543 : date.getFullYear();
-    
-    const result = `${day} ${month} ${year}`;
-    //console.log('formatDateThai result:', result);
-    return result;
-  } catch (error) {
-    console.warn('Error formatting Thai date:', error, dateInput);
-    return 'รูปแบบวันที่ไม่ถูกต้อง';
+  const now = new Date();
+  const today = startOfDay(now);
+  const inputDay = startOfDay(date);
+
+  // Check past/future restrictions
+  if (!allowPast && inputDay < today) {
+    return { isValid: false, error: 'Past dates are not allowed' };
   }
-};
 
-// ฟังก์ชันจัดรูปแบบวันที่แบบสั้น (DD-MMM-YYYY)
-export const formatDateShort = (dateInput: DateInput): string => {
-  const date = parseDate(dateInput);
-  if (!date) return 'N/A';
-
-  try {
-    const day = String(date.getDate()).padStart(2, '0');
-    const month = date.toLocaleString('en-GB', { month: 'short' }).toUpperCase();
-    const year = date.getFullYear();
-    
-    return `${day}-${month}-${year}`;
-  } catch (error) {
-    console.warn('Error formatting short date:', error, dateInput);
-    return 'Invalid Date';
+  if (!allowFuture && inputDay > today) {
+    return { isValid: false, error: 'Future dates are not allowed' };
   }
+
+  // Check min date
+  if (minDate) {
+    const min = toDate(minDate);
+    if (min && date < min) {
+      return { 
+        isValid: false, 
+        error: `Date must be after ${formatDate(min)}` 
+      };
+    }
+  }
+
+  // Check max date
+  if (maxDate) {
+    const max = toDate(maxDate);
+    if (max && date > max) {
+      return { 
+        isValid: false, 
+        error: `Date must be before ${formatDate(max)}` 
+      };
+    }
+  }
+
+  return { isValid: true, date };
 };
 
-// ฟังก์ชันเปรียบเทียบวันที่
-export const isDateExpired = (dateInput: DateInput): boolean => {
-  const date = parseDate(dateInput);
-  if (!date) return false; // ถ้าไม่มีวันที่ถือว่าไม่หมดอายุ (Lifetime)
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  date.setHours(0, 0, 0, 0);
-
-  return date < today;
-};
-
-// ฟังก์ชันคำนวณจำนวนวันที่เหลือ
-export const getDaysUntilExpiry = (dateInput: DateInput): number | null => {
-  const date = parseDate(dateInput);
-  if (!date) return null; // Lifetime
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  date.setHours(0, 0, 0, 0);
-
-  const timeDiff = date.getTime() - today.getTime();
-  return Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
-};
-
-// ฟังก์ชันตรวจสอบว่าวันที่ใกล้หมดอายุหรือไม่
-export const isDateExpiringSoon = (dateInput: DateInput, daysThreshold: number = 30): boolean => {
-  const daysLeft = getDaysUntilExpiry(dateInput);
-  if (daysLeft === null) return false; // Lifetime
+/**
+ * Check if date is in range
+ */
+export const isDateInRange = (
+  date: DateInput,
+  range: DateRangeOptions
+): boolean => {
+  const { start, end, inclusive = true } = range;
   
-  return daysLeft >= 0 && daysLeft <= daysThreshold;
+  const dateObj = toDate(date);
+  const startDate = toDate(start);
+  const endDate = toDate(end);
+
+  if (!dateObj || !startDate || !endDate) return false;
+
+  if (inclusive) {
+    return dateObj >= startDate && dateObj <= endDate;
+  } else {
+    return dateObj > startDate && dateObj < endDate;
+  }
 };
 
-// ฟังก์ชันตรวจสอบว่าเป็น Lifetime หรือไม่
-export const isLifetime = (dateInput: DateInput): boolean => {
-  if (!dateInput) return true;
-  
-  const date = parseDate(dateInput);
-  if (!date) return true;
+// ========================================
+// CALCULATION FUNCTIONS
+// ========================================
 
-  // ตรวจสอบว่าเป็นวันที่ในอนาคตมาก (100+ ปี) หรือไม่
-  const today = new Date();
-  const oneHundredYears = 100 * 365.25 * 24 * 60 * 60 * 1000;
-  
-  return (date.getTime() - today.getTime()) > oneHundredYears;
-};
+/**
+ * Calculate comprehensive date differences
+ */
+export const calculateDateDifference = (
+  startDate: DateInput,
+  endDate: DateInput = new Date()
+): DateCalculationResult | null => {
+  const start = toDate(startDate);
+  const end = toDate(endDate);
 
-// ฟังก์ชันสำหรับสร้าง status object ที่ใช้ในการแสดงผล
-export const getDateStatus = (dateInput: DateInput, daysThreshold: number = 30) => {
-  // ตรวจสอบ Lifetime ก่อน
-  if (!dateInput || isLifetime(dateInput)) {
-    return {
-      type: 'lifetime' as const,
-      displayText: 'Lifetime',
-      className: 'bg-green-100 text-green-800',
-      daysLeft: null
-    };
-  }
+  if (!start || !end) return null;
 
-  const daysLeft = getDaysUntilExpiry(dateInput);  
-  if (daysLeft === null) {
-    return {
-      type: 'lifetime' as const,
-      displayText: 'Lifetime',
-      className: 'bg-green-100 text-green-800',
-      daysLeft: null
-    };
-  }
-
-  if (daysLeft < 0) {
-    return {
-      type: 'expired' as const,
-      displayText: `Expired (${formatDateThai(dateInput)})`,
-      className: 'bg-red-100 text-red-800',
-      daysLeft
-    };
-  }
-
-  if (daysLeft <= daysThreshold) {
-    return {
-      type: 'expiring' as const,
-      displayText: `Will expiring in ${daysLeft} days (${formatDateThai(dateInput)})`,
-      className: 'bg-orange-100 text-orange-800',
-      daysLeft
-    };
-  }
+  const diffDays = differenceInDays(end, start);
+  const absDiffDays = Math.abs(diffDays);
 
   return {
-    type: 'active' as const,
-    displayText: formatDateThai(dateInput),
-    className: 'bg-blue-100 text-blue-800',
-    daysLeft
+    days: diffDays,
+    weeks: Math.floor(absDiffDays / 7),
+    months: Math.floor(absDiffDays / 30.44), // Average days per month
+    years: Math.floor(absDiffDays / 365.25), // Account for leap years
+    isOverdue: diffDays < 0,
+    isUpcoming: diffDays > 0
   };
 };
 
+/**
+ * Get days until date
+ */
+export const getDaysUntil = (targetDate: DateInput): number | null => {
+  const target = toDate(targetDate);
+  if (!target) return null;
 
-// ฟังก์ชันกรองข้อมูลตามสถานะวันที่
-export const filterByDateStatus = <T extends { expiryDate?: DateInput }>(
-  records: T[],
-  status: 'all' | 'active' | 'expired' | 'expiring' | 'lifetime'
-): T[] => {
-  return records.filter(record => {
-    const dateStatus = getDateStatus(record.expiryDate);
-    
-    switch (status) {
-      case 'active':
-        return dateStatus.type === 'active' || dateStatus.type === 'lifetime';
-      case 'expired':
-        return dateStatus.type === 'expired';
-      case 'expiring':
-        return dateStatus.type === 'expiring';
-      case 'lifetime':
-        return dateStatus.type === 'lifetime';
-      case 'all':
-      default:
-        return true;
-    }
-  });
+  const today = startOfDay(new Date());
+  const targetDay = startOfDay(target);
+  
+  return differenceInDays(targetDay, today);
 };
 
-// ฟังก์ชันสำหรับสร้างสถิติการหมดอายุ
-export const getExpiryStatistics = <T extends { expiryDate?: DateInput }>(records: T[]) => {
-  const total = records.length;
-  let active = 0;
-  let expired = 0;
-  let expiring = 0;
-  let lifetime = 0;
-
-  records.forEach(record => {
-    const status = getDateStatus(record.expiryDate);
-    
-    switch (status.type) {
-      case 'lifetime':
-        lifetime++;
-        active++;
-        break;
-      case 'active':
-        active++;
-        break;
-      case 'expired':
-        expired++;
-        break;
-      case 'expiring':
-        expiring++;
-        active++;
-        break;
-    }
-  });
-
-  return { total, active, expired, expiring, lifetime };
+/**
+ * Check if date is due soon
+ */
+export const isDueSoon = (
+  targetDate: DateInput,
+  daysThreshold: number = 7
+): boolean => {
+  const daysUntil = getDaysUntil(targetDate);
+  return daysUntil !== null && daysUntil >= 0 && daysUntil <= daysThreshold;
 };
 
+/**
+ * Check if date is overdue
+ */
+export const isOverdue = (targetDate: DateInput): boolean => {
+  const daysUntil = getDaysUntil(targetDate);
+  return daysUntil !== null && daysUntil < 0;
+};
 
+// ========================================
+// UTILITY FUNCTIONS
+// ========================================
 
-// Export สำหรับความสะดวกในการใช้งาน
+/**
+ * Get date range for common periods
+ */
+export const getDateRange = (period: 'today' | 'yesterday' | 'thisWeek' | 'lastWeek' | 'thisMonth' | 'lastMonth' | 'thisYear' | 'custom', customStart?: DateInput, customEnd?: DateInput) => {
+  const now = new Date();
+  const today = startOfDay(now);
+
+  switch (period) {
+    case 'today':
+      return { start: today, end: endOfDay(now) };
+    
+    case 'yesterday':
+      const yesterday = subDays(today, 1);
+      return { start: yesterday, end: endOfDay(yesterday) };
+    
+    case 'thisWeek':
+      const startOfWeek = startOfDay(subDays(today, today.getDay()));
+      return { start: startOfWeek, end: endOfDay(now) };
+    
+    case 'lastWeek':
+      const lastWeekStart = subDays(today, today.getDay() + 7);
+      const lastWeekEnd = subDays(today, today.getDay() + 1);
+      return { start: lastWeekStart, end: endOfDay(lastWeekEnd) };
+    
+    case 'thisMonth':
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      return { start: startOfMonth, end: endOfDay(now) };
+    
+    case 'lastMonth':
+      const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
+      return { start: lastMonthStart, end: endOfDay(lastMonthEnd) };
+    
+    case 'thisYear':
+      const startOfYear = new Date(now.getFullYear(), 0, 1);
+      return { start: startOfYear, end: endOfDay(now) };
+    
+    case 'custom':
+      const start = toDate(customStart) || today;
+      const end = toDate(customEnd) || endOfDay(now);
+      return { start: startOfDay(start), end: endOfDay(end) };
+    
+    default:
+      return { start: today, end: endOfDay(now) };
+  }
+};
+
+/**
+ * Format relative time (e.g., "2 days ago", "in 3 hours")
+ */
+export const formatRelativeTime = (date: DateInput): string => {
+  const dateObj = toDate(date);
+  if (!dateObj) return 'Invalid date';
+
+  const now = new Date();
+  const diffMs = dateObj.getTime() - now.getTime();
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+  const diffMinutes = Math.floor(diffMs / (1000 * 60));
+
+  if (Math.abs(diffDays) >= 1) {
+    return diffDays > 0 
+      ? `ในอีก ${diffDays} วัน`
+      : `${Math.abs(diffDays)} วันที่แล้ว`;
+  }
+
+  if (Math.abs(diffHours) >= 1) {
+    return diffHours > 0
+      ? `ในอีก ${diffHours} ชั่วโมง`
+      : `${Math.abs(diffHours)} ชั่วโมงที่แล้ว`;
+  }
+
+  if (Math.abs(diffMinutes) >= 1) {
+    return diffMinutes > 0
+      ? `ในอีก ${diffMinutes} นาที`
+      : `${Math.abs(diffMinutes)} นาทีที่แล้ว`;
+  }
+
+  return 'เมื่อสักครู่';
+};
+
+/**
+ * Generate date for input fields
+ */
+export const toInputDate = (date: DateInput): string => {
+  const dateObj = toDate(date);
+  return dateObj ? format(dateObj, DATE_FORMATS.INPUT) : '';
+};
+
+/**
+ * Generate datetime for input fields  
+ */
+export const toInputDateTime = (date: DateInput): string => {
+  const dateObj = toDate(date);
+  return dateObj ? format(dateObj, "yyyy-MM-dd'T'HH:mm") : '';
+};
+
+/**
+ * Check if two dates are the same day
+ */
+export const isSameDay = (date1: DateInput, date2: DateInput): boolean => {
+  const d1 = toDate(date1);
+  const d2 = toDate(date2);
+  
+  if (!d1 || !d2) return false;
+  
+  return startOfDay(d1).getTime() === startOfDay(d2).getTime();
+};
+
+/**
+ * Get age from birth date
+ */
+export const calculateAge = (birthDate: DateInput): number | null => {
+  const birth = toDate(birthDate);
+  if (!birth) return null;
+
+  const today = new Date();
+  let age = today.getFullYear() - birth.getFullYear();
+  
+  const monthDiff = today.getMonth() - birth.getMonth();
+  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) {
+    age--;
+  }
+  
+  return age;
+};
+
+// ========================================
+// EXPORTS
+// ========================================
+
 export default {
-  parseDate,
-  safeDate,
-  displayDate,
-  convertToDate,
+  // Core functions
+  toDate,
   formatDate,
-  formatDateLong,
-  formatDateThai,
-  formatDateShort,
-  isDateExpired,
-  getDaysUntilExpiry,
-  isDateExpiringSoon,
-  isLifetime,
-  getDateStatus,
-  filterByDateStatus,
-  getExpiryStatistics
+  parseDate,
+  
+  // Validation
+  validateDate,
+  isDateInRange,
+  
+  // Calculations
+  calculateDateDifference,
+  getDaysUntil,
+  isDueSoon,
+  isOverdue,
+  calculateAge,
+  
+  // Utilities
+  getDateRange,
+  formatRelativeTime,
+  toInputDate,
+  toInputDateTime,
+  isSameDay,
+  
+  // Constants
+  DATE_FORMATS,
+  THAI_MONTHS,
+  THAI_DAYS
 };
