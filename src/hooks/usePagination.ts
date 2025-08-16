@@ -1,32 +1,31 @@
-// ================================
-// Complete usePagination Hook
-// ไฟล์: src/hooks/usePagination.ts
-// ================================
+// ========================================
+// 📁 src/hooks/usePagination.ts - แก้ไข Types
+// ========================================
 
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 
 export interface PaginationResult<T> {
-  readonly paginatedItems: readonly T[];
-  readonly currentPage: number;
-  readonly totalPages: number;
-  readonly hasNextPage: boolean;
-  readonly hasPrevPage: boolean;
-  readonly goToPage: (page: number) => void;
-  readonly nextPage: () => void;
-  readonly prevPage: () => void;
-  readonly goToFirst: () => void;
-  readonly goToLast: () => void;
-  readonly itemsPerPage: number;
-  readonly totalItems: number;
-  readonly startIndex: number;
-  readonly endIndex: number;
+  paginatedItems: T[]; // ✅ เอา readonly ออก
+  currentPage: number;
+  totalPages: number;
+  hasNextPage: boolean;
+  hasPrevPage: boolean;
+  goToPage: (page: number) => void;
+  nextPage: () => void;
+  prevPage: () => void;
+  goToFirst: () => void;
+  goToLast: () => void;
+  itemsPerPage: number;
+  totalItems: number;
+  startIndex: number;
+  endIndex: number;
 }
 
 export const usePagination = <T>(
-  data: readonly T[], 
+  data: T[], // ✅ เอา readonly ออก
   itemsPerPage: number = 12
 ): PaginationResult<T> => {
-  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [currentPage, setCurrentPage] = useState(1);
   
   const totalPages = Math.ceil(data.length / itemsPerPage);
   const hasNextPage = currentPage < totalPages;
@@ -64,6 +63,13 @@ export const usePagination = <T>(
   const goToLast = useCallback((): void => {
     setCurrentPage(totalPages);
   }, [totalPages]);
+
+  // Reset to page 1 when data changes significantly
+  useEffect(() => {
+    if (currentPage > totalPages && totalPages > 0) {
+      setCurrentPage(1);
+    }
+  }, [currentPage, totalPages]);
   
   return {
     paginatedItems,
@@ -82,5 +88,3 @@ export const usePagination = <T>(
     endIndex
   };
 };
-
-export default usePagination;

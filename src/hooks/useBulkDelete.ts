@@ -1,33 +1,68 @@
-// src/hooks/useBulkDelete.ts
-import { useState, useCallback } from 'react';
+// src/hooks/useBulkDelete.ts - Enhanced Version
+import { useState, useCallback, useRef } from 'react';
 import { 
   collection, 
   query, 
   where, 
   getDocs, 
-  writeBatch
+  writeBatch,
+  doc
 } from 'firebase/firestore';
-import type {  WhereFilterOp,  DocumentData } from 'firebase/firestore';
+import type { WhereFilterOp, DocumentData } from 'firebase/firestore';
 import { db } from '../config/firebase';
 
+// ========================================
+// TYPES & INTERFACES
+// ========================================
 
 export interface DeleteCondition {
   field: string;
   operator: WhereFilterOp;
   value: string | number | boolean | null;
 }
- 
+
 export interface DeleteStats {
   found: number;
   deleted: number;
   failed: number;
   errors: string[];
+  duration: number; // execution time in ms
+  batchesProcessed: number;
 }
 
 export interface BulkDeleteOptions {
   batchSize?: number;
   dryRun?: boolean;
-  onProgress?: (progress: { current: number; total: number }) => void;
+  enableUndo?: boolean;
+  maxRetries?: number;
+  retryDelay?: number;
+  onProgress?: (progress: ProgressInfo) => void;
+  onBatchComplete?: (batchInfo: BatchInfo) => void;
+}
+
+export interface ProgressInfo {
+  current: number;
+  total: number;
+  percentage: number;
+  currentBatch: number;
+  totalBatches: number;
+  estimatedTimeRemaining?: number;
+}
+
+export interface BatchInfo {
+  batchNumber: number;
+  totalBatches: number;
+  itemsInBatch: number;
+  successCount: number;
+  failureCount: number;
+  errors: string[];
+}
+
+export interface UndoInfo {
+  collectionName: string;
+  deletedDocuments: Array<{ id: string; data: DocumentData }>;
+  timestamp: number;
+  conditions: DeleteCondition[];
 }
 
 export interface UseBulkDeleteReturn {
@@ -35,36 +70,61 @@ export interface UseBulkDeleteReturn {
   isLoading: boolean;
   isDeleting: boolean;
   error: string | null;
+  lastStats: DeleteStats | null;
+  canUndo: boolean;
   
   // Methods
   previewDelete: (collectionName: string, conditions: DeleteCondition[]) => Promise<DocumentData[]>;
   executeDelete: (collectionName: string, conditions: DeleteCondition[], options?: BulkDeleteOptions) => Promise<DeleteStats>;
   quickDelete: (collectionName: string, field: string, value: unknown, operator?: WhereFilterOp) => Promise<DeleteStats>;
+  undoLastDelete: () => Promise<boolean>;
   reset: () => void;
+  
+  // Utilities
+  validateConditions: (conditions: DeleteCondition[]) => string | null;
+  estimateDeleteTime: (itemCount: number, batchSize?: number) => number;
 }
 
+// ========================================
+// MAIN HOOK
+// ========================================
+
 /**
- * Hook สำหรับการลบข้อมูลแบบกลุ่มใน Firestore
- * รองรับการตั้งเงื่อนไขหลายแบบและการ preview ก่อนลบ
+ * Enhanced Bulk Delete Hook
+ * - Progress tracking with time estimation
+ * - Retry mechanism for failed batches  
+ * - Undo functionality
+ * - Better error handling
+ * - Performance monitoring
  */
 export const useBulkDelete = (): UseBulkDeleteReturn => {
   const [isLoading, setIsLoading] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lastStats, setLastStats] = useState<DeleteStats | null>(null);
+  
+  // Undo functionality
+  const undoInfoRef = useRef<UndoInfo | null>(null);
+  const [canUndo, setCanUndo] = useState(false);
+  
+  // Performance tracking
+  const startTimeRef = useRef<number>(0);
+  const processedItemsRef = useRef<number>(0);
 
-  // Convert value based on type and operator
+  // ========================================
+  // VALIDATION & UTILITIES
+  // ========================================
+
   const convertValue = useCallback((value: string | number | boolean | null): unknown => {
     if (value === null || value === 'null') return null;
     if (typeof value === 'boolean') return value;
     if (typeof value === 'number') return value;
     
     if (typeof value === 'string') {
-      // Handle boolean strings
       if (value.toLowerCase() === 'true') return true;
       if (value.toLowerCase() === 'false') return false;
       if (value.toLowerCase() === 'null') return null;
       
-      // Handle numeric strings
       if (!isNaN(Number(value)) && value.trim() !== '') {
         return Number(value);
       }
@@ -73,7 +133,6 @@ export const useBulkDelete = (): UseBulkDeleteReturn => {
     return value;
   }, []);
 
-  // Validate conditions
   const validateConditions = useCallback((conditions: DeleteCondition[]): string | null => {
     if (conditions.length === 0) {
       return 'กรุณาเพิ่มเงื่อนไขอย่างน้อย 1 เงื่อนไข';
@@ -81,7 +140,7 @@ export const useBulkDelete = (): UseBulkDeleteReturn => {
 
     for (let i = 0; i < conditions.length; i++) {
       const c = conditions[i];
-      if (!c?.field.trim() || '') {
+      if (!c?.field.trim()) {
         return `เงื่อนไขที่ ${i + 1}: กรุณาระบุชื่อฟิลด์`;
       }
       if (c.value === '' && !['in', 'not-in', 'array-contains-any'].includes(c.operator)) {
@@ -92,7 +151,6 @@ export const useBulkDelete = (): UseBulkDeleteReturn => {
     return null;
   }, []);
 
-  // Build Firestore query
   const buildQuery = useCallback((collectionName: string, conditions: DeleteCondition[]) => {
     const validationError = validateConditions(conditions);
     if (validationError) {
@@ -110,7 +168,20 @@ export const useBulkDelete = (): UseBulkDeleteReturn => {
     return firestoreQuery;
   }, [validateConditions, convertValue]);
 
-  // Preview documents that will be deleted
+  const estimateDeleteTime = useCallback((itemCount: number, batchSize: number = 500): number => {
+    // Estimate based on: 100ms per batch + 50ms per item + network overhead
+    const batches = Math.ceil(itemCount / batchSize);
+    const baseTime = batches * 100; // 100ms per batch
+    const itemTime = itemCount * 50; // 50ms per item  
+    const networkOverhead = batches * 200; // 200ms network overhead per batch
+    
+    return baseTime + itemTime + networkOverhead;
+  }, []);
+
+  // ========================================
+  // CORE OPERATIONS
+  // ========================================
+
   const previewDelete = useCallback(async (
     collectionName: string, 
     conditions: DeleteCondition[]
@@ -139,23 +210,36 @@ export const useBulkDelete = (): UseBulkDeleteReturn => {
     }
   }, [buildQuery]);
 
-  // Execute bulk delete
   const executeDelete = useCallback(async (
     collectionName: string,
     conditions: DeleteCondition[],
     options: BulkDeleteOptions = {}
   ): Promise<DeleteStats> => {
-    const { batchSize = 500, dryRun = false, onProgress } = options;
+    const { 
+      batchSize = 500, 
+      dryRun = false, 
+      enableUndo = false,
+      maxRetries = 3,
+      retryDelay = 1000,
+      onProgress,
+      onBatchComplete
+    } = options;
     
     setIsDeleting(true);
     setError(null);
+    startTimeRef.current = Date.now();
+    processedItemsRef.current = 0;
 
     const stats: DeleteStats = {
       found: 0,
       deleted: 0,
       failed: 0,
-      errors: []
+      errors: [],
+      duration: 0,
+      batchesProcessed: 0
     };
+
+    let undoData: Array<{ id: string; data: DocumentData }> = [];
 
     try {
       const firestoreQuery = buildQuery(collectionName, conditions);
@@ -164,40 +248,104 @@ export const useBulkDelete = (): UseBulkDeleteReturn => {
       stats.found = snapshot.docs.length;
 
       if (stats.found === 0) {
+        stats.duration = Date.now() - startTimeRef.current;
+        setLastStats(stats);
         return stats;
       }
 
       // If dry run, just return the count
       if (dryRun) {
+        stats.duration = Date.now() - startTimeRef.current;
+        setLastStats(stats);
         return stats;
       }
 
-      // Delete in batches (Firestore limit: 500 operations per batch)
+      // Store data for undo if enabled
+      if (enableUndo) {
+        undoData = snapshot.docs.map(doc => ({
+          id: doc.id,
+          data: doc.data() || '',
+        }));
+      }
+
+      // Calculate batch information
       const docRefs = snapshot.docs.map(doc => doc.ref);
       const totalBatches = Math.ceil(docRefs.length / batchSize);
+      const estimatedTime = estimateDeleteTime(stats.found, batchSize);
       
+      // Process batches with retry logic
       for (let i = 0; i < docRefs.length; i += batchSize) {
         const currentBatch = Math.floor(i / batchSize) + 1;
-        const batch = writeBatch(db);
         const batchRefs = docRefs.slice(i, i + batchSize);
         
-        batchRefs.forEach(docRef => {
-          batch.delete(docRef);
-        });
+        let batchSuccess = false;
+        let retryCount = 0;
+        let batchErrors: string[] = [];
 
-        try {
-          await batch.commit();
-          stats.deleted += batchRefs.length;
-          
-          // Report progress
-          onProgress?.({
-            current: stats.deleted,
-            total: stats.found
-          });
-        } catch (err) {
-          stats.failed += batchRefs.length;
-          const errorMsg = `Batch ${currentBatch}/${totalBatches}: ${err instanceof Error ? err.message : 'Unknown error'}`;
-          stats.errors.push(errorMsg);
+        // Retry logic for each batch
+        while (!batchSuccess && retryCount < maxRetries) {
+          try {
+            const batch = writeBatch(db);
+            batchRefs.forEach(docRef => {
+              batch.delete(docRef);
+            });
+
+            await batch.commit();
+            stats.deleted += batchRefs.length;
+            stats.batchesProcessed++;
+            batchSuccess = true;
+            
+            // Progress reporting with time estimation
+            processedItemsRef.current = stats.deleted;
+            const elapsed = Date.now() - startTimeRef.current;
+            const progressPercentage = (stats.deleted / stats.found) * 100;
+            const estimatedTimeRemaining = progressPercentage > 0 
+              ? (elapsed / progressPercentage) * (100 - progressPercentage)
+              : estimatedTime;
+
+            onProgress?.({
+              current: stats.deleted,
+              total: stats.found,
+              percentage: Math.round(progressPercentage),
+              currentBatch,
+              totalBatches,
+              estimatedTimeRemaining: Math.round(estimatedTimeRemaining)
+            });
+
+            onBatchComplete?.({
+              batchNumber: currentBatch,
+              totalBatches,
+              itemsInBatch: batchRefs.length,
+              successCount: batchRefs.length,
+              failureCount: 0,
+              errors: []
+            });
+
+          } catch (err) {
+            retryCount++;
+            const errorMsg = `Batch ${currentBatch}/${totalBatches} (Attempt ${retryCount}/${maxRetries}): ${err instanceof Error ? err.message : 'Unknown error'}`;
+            batchErrors.push(errorMsg);
+            
+            if (retryCount < maxRetries) {
+              // Wait before retry with exponential backoff
+              await new Promise(resolve => 
+                setTimeout(resolve, retryDelay * Math.pow(2, retryCount - 1))
+              );
+            } else {
+              // Final failure
+              stats.failed += batchRefs.length;
+              stats.errors.push(...batchErrors);
+              
+              onBatchComplete?.({
+                batchNumber: currentBatch,
+                totalBatches,
+                itemsInBatch: batchRefs.length,
+                successCount: 0,
+                failureCount: batchRefs.length,
+                errors: batchErrors
+              });
+            }
+          }
         }
 
         // Small delay between batches to avoid overwhelming Firestore
@@ -206,19 +354,33 @@ export const useBulkDelete = (): UseBulkDeleteReturn => {
         }
       }
 
+      // Store undo information
+      if (enableUndo && stats.deleted > 0) {
+        undoInfoRef.current = {
+          collectionName,
+          deletedDocuments: undoData,
+          timestamp: Date.now(),
+          conditions
+        };
+        setCanUndo(true);
+      }
+
+      stats.duration = Date.now() - startTimeRef.current;
+      setLastStats(stats);
       return stats;
 
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'เกิดข้อผิดพลาดในการลบข้อมูล';
       setError(errorMessage);
       stats.errors.push(errorMessage);
+      stats.duration = Date.now() - startTimeRef.current;
+      setLastStats(stats);
       throw new Error(errorMessage);
     } finally {
       setIsDeleting(false);
     }
-  }, [buildQuery]);
+  }, [buildQuery, estimateDeleteTime]);
 
-  // Quick delete helper for simple conditions
   const quickDelete = useCallback(async (
     collectionName: string,
     field: string,
@@ -234,11 +396,66 @@ export const useBulkDelete = (): UseBulkDeleteReturn => {
     return executeDelete(collectionName, conditions);
   }, [executeDelete]);
 
-  // Reset all states
+  // ========================================
+  // UNDO FUNCTIONALITY
+  // ========================================
+
+  const undoLastDelete = useCallback(async (): Promise<boolean> => {
+    if (!undoInfoRef.current || !canUndo) {
+      setError('ไม่มีการลบที่สามารถยกเลิกได้');
+      return false;
+    }
+
+    setIsDeleting(true);
+    setError(null);
+
+    try {
+      const { collectionName, deletedDocuments } = undoInfoRef.current;
+      const batchSize = 500;
+      let restoredCount = 0;
+
+      // Restore documents in batches
+      for (let i = 0; i < deletedDocuments.length; i += batchSize) {
+        const batch = writeBatch(db);
+        const batchDocs = deletedDocuments.slice(i, i + batchSize);
+        
+        batchDocs.forEach(({ id, data }) => {
+          const docRef = doc(db, collectionName, id);
+          batch.set(docRef, data);
+        });
+
+        await batch.commit();
+        restoredCount += batchDocs.length;
+      }
+
+      // Clear undo information
+      undoInfoRef.current = null;
+      setCanUndo(false);
+
+      console.log(`Successfully restored ${restoredCount} documents`);
+      return true;
+
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'เกิดข้อผิดพลาดในการยกเลิกการลบ';
+      setError(errorMessage);
+      return false;
+    } finally {
+      setIsDeleting(false);
+    }
+  }, [canUndo]);
+
+  // ========================================
+  // RESET & CLEANUP
+  // ========================================
+
   const reset = useCallback(() => {
     setIsLoading(false);
     setIsDeleting(false);
     setError(null);
+    setLastStats(null);
+    undoInfoRef.current = null;
+    setCanUndo(false);
+    processedItemsRef.current = 0;
   }, []);
 
   return {
@@ -246,69 +463,93 @@ export const useBulkDelete = (): UseBulkDeleteReturn => {
     isLoading,
     isDeleting,
     error,
+    lastStats,
+    canUndo,
     
     // Methods
     previewDelete,
     executeDelete,
     quickDelete,
-    reset
+    undoLastDelete,
+    reset,
+    
+    // Utilities
+    validateConditions,
+    estimateDeleteTime
   };
 };
 
-// Utility functions for common delete operations
+// ========================================
+// HELPER UTILITIES
+// ========================================
+
 export const BulkDeleteHelpers = {
-  /**
-   * สร้างเงื่อนไขสำหรับลบข้อมูลที่ไม่ใช้งาน
-   */
   createInactiveCondition: (statusField = 'status'): DeleteCondition => ({
     field: statusField,
     operator: '==',
     value: 'inactive'
   }),
 
-  /**
-   * สร้างเงื่อนไขสำหรับลบข้อมูลทดสอบ
-   */
   createTestDataCondition: (typeField = 'type'): DeleteCondition => ({
     field: typeField,
     operator: '==',
     value: 'test'
   }),
 
-  /**
-   * สร้างเงื่อนไขสำหรับลบข้อมูลของบริษัทเฉพาะ
-   */
   createCompanyCondition: (company: string, companyField = 'company'): DeleteCondition => ({
     field: companyField,
     operator: '==',
     value: company
   }),
 
-  /**
-   * สร้างเงื่อนไขสำหรับลบข้อมูลที่ไม่เปิดใช้งาน
-   */
   createDisabledCondition: (activeField = 'isActive'): DeleteCondition => ({
     field: activeField,
     operator: '==',
     value: false
   }),
 
-  /**
-   * สร้างเงื่อนไขสำหรับลบข้อมูลที่สร้างโดยผู้ใช้เฉพาะ
-   */
   createCreatedByCondition: (email: string, createdByField = 'createdBy'): DeleteCondition => ({
     field: createdByField,
     operator: '==',
     value: email
   }),
 
-  /**
-   * รวมเงื่อนไขหลายๆ แบบ
-   */
+  createDateRangeConditions: (
+    dateField: string, 
+    startDate: Date, 
+    endDate?: Date
+  ): DeleteCondition[] => {
+    const conditions: DeleteCondition[] = [
+      { field: dateField, operator: '>=', value: startDate.toISOString() }
+    ];
+    
+    if (endDate) {
+      conditions.push({ 
+        field: dateField, 
+        operator: '<=', 
+        value: endDate.toISOString() 
+      });
+    }
+    
+    return conditions;
+  },
+
   combineConditions: (...conditions: DeleteCondition[]): DeleteCondition[] => {
     return conditions.filter(condition => 
       condition.field.trim() !== '' && condition.value !== ''
     );
+  },
+
+  // Performance estimation helper
+  estimateOperationCost: (itemCount: number, batchSize: number = 500) => {
+    const batches = Math.ceil(itemCount / batchSize);
+    return {
+      batches,
+      estimatedTime: `${Math.ceil((batches * 300) / 1000)} วินาที`, // 300ms per batch
+      firestoreReads: itemCount, // For query
+      firestoreWrites: itemCount, // For delete
+      estimatedCost: `${(itemCount * 0.02).toFixed(2)} บาท` // Rough Firebase cost
+    };
   }
 };
 

@@ -1,36 +1,36 @@
 // ========================================
-// 📁 src/hooks/useOfflineSync.ts - Updated
+// 📁 src/hooks/useOfflineSync.ts - แก้ไข Types
 // ========================================
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 
 interface OfflineAction {
-  readonly id: string;
-  readonly type: string;
-  readonly data: unknown;
-  readonly timestamp: Date;
-  readonly retryCount: number;
-  readonly execute: () => Promise<void>;
+  id: string;
+  type: string;
+  data: unknown;
+  timestamp: Date;
+  retryCount: number;
+  execute: () => Promise<void>;
 }
 
 interface OfflineSyncOptions {
-  readonly key: string;
-  readonly syncInterval?: number;
-  readonly onSync?: () => Promise<void>;
-  readonly enabled?: boolean;
-  readonly maxRetries?: number;
+  key: string;
+  syncInterval?: number;
+  onSync?: () => Promise<void>;
+  enabled?: boolean;
+  maxRetries?: number;
 }
 
 export interface OfflineSyncResult {
-  readonly isOnline: boolean;
-  readonly pendingActions: readonly OfflineAction[];
-  readonly isSyncing: boolean;
-  readonly syncErrors: readonly string[];
-  readonly lastSync: Date | null;
-  readonly addAction: (action: Omit<OfflineAction, 'id' | 'timestamp' | 'retryCount'>) => void;
-  readonly sync: () => Promise<void>;
-  readonly clearSyncErrors: () => void;
-  readonly syncStatus: 'idle' | 'syncing' | 'error' | 'success';
+  isOnline: boolean;
+  pendingActions: OfflineAction[]; // ✅ เอา readonly ออก
+  isSyncing: boolean;
+  syncErrors: string[]; // ✅ เอา readonly ออก
+  lastSync: Date | null;
+  syncStatus: 'idle' | 'syncing' | 'error' | 'success';
+  addAction: (action: Omit<OfflineAction, 'id' | 'timestamp' | 'retryCount'>) => void;
+  sync: () => Promise<void>;
+  clearSyncErrors: () => void;
 }
 
 export const useOfflineSync = (options: OfflineSyncOptions): OfflineSyncResult => {
@@ -42,15 +42,15 @@ export const useOfflineSync = (options: OfflineSyncOptions): OfflineSyncResult =
     maxRetries = 3
   } = options;
 
-  const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [pendingActions, setPendingActions] = useState<OfflineAction[]>([]);
-  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [syncErrors, setSyncErrors] = useState<string[]>([]);
   const [lastSync, setLastSync] = useState<Date | null>(null);
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'error' | 'success'>('idle');
 
   const syncIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const isComponentMountedRef = useRef<boolean>(true);
+  const isComponentMountedRef = useRef(true);
 
   const executeAction = useCallback(async (action: OfflineAction): Promise<void> => {
     try {
@@ -60,7 +60,6 @@ export const useOfflineSync = (options: OfflineSyncOptions): OfflineSyncResult =
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       
       if (action.retryCount < maxRetries) {
-        // Retry with exponential backoff
         const retryDelay = Math.pow(2, action.retryCount) * 1000;
         setTimeout(() => {
           if (isComponentMountedRef.current) {
@@ -86,12 +85,10 @@ export const useOfflineSync = (options: OfflineSyncOptions): OfflineSyncResult =
       setSyncStatus('syncing');
       setSyncErrors([]);
 
-      // Execute custom sync function
       if (onSync) {
         await onSync();
       }
 
-      // Execute pending actions
       const actionsToExecute = [...pendingActions];
       for (const action of actionsToExecute) {
         if (isComponentMountedRef.current) {
@@ -126,7 +123,6 @@ export const useOfflineSync = (options: OfflineSyncOptions): OfflineSyncResult =
 
     setPendingActions(prev => [...prev, action]);
 
-    // Try to execute immediately if online
     if (isOnline && enabled) {
       void executeAction(action);
     }
