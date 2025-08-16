@@ -322,9 +322,9 @@ const ScoreSelector: React.FC<{
   disabled?: boolean;
   allowNA?: boolean;
   questionType?: string;
-}> = ({ value, onChange, disabled, allowNA = true, questionType}) => {
+}> = ({ value, onChange, disabled, allowNA = true}) => {
 
-  console.log(questionType);
+  //console.log(questionType)
   const availableOptions = allowNA 
     ? SCORE_OPTIONS 
     : SCORE_OPTIONS.filter((opt: ScoreOption) => opt.value !== 'n/a');
@@ -568,7 +568,7 @@ const CSMEvaluatePage: React.FC = () => {
   // Permission Check
   const hasPermission = useMemo(() => {
     if (!user?.roles) {
-      console.log('❌ No user roles found');
+      //console.log('❌ No user roles found');
       return false;
     }
     
@@ -583,13 +583,13 @@ const CSMEvaluatePage: React.FC = () => {
     }
     
     const hasAccess = userRoles.some((role: string) => allowedRoles.includes(role));
-    
+    /*
     console.log('🔐 Permission check:', {
       userRoles: user.roles,
       parsedRoles: userRoles,
       allowedRoles,
       hasAccess
-    });
+    });*/
     
     return hasAccess;
   }, [user?.roles]);
@@ -599,9 +599,9 @@ const CSMEvaluatePage: React.FC = () => {
     queryKey: ['csm-vendor', finalVdCode],
     queryFn: async () => {
       if (!finalVdCode) return null;
-      console.log('🔍 Loading vendor:', finalVdCode);
+      //console.log('🔍 Loading vendor:', finalVdCode);
       const result = await enhancedCSMService.vendors.getByVdCode(finalVdCode);
-      console.log('👥 Vendor result:', result);
+      //console.log('👥 Vendor result:', result);
       return result;
     },
     enabled: !!finalVdCode,
@@ -610,13 +610,13 @@ const CSMEvaluatePage: React.FC = () => {
   const { data: form, isLoading: formLoading, error: formError } = useQuery({
     queryKey: ['csm-form', 'CSMChecklist'],
     queryFn: async () => {
-      console.log('🔍 Loading CSM form...');
+      //console.log('🔍 Loading CSM form...');
       const result = await enhancedCSMService.forms.getCSMChecklist();
-      console.log('📋 Form result:', {
+      /*console.log('📋 Form result:', {
         found: !!result,
         title: result?.formTitle,
         fieldsCount: result?.fields?.length || 0
-      });
+      });*/
       return result;
     },
     retry: 2,
@@ -627,10 +627,10 @@ const CSMEvaluatePage: React.FC = () => {
     queryKey: ['csm-assessment', finalVdCode],
     queryFn: async () => {
       if (!finalVdCode) return null;
-      console.log('🔍 Loading existing assessment:', finalVdCode);
+      //console.log('🔍 Loading existing assessment:', finalVdCode);
       const assessments = await enhancedCSMService.assessments.getByVdCode(finalVdCode);
       const existing = assessments.find(a => a.id && !a.isFinish) || null;
-      console.log('📊 Existing assessment:', !!existing, existing?.id);
+      //console.log('📊 Existing assessment:', !!existing, existing?.id);
       return existing;
     },
     enabled: !!finalVdCode,
@@ -715,7 +715,7 @@ const createAssessmentData = useCallback((overrides: Partial<CSMAssessment> = {}
     async (data) => {
       try {
         if (!vendor || !form) {
-          console.log('❌ Cannot auto-save: missing vendor or form');
+          //console.log('❌ Cannot auto-save: missing vendor or form');
           return;
         }
 
@@ -726,22 +726,23 @@ const createAssessmentData = useCallback((overrides: Partial<CSMAssessment> = {}
                           Object.keys(data.confirmations).length > 0;
         
         if (!hasChanges) {
-          console.log('⚠️ Skipping auto-save: no meaningful changes');
+          //console.log('⚠️ Skipping auto-save: no meaningful changes');
           return;
         }
 
         // Validate required fields before saving
         if (!validateRequiredFields(data.auditor, data.auditee, data.assessmentInfo)) {
-          console.log('⚠️ Skipping auto-save: missing required fields');
+          //console.log('⚠️ Skipping auto-save: missing required fields');
           return;
         }
-
+        
+        /*
         console.log('💾 Auto-saving assessment data...', {
           answersCount: data.answers.length,
           auditorName: data.auditor.name,
           auditeeName: data.auditee.name,
           confirmationsCount: Object.keys(data.confirmations).length
-        });
+        });*/
         
         const assessmentToSave = createAssessmentData();        
         //let savedAssessment;
@@ -770,7 +771,7 @@ const createAssessmentData = useCallback((overrides: Partial<CSMAssessment> = {}
         // Invalidate queries to refresh data
         queryClient.invalidateQueries({ queryKey: ['csm-assessment', finalVdCode] });
         
-        console.log('💾 Auto-save completed successfully');
+        //console.log('💾 Auto-save completed successfully');
         
       } catch (error) {
         console.error('❌ Auto-save error:', error);
@@ -800,6 +801,7 @@ const createAssessmentData = useCallback((overrides: Partial<CSMAssessment> = {}
       
       const assessmentToSave = createAssessmentData(data);
       
+      /*
       console.log('💾 Manual saving assessment data...', {
         answersCount: assessmentToSave.answers?.length || 0,
         auditorName: assessmentToSave.auditor?.name,
@@ -807,7 +809,7 @@ const createAssessmentData = useCallback((overrides: Partial<CSMAssessment> = {}
         status: assessmentToSave.status,
         riskLevel: assessmentToSave.riskLevel,
         existingId: existingAssessment?.id
-      });
+      });*/
       
     if (existingAssessment?.id) {
       try {
@@ -821,7 +823,7 @@ const createAssessmentData = useCallback((overrides: Partial<CSMAssessment> = {}
           return existingAssessment.id;
         } else {
           // Document ไม่มี -> สร้างใหม่
-          console.log('⚠️ Existing assessment document not found, creating new one');
+          //console.log('⚠️ Existing assessment document not found, creating new one');
           assessmentToSave.createdAt = new Date();
           const newId = await enhancedCSMService.assessments.create(assessmentToSave as Omit<CSMAssessment, 'id'>);
           return newId;
@@ -829,7 +831,7 @@ const createAssessmentData = useCallback((overrides: Partial<CSMAssessment> = {}
       } catch (error) {
         // 🔧 Fallback mechanism
         console.error('❌ Error checking/updating document:', error);
-        console.log('🔄 Fallback: Creating new assessment');
+        //console.log('🔄 Fallback: Creating new assessment');
         assessmentToSave.createdAt = new Date();
         const newId = await enhancedCSMService.assessments.create(assessmentToSave as Omit<CSMAssessment, 'id'>);
         return newId;
@@ -913,7 +915,7 @@ const createAssessmentData = useCallback((overrides: Partial<CSMAssessment> = {}
       const newAnswers = [...prev];
       if (newAnswers[index]) {
         newAnswers[index] = { ...newAnswers[index], ...changes };
-        console.log('📝 Answer changed:', index, changes);
+        //console.log('📝 Answer changed:', index, changes);
       }
       return newAnswers;
     });
@@ -924,11 +926,11 @@ const createAssessmentData = useCallback((overrides: Partial<CSMAssessment> = {}
       ...prev,
       [index]: confirmed
     }));
-    console.log('✅ Confirmation changed:', index, confirmed);
+    //console.log('✅ Confirmation changed:', index, confirmed);
   }, []);
 
   const handleScoreChange = useCallback((index: number, score: Score) => {
-    console.log('🎯 Score changed:', index, score);
+    //console.log('🎯 Score changed:', index, score);
     handleAnswerChange(index, { 
       score,
       tScore: score === 'n/a' ? '0' : score 
@@ -944,7 +946,7 @@ const handleFileChange = useCallback((index: number, files: QuestionFileAttachme
   
   const fileNames = files.map(f => f.name);  
   handleAnswerChange(index, { files: fileNames });
-  console.log('📎 Files attached to question', index, ':', files.length);
+  //console.log('📎 Files attached to question', index, ':', files.length);
 }, [handleAnswerChange]);
 
   const handleQuestionSelect = useCallback((index: number) => {
@@ -986,7 +988,7 @@ const handleFileChange = useCallback((index: number, files: QuestionFileAttachme
   // Initialize answers when form loads
   useEffect(() => {
     if (form?.fields && answers.length === 0) {
-      console.log('🔄 Initializing answers for', form.fields.length, 'questions');
+      //console.log('🔄 Initializing answers for', form.fields.length, 'questions');
       
       const initialAnswers: CSMAssessmentAnswer[] = form.fields.map(field => ({
         ckItem: field.ckItem,
@@ -1006,22 +1008,24 @@ const handleFileChange = useCallback((index: number, files: QuestionFileAttachme
 
   // Load existing assessment data
   useEffect(() => {
+    
     if (existingAssessment && form?.fields && !answers.length) {
+      /*
       console.log('♻️ Loading existing assessment data...', {
         id: existingAssessment.id,
         status: existingAssessment.status,
         answersCount: existingAssessment.answers?.length || 0
-      });
+      });*/
       
       // Load Auditor Data
       if (existingAssessment.auditor) {
-        console.log('📝 Loading auditor:', existingAssessment.auditor.name);
+        //console.log('📝 Loading auditor:', existingAssessment.auditor.name);
         setAuditor(existingAssessment.auditor);
       }
       
       // Load Auditee Data
       if (existingAssessment.auditee) {
-        console.log('👥 Loading auditee:', existingAssessment.auditee.name);
+        //console.log('👥 Loading auditee:', existingAssessment.auditee.name);
         setAuditee(existingAssessment.auditee);
       }
       
@@ -1034,7 +1038,7 @@ const handleFileChange = useCallback((index: number, files: QuestionFileAttachme
       
       // Load Answers and Confirmations
       if (existingAssessment.answers && existingAssessment.answers.length > 0) {
-        console.log('📋 Loading answers:', existingAssessment.answers.length);
+        //console.log('📋 Loading answers:', existingAssessment.answers.length);
         
         const loadedAnswers = [...existingAssessment.answers];
         const loadedConfirmations: Record<string, boolean> = {};
@@ -1046,8 +1050,8 @@ const handleFileChange = useCallback((index: number, files: QuestionFileAttachme
           }
         });
         
-        console.log('✅ Setting answers:', loadedAnswers.length);
-        console.log('✅ Setting confirmations:', Object.keys(loadedConfirmations).length);
+        //console.log('✅ Setting answers:', loadedAnswers.length);
+        //console.log('✅ Setting confirmations:', Object.keys(loadedConfirmations).length);
         
         setAnswers(loadedAnswers);
         setConfirmations(loadedConfirmations);
@@ -1181,7 +1185,7 @@ useEffect(() => {
     });
     
     if (Object.keys(loadedFiles).length > 0) {
-      console.log('📎 Loading existing files for questions:', Object.keys(loadedFiles));
+      //console.log('📎 Loading existing files for questions:', Object.keys(loadedFiles));
       setQuestionFiles(loadedFiles);
     }
   }

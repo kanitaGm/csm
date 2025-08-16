@@ -18,7 +18,7 @@ export function useAuthNavigation(options: AuthNavigationOptions = {}) {
   const { user } = useAuth();
   
   const {
-    redirectTo = '/dashboard', // ✅ เปลี่ยนจาก '/employees' เป็น '/dashboard'
+    redirectTo = '/dashboard',
     onLoginSuccess,
     onLogoutSuccess
   } = options;

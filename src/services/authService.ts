@@ -391,9 +391,7 @@ export class AuthenticationService {
 
             // ขั้นตอน 4: แปลง roles
             let userRoles: Role[];
-            if (Array.isArray(userRecord.roles)) {
-                userRoles = userRecord.roles;
-            } else if (Array.isArray(userRecord.roles)) {
+             if (Array.isArray(userRecord.roles)) {
                 userRoles = userRecord.roles;
             } else {
                 // Handle string role

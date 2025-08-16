@@ -432,12 +432,12 @@ export class EnhancedAssessmentsService {
     const cached = cacheService.get<CSMAssessment[]>(cacheKey);
     
     if (cached) {
-      console.log(`🔄 Loading ${cached.length} current assessments from cache`);
+      //console.log(`🔄 Loading ${cached.length} current assessments from cache`);
       return cached;
     }
 
     try {
-      console.log('🔍 Fetching current assessments from Firestore...');
+      //console.log('🔍 Fetching current assessments from Firestore...');
       
       const querySnapshot = await getDocs(
         query(
@@ -459,7 +459,7 @@ export class EnhancedAssessmentsService {
         }
       });
 
-      console.log(`✅ Loaded ${assessments.length} current assessments from Firestore`);      
+      //console.log(`✅ Loaded ${assessments.length} current assessments from Firestore`);      
       cacheService.set(cacheKey, assessments, CACHE_DURATIONS.ASSESSMENTS);
       return assessments;
 
@@ -516,7 +516,7 @@ export class EnhancedAssessmentsService {
     if (!assessment.vdCode) return;
     
     try {
-      console.log('📊 Creating/updating summary for', assessment.vdCode);
+      //console.log('📊 Creating/updating summary for', assessment.vdCode);
       
       // Calculate summary data
       const totalQuestions = assessment.answers.length;
@@ -569,11 +569,11 @@ export class EnhancedAssessmentsService {
         // Update existing summary
         const summaryDoc = existingSummary.docs[0];
         await updateDoc(summaryDoc.ref, summaryData);
-        console.log('✅ Updated assessment summary for', assessment.vdCode);
+        //console.log('✅ Updated assessment summary for', assessment.vdCode);
       } else {
         // Create new summary
         await addDoc(collection(db, COLLECTIONS.CSM_SUMMARIES), summaryData);
-        console.log('✅ Created new assessment summary for', assessment.vdCode);
+        //console.log('✅ Created new assessment summary for', assessment.vdCode);
       }
       
       // Clear summary cache

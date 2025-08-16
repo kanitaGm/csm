@@ -1,24 +1,34 @@
-// ========================================
-// //src/features/csm/pages/CSMListPage.tsx 
+          
+          // src/features/csm/pages/CSMListPage.tsx - Complete Working Version
 
-import React, { useState,  useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import { FixedSizeList as List } from 'react-window';
 import { 
-  Search, RefreshCw, BarChart3, AlertTriangle, CheckCircle, 
-  Clock, Plus, Grid, List, TrendingUp,  Building2,
-  FileText,  X, Download
+  Search, RefreshCw,  AlertTriangle, CheckCircle, 
+  Clock, Plus, Grid, List as ListIcon, TrendingUp, Building2,
+  FileText, X, Download, ChevronLeft, ChevronRight, MoreHorizontal
 } from 'lucide-react';
 import type { CSMVendor, CSMAssessmentSummary, CSMAssessment } from '../../../types';
 import { enhancedCSMService } from '../../../services/enhancedCsmService';
 import { useToast } from '../../../hooks/useToast';
 import { useDebounce } from '../../../hooks/useDebounce';
+import { usePagination } from '../../../hooks/usePagination';
 import { CSM_VENDOR_CATEGORIES } from '../../../types/csm';
 import { exportVendorsToExcel } from '../../../utils/exportUtils';
 
 // ========================================
+// CONSTANTS & CONFIGURATION
+// ========================================
+const CACHE_TIME = 10 * 60 * 1000; // 10 minutes cache
+const DEBOUNCE_DELAY = 500; // Longer delay for large datasets
+
+// ========================================
 // TYPES & INTERFACES
 // ========================================
+type ViewMode = 'card' | 'table' | 'virtual';
+
 interface VendorWithStatus extends CSMVendor {
   assessmentStatus: 'completed' | 'in-progress' | 'due-soon' | 'overdue' | 'not-assessed';
   summary?: CSMAssessmentSummary;
@@ -32,6 +42,11 @@ interface FilterState {
   assessmentStatus: string;
   riskLevel: string;
   needsAssessment: boolean;
+  quickFilters: {
+    dueSoon: boolean;
+    highRisk: boolean;
+    neverAssessed: boolean;
+  };
 }
 
 interface StatisticsData {
@@ -40,6 +55,7 @@ interface StatisticsData {
   inProgress: number;
   overdue: number;
   dueSoon: number;
+  notAssessed: number;
   avgScore: number;
   highRisk: number;
 }
@@ -48,112 +64,129 @@ interface StatCardProps {
   title: string;
   value: number | string;
   icon: React.ElementType;
-  color: 'blue' | 'green' | 'yellow' | 'red' | 'purple';
+  color: 'blue' | 'green' | 'yellow' | 'red' | 'purple' | 'gray';
   trend?: number;
+  subtitle?: string;
+  onClick?: () => void;
+  isClickable?: boolean;
 }
 
 // ========================================
 // STAT CARD COMPONENT
 // ========================================
-const StatCard: React.FC<StatCardProps> = ({ title, value, icon: Icon, color, trend }) => {
+const StatCard: React.FC<StatCardProps> = ({ 
+  title, value, icon: Icon, color, trend, subtitle, onClick, isClickable 
+}) => {
   const colorClasses = {
-    blue: 'bg-blue-50 text-blue-600 border-blue-200',
-    green: 'bg-green-50 text-green-600 border-green-200',
-    yellow: 'bg-yellow-50 text-yellow-600 border-yellow-200',
-    red: 'bg-red-50 text-red-600 border-red-200',
-    purple: 'bg-purple-50 text-purple-600 border-purple-200'
+    blue: 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100',
+    green: 'bg-green-50 text-green-600 border-green-200 hover:bg-green-100',
+    yellow: 'bg-yellow-50 text-yellow-600 border-yellow-200 hover:bg-yellow-100',
+    red: 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100',
+    purple: 'bg-purple-50 text-purple-600 border-purple-200 hover:bg-purple-100',
+    gray: 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
   };
 
   return (
-    <div className="p-4 transition-shadow bg-white border rounded-lg shadow-sm hover:shadow-md">
+    <div 
+      onClick={onClick}
+      className={`p-4 lg:p-6 rounded-lg border transition-all duration-200 ${colorClasses[color]} ${
+        isClickable ? 'cursor-pointer transform hover:scale-105' : ''
+      }`}
+    >
       <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-3">
-          <div className={`p-2 rounded-lg ${colorClasses[color]}`}>
-            <Icon className="w-5 h-5" />
-          </div>
-          <div>
-            <p className="text-xs font-medium tracking-wider text-gray-500 uppercase">{title}</p>
-            <p className="text-xl font-bold text-gray-900">{value}</p>
-          </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-xs font-medium text-gray-600 truncate lg:text-sm">{title}</p>
+          <p className="mt-1 text-xl font-bold lg:text-2xl">{value}</p>
+          {subtitle && (
+            <p className="mt-1 text-xs text-gray-500 truncate">{subtitle}</p>
+          )}
         </div>
-        {trend && trend > 0 && (
-          <div className="flex items-center text-sm text-green-600">
-            <TrendingUp className="w-4 h-4 mr-1" />
-            <span>+{trend}</span>
-          </div>
-        )}
+        <Icon className="flex-shrink-0 w-6 h-6 lg:h-8 lg:w-8" />
       </div>
+      {trend !== undefined && (
+        <div className="flex items-center mt-3">
+          <TrendingUp className="w-3 h-3 mr-1 lg:h-4 lg:w-4" />
+          <span className="text-xs lg:text-sm">{trend > 0 ? '+' : ''}{trend}%</span>
+        </div>
+      )}
     </div>
   );
 };
 
 // ========================================
-// VENDOR CARD COMPONENT
+// OPTIMIZED VENDOR CARD COMPONENT
 // ========================================
-const VendorCard: React.FC<{ vendor: VendorWithStatus; onClick: (vendor: CSMVendor) => void }> = ({ vendor, onClick }) => {
-  const getStatusConfig = (status: string) => {
-    switch (status) {
-      case 'completed':
-        return { color: 'text-green-700 bg-green-100 border-green-200', icon: CheckCircle, text: 'ประเมินแล้ว' };
-      case 'in-progress':
-        return { color: 'text-blue-700 bg-blue-100 border-blue-200', icon: Clock, text: 'กำลังประเมิน' };
-      case 'due-soon':
-        return { color: 'text-yellow-700 bg-yellow-100 border-yellow-200', icon: Clock, text: 'ใกล้กำหนด' };
-      case 'overdue':
-        return { color: 'text-red-700 bg-red-100 border-red-200', icon: AlertTriangle, text: 'เกินกำหนด' };
-      default:
-        return { color: 'text-gray-700 bg-gray-100 border-gray-200', icon: Clock, text: 'ยังไม่ประเมิน' };
-    }
-  };
-
-  const getRiskColor = (score?: number) => {
-    if (!score) return 'text-gray-500';
-    if (score >= 80) return 'text-green-600';
-    if (score >= 60) return 'text-yellow-600';
-    return 'text-red-600';
-  };
-
-  const statusConfig = getStatusConfig(vendor.assessmentStatus);
-
+const OptimizedVendorCard: React.FC<{ 
+  vendor: VendorWithStatus; 
+  onSelect: (vendor: CSMVendor) => void;
+}> = React.memo(({ vendor, onSelect }) => {
+  const categoryInfo = CSM_VENDOR_CATEGORIES.find(cat => cat.code === vendor.category);
+  
   return (
     <div 
-      className="transition-all duration-200 bg-white border rounded-lg shadow-sm cursor-pointer hover:shadow-md hover:border-blue-300"
-      onClick={() => onClick(vendor)}
+      onClick={() => onSelect(vendor)}
+      className="p-4 transition-all duration-200 bg-white border border-gray-200 rounded-lg shadow-sm cursor-pointer lg:p-6 hover:shadow-md hover:border-blue-300"
     >
-      <div className="p-6">
-        <div className="flex items-start justify-between mb-4">
-          <div className="flex-1">
-            <h3 className="mb-1 text-lg font-semibold text-gray-900">{vendor.vdName}</h3>
-            <p className="mb-2 text-sm text-gray-500">{vendor.vdCode}</p>
-            <span className="inline-flex items-center px-2 py-1 text-xs font-medium text-gray-700 bg-gray-100 rounded-full">
-              {CSM_VENDOR_CATEGORIES.find(cat => cat.code === vendor.category)?.name || vendor.category}
+      {/* Header - Optimized for mobile */}
+      <div className="flex items-start justify-between mb-3">
+        <div className="flex-1 min-w-0">
+          <h3 className="text-sm font-semibold text-gray-900 truncate lg:text-lg">
+            {vendor.vdName}
+          </h3>
+          <p className="text-xs text-gray-500 truncate lg:text-sm">
+            {vendor.vdCode}
+          </p>
+        </div>
+        
+        {/* Mobile-optimized status badge */}
+        <div className="flex-shrink-0 ml-2">
+          <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+            vendor.assessmentStatus === 'completed' ? 'bg-green-100 text-green-800' :
+            vendor.assessmentStatus === 'in-progress' ? 'bg-blue-100 text-blue-800' :
+            vendor.assessmentStatus === 'due-soon' ? 'bg-yellow-100 text-yellow-800' :
+            vendor.assessmentStatus === 'overdue' ? 'bg-red-100 text-red-800' :
+            'bg-gray-100 text-gray-800'
+          }`}>
+            {vendor.assessmentStatus === 'completed' && '✓'}
+            {vendor.assessmentStatus === 'in-progress' && '⏳'}
+            {vendor.assessmentStatus === 'due-soon' && '⚠️'}
+            {vendor.assessmentStatus === 'overdue' && '❌'}
+            {vendor.assessmentStatus === 'not-assessed' && '➖'}
+          </span>
+        </div>
+      </div>
+
+      {/* Compact info grid */}
+      <div className="grid grid-cols-2 gap-2 text-xs lg:text-sm">
+        <div>
+          <span className="text-gray-500">หมวด:</span>
+          <span className="block ml-1 font-medium truncate">
+            {categoryInfo?.name || vendor.category}
+          </span>
+        </div>
+        
+        {vendor.summary?.avgScore !== undefined && (
+          <div>
+            <span className="text-gray-500">คะแนน:</span>
+            <span className={`ml-1 font-medium ${
+              vendor.summary.avgScore >= 80 ? 'text-green-600' :
+              vendor.summary.avgScore >= 60 ? 'text-yellow-600' : 'text-red-600'
+            }`}>
+              {vendor.summary.avgScore}%
             </span>
           </div>
-          <div className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium border ${statusConfig.color}`}>
-            <statusConfig.icon className="w-3 h-3 mr-1" />
-            {statusConfig.text}
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-4 text-sm">
-          <div>
-            <span className="text-gray-500">คะแนนล่าสุด:</span>
-            <span className={`ml-2 font-semibold ${getRiskColor(vendor.summary?.avgScore)}`}>
-              {vendor.summary?.avgScore ? `${vendor.summary.avgScore.toFixed(1)}%` : 'ยังไม่มี'}
-            </span>
-          </div>
-          <div>
-            <span className="text-gray-500">ความถี่การประเมิน:</span>
-            <span className="ml-2 text-gray-900">{vendor.freqAss} วัน</span>
-          </div>
-        </div>
-
+        )}
+        
         {vendor.daysUntilDue !== undefined && (
-          <div className="pt-4 mt-4 border-t border-gray-100">
-            <span className="text-xs text-gray-500">
+          <div className="col-span-2">
+            <span className="text-gray-500">กำหนด:</span>
+            <span className={`ml-1 font-medium ${
+              vendor.daysUntilDue < 0 ? 'text-red-600' : 
+              vendor.daysUntilDue <= 30 ? 'text-yellow-600' : 'text-gray-600'
+            }`}>
               {vendor.daysUntilDue > 0 
-                ? `ครบกำหนดใน ${vendor.daysUntilDue} วัน`
-                : `เกินกำหนดแล้ว ${Math.abs(vendor.daysUntilDue)} วัน`
+                ? `อีก ${vendor.daysUntilDue} วัน`
+                : `เกิน ${Math.abs(vendor.daysUntilDue)} วัน`
               }
             </span>
           </div>
@@ -161,77 +194,279 @@ const VendorCard: React.FC<{ vendor: VendorWithStatus; onClick: (vendor: CSMVend
       </div>
     </div>
   );
-};
+});
+
+OptimizedVendorCard.displayName = 'OptimizedVendorCard';
 
 // ========================================
-// VENDOR TABLE ROW COMPONENT
+// VIRTUAL LIST ITEM COMPONENT
 // ========================================
-const VendorTableRow: React.FC<{ vendor: VendorWithStatus; onClick: (vendor: CSMVendor) => void }> = ({ vendor, onClick }) => {
-  const getStatusBadge = (status: string) => {
-    const configs = {
-      'completed': 'bg-green-100 text-green-700',
-      'in-progress': 'bg-blue-100 text-blue-700',
-      'due-soon': 'bg-yellow-100 text-yellow-700',
-      'overdue': 'bg-red-100 text-red-700',
-      'not-assessed': 'bg-gray-100 text-gray-700'
-    };
-    return configs[status as keyof typeof configs] || configs['not-assessed'];
+const VirtualVendorItem: React.FC<{
+  index: number;
+  style: React.CSSProperties;
+  data: {
+    vendors: VendorWithStatus[];
+    onSelect: (vendor: CSMVendor) => void;
   };
+}> = ({ index, style, data }) => {
+  const vendor = data.vendors[index];
+  const categoryInfo = CSM_VENDOR_CATEGORIES.find(cat => cat.code === vendor.category);
 
-  const getStatusText = (status: string) => {
-    const texts = {
-      'completed': 'ประเมินแล้ว',
-      'in-progress': 'กำลังประเมิน',
-      'due-soon': 'ใกล้กำหนด',
-      'overdue': 'เกินกำหนด',
-      'not-assessed': 'ยังไม่ประเมิน'
-    };
-    return texts[status as keyof typeof texts] || texts['not-assessed'];
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'completed': return 'text-green-600 bg-green-100';
+      case 'in-progress': return 'text-blue-600 bg-blue-100';
+      case 'due-soon': return 'text-yellow-600 bg-yellow-100';
+      case 'overdue': return 'text-red-600 bg-red-100';
+      default: return 'text-gray-600 bg-gray-100';
+    }
   };
 
   return (
-    <tr className="cursor-pointer hover:bg-gray-50" onClick={() => onClick(vendor)}>
-      <td className="px-6 py-4 whitespace-nowrap">
-        <div>
-          <div className="text-sm font-medium text-gray-900">{vendor.vdName}</div>
-          <div className="text-sm text-gray-500">{vendor.vdCode}</div>
+    <div style={style} className="px-4">
+      <div 
+        onClick={() => data.onSelect(vendor)}
+        className="flex items-center justify-between p-4 transition-all duration-200 bg-white border border-gray-200 rounded-lg shadow-sm cursor-pointer hover:shadow-md hover:border-blue-300"
+      >
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center space-x-3">
+            <div className="flex-1 min-w-0">
+              <h3 className="text-sm font-semibold text-gray-900 truncate">
+                {vendor.vdName}
+              </h3>
+              <p className="text-xs text-gray-500 truncate">
+                {vendor.vdCode} • {categoryInfo?.name || vendor.category}
+              </p>
+            </div>
+            
+            <div className="flex items-center space-x-2">
+              {/* Status */}
+              <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(vendor.assessmentStatus)}`}>
+                {vendor.assessmentStatus === 'completed' && 'ประเมินแล้ว'}
+                {vendor.assessmentStatus === 'in-progress' && 'กำลังประเมิน'}
+                {vendor.assessmentStatus === 'due-soon' && 'ใกล้ครบ'}
+                {vendor.assessmentStatus === 'overdue' && 'เกินกำหนด'}
+                {vendor.assessmentStatus === 'not-assessed' && 'ยังไม่ประเมิน'}
+              </span>
+
+              {/* Score */}
+              {vendor.summary?.avgScore !== undefined && (
+                <span className={`text-sm font-medium ${
+                  vendor.summary.avgScore >= 80 ? 'text-green-600' :
+                  vendor.summary.avgScore >= 60 ? 'text-yellow-600' : 'text-red-600'
+                }`}>
+                  {vendor.summary.avgScore}%
+                </span>
+              )}
+            </div>
+          </div>
         </div>
-      </td>
-      <td className="px-6 py-4 text-sm text-gray-900 whitespace-nowrap">
-        {CSM_VENDOR_CATEGORIES.find(cat => cat.code === vendor.category)?.name || vendor.category}
-      </td>
-      <td className="px-6 py-4 whitespace-nowrap">
-        <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${getStatusBadge(vendor.assessmentStatus)}`}>
-          {getStatusText(vendor.assessmentStatus)}
-        </span>
-      </td>
-      <td className="px-6 py-4 text-sm text-gray-900 whitespace-nowrap">
-        {vendor.summary ? (
-          <span className="font-medium">{vendor.summary.avgScore.toFixed(1)}%</span>
-        ) : (
-          <span className="text-gray-400">-</span>
-        )}
-      </td>
-      <td className="px-6 py-4 text-sm text-gray-900 whitespace-nowrap">
-        {vendor.lastAssessmentDate ? (
-          vendor.lastAssessmentDate.toLocaleDateString('th-TH')
-        ) : (
-          <span className="text-gray-400">-</span>
-        )}
-      </td>
-      <td className="px-6 py-4 text-sm text-gray-900 whitespace-nowrap">
-        {vendor.daysUntilDue !== undefined ? (
-          <span className={vendor.daysUntilDue < 0 ? 'text-red-600' : 'text-gray-600'}>
-            {vendor.daysUntilDue > 0 
-              ? `${vendor.daysUntilDue} วัน`
-              : `เกิน ${Math.abs(vendor.daysUntilDue)} วัน`
-            }
+      </div>
+    </div>
+  );
+};
+
+// ========================================
+// OPTIMIZED PAGINATION COMPONENT
+// ========================================
+const PaginationControls: React.FC<{
+  currentPage: number;
+  totalPages: number;
+  hasNextPage: boolean;
+  hasPrevPage: boolean;
+  goToPage: (page: number) => void;
+  goToFirst: () => void;
+  goToLast: () => void;
+  nextPage: () => void;
+  prevPage: () => void;
+  totalItems: number;
+  itemsPerPage: number;
+  loading?: boolean;
+  showPageJumper?: boolean;
+}> = ({
+  currentPage,
+  totalPages,
+  hasNextPage,
+  hasPrevPage,
+  goToPage,
+  goToFirst,
+  goToLast,
+  nextPage,
+  prevPage,
+  totalItems,
+  itemsPerPage,
+  loading = false,
+  showPageJumper = true
+}) => {
+  const [pageInput, setPageInput] = useState<string>('');
+
+  const startItem = (currentPage - 1) * itemsPerPage + 1;
+  const endItem = Math.min(currentPage * itemsPerPage, totalItems);
+
+  const getVisiblePages = () => {
+    const pages: (number | string)[] = [];
+    const maxVisible = 7;
+    
+    if (totalPages <= maxVisible) {
+      for (let i = 1; i <= totalPages; i++) {
+        pages.push(i);
+      }
+    } else {
+      if (currentPage <= 4) {
+        for (let i = 1; i <= 5; i++) pages.push(i);
+        pages.push('...');
+        pages.push(totalPages);
+      } else if (currentPage >= totalPages - 3) {
+        pages.push(1);
+        pages.push('...');
+        for (let i = totalPages - 4; i <= totalPages; i++) pages.push(i);
+      } else {
+        pages.push(1);
+        pages.push('...');
+        for (let i = currentPage - 1; i <= currentPage + 1; i++) pages.push(i);
+        pages.push('...');
+        pages.push(totalPages);
+      }
+    }
+    return pages;
+  };
+
+  const handlePageJump = (e: React.FormEvent) => {
+    e.preventDefault();
+    const page = parseInt(pageInput);
+    if (page >= 1 && page <= totalPages) {
+      goToPage(page);
+      setPageInput('');
+    }
+  };
+
+  if (totalPages <= 1) return null;
+
+  return (
+    <div className="flex flex-col gap-4 px-4 py-4 bg-white border-t border-gray-200 lg:flex-row lg:items-center lg:justify-between lg:px-6">
+      {/* Items Info */}
+      <div className="text-sm text-center text-gray-700 lg:text-left">
+        แสดงรายการที่ {startItem.toLocaleString()} - {endItem.toLocaleString()} จาก {totalItems.toLocaleString()} รายการ
+      </div>
+      
+      {/* Pagination Controls */}
+      <div className="flex flex-col items-center gap-3 sm:flex-row">
+        {/* Mobile: Simple Previous/Next */}
+        <div className="flex items-center space-x-2 sm:hidden">
+          <button
+            onClick={prevPage}
+            disabled={!hasPrevPage || loading}
+            className="flex items-center px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <ChevronLeft className="w-4 h-4 mr-1" />
+            ก่อนหน้า
+          </button>
+          
+          <span className="px-3 py-2 text-sm font-medium text-gray-700">
+            {currentPage} / {totalPages}
           </span>
-        ) : (
-          <span className="text-gray-400">-</span>
+          
+          <button
+            onClick={nextPage}
+            disabled={!hasNextPage || loading}
+            className="flex items-center px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            ถัดไป
+            <ChevronRight className="w-4 h-4 ml-1" />
+          </button>
+        </div>
+
+        {/* Desktop: Full Controls */}
+        <div className="items-center hidden space-x-2 sm:flex">
+          {/* First/Previous */}
+          <div className="flex items-center space-x-1">
+            <button
+              onClick={goToFirst}
+              disabled={!hasPrevPage || loading}
+              className="p-2 text-gray-600 rounded-lg hover:text-gray-900 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+              title="หน้าแรก"
+            >
+              <ChevronLeft className="w-4 h-4" />
+              <ChevronLeft className="w-4 h-4 -ml-2" />
+            </button>
+            
+            <button
+              onClick={prevPage}
+              disabled={!hasPrevPage || loading}
+              className="flex items-center px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <ChevronLeft className="w-4 h-4 mr-1" />
+              ก่อนหน้า
+            </button>
+          </div>
+
+          {/* Page Numbers */}
+          <div className="flex items-center space-x-1">
+            {getVisiblePages().map((page, index) => (
+              <button
+                key={index}
+                onClick={() => typeof page === 'number' ? goToPage(page) : undefined}
+                disabled={page === '...' || loading}
+                className={`px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
+                  page === currentPage
+                    ? 'bg-blue-600 text-white border border-blue-600'
+                    : page === '...'
+                    ? 'text-gray-400 cursor-default'
+                    : 'text-gray-700 bg-white border border-gray-300 hover:bg-gray-50'
+                } ${page === '...' ? '' : 'min-w-[40px]'}`}
+              >
+                {page}
+              </button>
+            ))}
+          </div>
+
+          {/* Next/Last */}
+          <div className="flex items-center space-x-1">
+            <button
+              onClick={nextPage}
+              disabled={!hasNextPage || loading}
+              className="flex items-center px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              ถัดไป
+              <ChevronRight className="w-4 h-4 ml-1" />
+            </button>
+            
+            <button
+              onClick={goToLast}
+              disabled={!hasNextPage || loading}
+              className="p-2 text-gray-600 rounded-lg hover:text-gray-900 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+              title="หน้าสุดท้าย"
+            >
+              <ChevronRight className="w-4 h-4" />
+              <ChevronRight className="w-4 h-4 -ml-2" />
+            </button>
+          </div>
+        </div>
+
+        {/* Page Jumper */}
+        {showPageJumper && totalPages > 10 && (
+          <form onSubmit={handlePageJump} className="flex items-center space-x-2">
+            <span className="text-sm text-gray-600">ไปหน้า:</span>
+            <input
+              type="number"
+              min="1"
+              max={totalPages}
+              value={pageInput}
+              onChange={(e) => setPageInput(e.target.value)}
+              className="w-16 px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              placeholder={currentPage.toString()}
+            />
+            <button
+              type="submit"
+              disabled={loading}
+              className="px-3 py-1 text-sm font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-50"
+            >
+              ไป
+            </button>
+          </form>
         )}
-      </td>
-    </tr>
+      </div>
+    </div>
   );
 };
 
@@ -241,65 +476,82 @@ const VendorTableRow: React.FC<{ vendor: VendorWithStatus; onClick: (vendor: CSM
 const CSMListPage: React.FC = () => {
   const navigate = useNavigate();
   const { addToast } = useToast();
-  //onst parentRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<List>(null);
 
-  // State Management
+  // ========================================
+  // STATE MANAGEMENT
+  // ========================================
   const [searchTerm, setSearchTerm] = useState('');
-  const [viewMode, setViewMode] = useState<'card' | 'table'>('card');
+  const [viewMode, setViewMode] = useState<ViewMode>('card');
+  const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [filters, setFilters] = useState<FilterState>({
     category: 'all',
     assessmentStatus: 'all',
     riskLevel: 'all',
-    needsAssessment: false
+    needsAssessment: false,
+    quickFilters: {
+      dueSoon: false,
+      highRisk: false,
+      neverAssessed: false
+    }
   });
 
-  const debouncedSearch = useDebounce(searchTerm, 300);
+  const debouncedSearch = useDebounce(searchTerm, DEBOUNCE_DELAY);
+
+  // Adaptive page size based on screen and performance
+  const [pageSize] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const isMobile = window.innerWidth < 768;
+      const isSlowDevice = navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 2;
+      return isMobile ? 20 : isSlowDevice ? 30 : 50;
+    }
+    return 30;
+  });
 
   // ========================================
   // DATA FETCHING
   // ========================================
   
+  // Get summary statistics first (lightweight)
+  const { data: quickStats, isLoading: statsLoading } = useQuery({
+    queryKey: ['csm-quick-stats'],
+    queryFn: async () => {
+      const [vendors, summaries] = await Promise.all([
+        enhancedCSMService.vendors.getAll().then(data => data.length),
+        enhancedCSMService.assessmentSummaries.getAll().then(data => data.length)
+      ]);
+      return { totalVendors: vendors, assessedVendors: summaries };
+    },
+    staleTime: CACHE_TIME,
+  });
+
   // Load vendors
   const { data: vendors = [], isLoading: vendorsLoading, error: vendorsError } = useQuery({
-    queryKey: ['csm-vendors'],
+    queryKey: ['csm-vendors-paginated', filters.category, debouncedSearch],
     queryFn: async () => {
-      console.log('🔍 Loading vendors...');
-      const result = await enhancedCSMService.vendors.getAll();
-      console.log('👥 Vendors loaded:', result.length);
-      return result;
+      return await enhancedCSMService.vendors.getAll();
     },
-    staleTime: 5 * 60 * 1000, // 5 minutes
+    staleTime: CACHE_TIME,
+    enabled: !isInitialLoad
   });
 
-  // Load assessment summaries
-  const { data: assessmentSummaries = [], isLoading: summariesLoading } = useQuery({
+  // Load assessment data separately for better performance
+  const { data: assessmentSummaries = [] } = useQuery({
     queryKey: ['csm-assessment-summaries'],
-    queryFn: async () => {
-      console.log('🔍 Loading assessment summaries...');
-      const result = await enhancedCSMService.assessmentSummaries.getAll();
-      console.log('📊 Summaries loaded:', result.length);
-      return result;
-    },
-    staleTime: 2 * 60 * 1000, // 2 minutes
+    queryFn: () => enhancedCSMService.assessmentSummaries.getAll(),
+    staleTime: CACHE_TIME,
   });
 
-  // Load current assessments (in-progress)
-  const { data: currentAssessments = [], isLoading: assessmentsLoading } = useQuery({
-    queryKey: ['csm-current-assessments'],
-    queryFn: async () => {
-      console.log('🔍 Loading current assessments...');
-      const result = await enhancedCSMService.assessments.getAllCurrent();
-      console.log('📋 Current assessments loaded:', result.length);
-      return result;
-    },
-    staleTime: 1 * 60 * 1000, // 1 minute
+  const { data: currentAssessments = [] } = useQuery({
+    queryKey: ['csm-current-assessments'],  
+    queryFn: () => enhancedCSMService.assessments.getAllCurrent(),
+    staleTime: CACHE_TIME / 4,
   });
 
-  const isLoading = vendorsLoading || summariesLoading || assessmentsLoading;
-  const error = vendorsError;
+  const allVendors = vendors;
 
   // ========================================
-  // ASSESSMENT STATUS LOGIC - FIXED
+  // DATA PROCESSING
   // ========================================
   
   const getAssessmentStatus = useCallback((
@@ -308,45 +560,37 @@ const CSMListPage: React.FC = () => {
     currentAssessment?: CSMAssessment
   ): 'completed' | 'in-progress' | 'due-soon' | 'overdue' | 'not-assessed' => {
     
-    // 1. Check if there's a current in-progress assessment
-    if (currentAssessment) {
-      if (!currentAssessment.isFinish) {
-        console.log(`📝 Vendor ${vendor.vdCode} has in-progress assessment`);
-        return 'in-progress';
-      }
+    if (currentAssessment && !currentAssessment.isFinish) {
+      return 'in-progress';
     }
     
-    // 2. Check if vendor has completed assessment (summary exists)
     if (!summary) {
-      console.log(`❌ Vendor ${vendor.vdCode} has no assessment summary - not assessed`);
       return 'not-assessed';
     }
     
-    // 3. Calculate time-based status for completed assessments
     const now = new Date();
     const lastAssessment = new Date(summary.lastAssessmentDate);
     const daysSince = Math.floor((now.getTime() - lastAssessment.getTime()) / (1000 * 60 * 60 * 24));
     const frequency = parseInt(vendor.freqAss) || 365;
     
-    console.log(`📅 Vendor ${vendor.vdCode}: ${daysSince} days since last assessment, frequency: ${frequency} days`);
-    
-    if (daysSince >= frequency) {
-      return 'overdue';
-    }
-    if (daysSince >= frequency - 30) {
-      return 'due-soon';
-    }
+    if (daysSince >= frequency) return 'overdue';
+    if (daysSince >= frequency - 30) return 'due-soon';
     return 'completed';
   }, []);
 
-  // ========================================
-  // PROCESS VENDORS WITH STATUS
-  // ========================================
-  
+  // Memoized vendor processing with performance optimization
   const processedVendors = useMemo((): VendorWithStatus[] => {
-    return vendors.map(vendor => {
-      const summary = assessmentSummaries.find(s => s.vdCode === vendor.vdCode);
-      const currentAssessment = currentAssessments.find(a => a.vdCode === vendor.vdCode && !a.isFinish);
+    if (!allVendors.length) return [];
+
+    // Create lookup maps for O(1) access
+    const summaryMap = new Map(assessmentSummaries.map(s => [s.vdCode, s]));
+    const currentAssessmentMap = new Map(
+      currentAssessments.filter(a => !a.isFinish).map(a => [a.vdCode, a])
+    );
+
+    return allVendors.map(vendor => {
+      const summary = summaryMap.get(vendor.vdCode);
+      const currentAssessment = currentAssessmentMap.get(vendor.vdCode);
       
       const assessmentStatus = getAssessmentStatus(vendor, summary, currentAssessment);
       
@@ -365,73 +609,106 @@ const CSMListPage: React.FC = () => {
       return {
         ...vendor,
         assessmentStatus,
-        summary: summary || undefined,
-        currentAssessment: currentAssessment || undefined,
+        summary,
+        currentAssessment,
         daysUntilDue,
         lastAssessmentDate
       };
     });
-  }, [vendors, assessmentSummaries, currentAssessments, getAssessmentStatus]);
+  }, [allVendors, assessmentSummaries, currentAssessments, getAssessmentStatus]);
 
   // ========================================
-  // FILTERED VENDORS
+  // FILTERING & PAGINATION
   // ========================================
   
   const filteredVendors = useMemo((): VendorWithStatus[] => {
-    return processedVendors.filter(vendor => {
-      const matchesSearch = debouncedSearch === '' || 
-        vendor.vdName.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
-        vendor.vdCode.toLowerCase().includes(debouncedSearch.toLowerCase());
-      
-      const matchesCategory = filters.category === 'all' || vendor.category === filters.category;
-      const matchesAssessmentStatus = filters.assessmentStatus === 'all' || vendor.assessmentStatus === filters.assessmentStatus;
-      const matchesRiskLevel = filters.riskLevel === 'all' || vendor.summary?.riskLevel === filters.riskLevel;
-      const matchesNeedsAssessment = !filters.needsAssessment || 
-        ['due-soon', 'overdue', 'not-assessed', 'in-progress'].includes(vendor.assessmentStatus);
-      
-      return matchesSearch && matchesCategory && matchesAssessmentStatus && matchesRiskLevel && matchesNeedsAssessment;
-    });
-  }, [processedVendors, debouncedSearch, filters]);
+    let result = processedVendors;
+
+    // Apply filters
+    if (filters.assessmentStatus !== 'all') {
+      result = result.filter(v => v.assessmentStatus === filters.assessmentStatus);
+    }
+    
+    if (filters.riskLevel !== 'all') {
+      result = result.filter(v => v.summary?.riskLevel === filters.riskLevel);
+    }
+    
+    if (filters.needsAssessment) {
+      result = result.filter(v => 
+        ['due-soon', 'overdue', 'not-assessed', 'in-progress'].includes(v.assessmentStatus)
+      );
+    }
+
+    // Quick filters
+    if (filters.quickFilters.dueSoon) {
+      result = result.filter(v => v.assessmentStatus === 'due-soon' || v.assessmentStatus === 'overdue');
+    }
+    
+    if (filters.quickFilters.highRisk) {
+      result = result.filter(v => v.summary?.riskLevel === 'High');
+    }
+    
+    if (filters.quickFilters.neverAssessed) {
+      result = result.filter(v => v.assessmentStatus === 'not-assessed');
+    }
+
+    return result;
+  }, [processedVendors, filters]);
+
+  // Use the enhanced usePagination hook
+  const {
+    paginatedItems: displayVendors,
+    currentPage,
+    totalPages,
+    hasNextPage,
+    hasPrevPage,
+    goToPage,
+    nextPage,
+    prevPage,
+    goToFirst,
+    goToLast,
+    itemsPerPage,
+    totalItems
+  } = usePagination(filteredVendors, pageSize);
 
   // ========================================
   // STATISTICS CALCULATION
   // ========================================
-  
   const statistics = useMemo((): StatisticsData => {
-    const total = vendors.length;
-    const assessed = processedVendors.filter(v => v.assessmentStatus === 'completed').length;
+    const total = quickStats?.totalVendors || processedVendors.length;
+    const completed = processedVendors.filter(v => v.assessmentStatus === 'completed').length;
     const inProgress = processedVendors.filter(v => v.assessmentStatus === 'in-progress').length;
     const overdue = processedVendors.filter(v => v.assessmentStatus === 'overdue').length;
     const dueSoon = processedVendors.filter(v => v.assessmentStatus === 'due-soon').length;
+    const notAssessed = processedVendors.filter(v => v.assessmentStatus === 'not-assessed').length;
     
     const summariesWithScores = assessmentSummaries.filter(s => s.avgScore > 0);
     const avgScore = summariesWithScores.length > 0 
-      ? summariesWithScores.reduce((sum, s) => sum + s.avgScore, 0) / summariesWithScores.length 
+      ? Math.round(summariesWithScores.reduce((sum, s) => sum + s.avgScore, 0) / summariesWithScores.length)
       : 0;
     
-    const highRisk = assessmentSummaries.filter(s => s.avgScore < 60).length;
-    
-    return {
+    const highRisk = assessmentSummaries.filter(s => s.riskLevel === 'High').length
+
+  return {
       total,
-      assessed,
+      assessed: completed,
       inProgress,
       overdue,
       dueSoon,
+      notAssessed,
       avgScore,
       highRisk
     };
-  }, [vendors.length, processedVendors, assessmentSummaries]);
+  }, [quickStats, processedVendors, assessmentSummaries]);
 
   // ========================================
   // EVENT HANDLERS
   // ========================================
   
   const handleVendorSelect = useCallback((vendor: CSMVendor) => {
-    // Check if vendor has in-progress assessment
     const inProgressAssessment = currentAssessments.find(a => a.vdCode === vendor.vdCode && !a.isFinish);
     
     if (inProgressAssessment) {
-      // Continue existing assessment
       addToast({
         type: 'info',
         title: 'การประเมินที่ยังไม่เสร็จ',
@@ -442,16 +719,21 @@ const CSMListPage: React.FC = () => {
     navigate(`/csm/e/${vendor.vdCode}`);
   }, [currentAssessments, navigate, addToast]);
 
-  // Refresh data handler
-  const handleRefresh = useCallback(() => {
-    // Refresh all data
-    addToast({
-      type: 'info',
-      title: 'รีเฟรชข้อมูล',
-      message: 'กำลังโหลดข้อมูลใหม่...'
-    });
-    // The React Query will automatically refetch
-  }, [addToast]);
+  const handleQuickFilter = useCallback((filterType: keyof FilterState['quickFilters']) => {
+    setFilters(prev => ({
+      ...prev,
+      quickFilters: {
+        ...prev.quickFilters,
+        [filterType]: !prev.quickFilters[filterType]
+      }
+    }));
+    goToPage(1);
+  }, [goToPage]);
+
+  const handleFilterChange = useCallback((newFilters: Partial<FilterState>) => {
+    setFilters(prev => ({ ...prev, ...newFilters }));
+    goToPage(1);
+  }, [goToPage]);
 
   const handleExport = useCallback(async () => {
     try {
@@ -461,11 +743,10 @@ const CSMListPage: React.FC = () => {
         message: 'กำลังเตรียมไฟล์ Excel...'
       });
       
-      // Export filtered vendors data
       await exportVendorsToExcel(
         filteredVendors, 
         assessmentSummaries, 
-      'CSM_Vendors_Report'
+        'CSM_Vendors_Report'
       );
       
       addToast({
@@ -484,9 +765,30 @@ const CSMListPage: React.FC = () => {
   }, [filteredVendors, addToast, assessmentSummaries]);
 
   // ========================================
+  // EFFECTS
+  // ========================================
+  
+  // Start loading vendors after initial stats are loaded
+  useEffect(() => {
+    if (quickStats && isInitialLoad) {
+      setIsInitialLoad(false);
+    }
+  }, [quickStats, isInitialLoad]);
+
+  // Reset page when search changes
+  useEffect(() => {
+    if (debouncedSearch !== searchTerm) {
+      goToPage(1);
+    }
+  }, [debouncedSearch, searchTerm, goToPage]);
+
+  // ========================================
   // RENDER CONDITIONS
   // ========================================
   
+  const isLoading = statsLoading || (vendorsLoading && isInitialLoad);
+  const error = vendorsError;
+
   if (error) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -495,10 +797,10 @@ const CSMListPage: React.FC = () => {
           <h3 className="text-lg font-medium text-gray-900">เกิดข้อผิดพลาด</h3>
           <p className="text-gray-500">ไม่สามารถโหลดข้อมูลได้</p>
           <button 
-            onClick={handleRefresh}
+            onClick={() => window.location.reload()}
             className="px-4 py-2 mt-4 text-white bg-blue-600 rounded-lg hover:bg-blue-700"
           >
-            ลองใหม่
+            โหลดใหม่
           </button>
         </div>
       </div>
@@ -509,374 +811,495 @@ const CSMListPage: React.FC = () => {
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <div className="bg-white border-b shadow-sm">
-        <div className="p-6 mx-auto max-w-7xl">
-          <div className="flex items-start justify-between mb-6">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900">
+        <div className="p-4 mx-auto lg:p-6 max-w-7xl">
+          <div className="flex flex-col mb-4 lg:flex-row lg:items-start lg:justify-between lg:mb-6">
+            <div className="mb-4 lg:mb-0">
+              <h1 className="text-xl font-bold text-gray-900 lg:text-2xl">
                 CSM - Contractor Safety Management
               </h1>
-              <p className="mt-1 text-gray-600">
+              <p className="mt-1 text-sm text-gray-600 lg:text-base">
                 ระบบจัดการความปลอดภัยผู้รับเหมา
               </p>
             </div>
             
-            <div className="flex items-center space-x-3">
+            <div className="flex flex-wrap items-center gap-2 lg:gap-3">
               <button
                 onClick={handleExport}
                 disabled={isLoading}
-                className="inline-flex items-center px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg shadow-sm hover:bg-gray-50 disabled:opacity-50"
+                className="inline-flex items-center px-3 py-2 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-lg shadow-sm lg:text-sm hover:bg-gray-50 disabled:opacity-50"
               >
-                <Download className="w-4 h-4 mr-2" />
-                ส่งออก Excel
+                <Download className="w-3 h-3 mr-2 lg:w-4 lg:h-4" />
+                ส่งออก
               </button>
               
               <button
-                onClick={handleRefresh}
+                onClick={() => window.location.reload()}
                 disabled={isLoading}
-                className="inline-flex items-center px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg shadow-sm hover:bg-gray-50 disabled:opacity-50"
+                className="inline-flex items-center px-3 py-2 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-lg shadow-sm lg:text-sm hover:bg-gray-50 disabled:opacity-50"
               >
-                <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+                <RefreshCw className={`w-3 h-3 lg:w-4 lg:h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
                 รีเฟรช
               </button>
               
               <button
                 onClick={() => navigate('/csm/vendors/add')}
-                className="inline-flex items-center px-4 py-2 font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700"
+                className="inline-flex items-center px-3 py-2 text-xs font-medium text-white bg-blue-600 border border-transparent rounded-lg shadow-sm lg:text-sm hover:bg-blue-700"
               >
-                <Plus className="w-4 h-4 mr-2" />
+                <Plus className="w-3 h-3 mr-2 lg:w-4 lg:h-4" />
                 เพิ่มผู้รับเหมา
               </button>
             </div>
           </div>
 
-          {/* Statistics Cards */}
-          <div className="grid grid-cols-1 gap-4 mb-6 md:grid-cols-3 lg:grid-cols-6">
+          {/* Statistics Cards - Clickable for quick filtering */}
+          <div className="grid grid-cols-2 gap-2 mb-4 lg:grid-cols-4 lg:gap-4 lg:mb-6">
             <StatCard
-              title="ทั้งหมด"
-              value={statistics.total}
+              title="ผู้รับเหมาทั้งหมด"
+              value={statistics.total.toLocaleString()}
               icon={Building2}
               color="blue"
+              onClick={() => handleFilterChange({ 
+                assessmentStatus: 'all', 
+                quickFilters: { dueSoon: false, highRisk: false, neverAssessed: false } 
+              })}
+              isClickable={true}
             />
             <StatCard
               title="ประเมินแล้ว"
-              value={statistics.assessed}
+              value={statistics.assessed.toLocaleString()}
               icon={CheckCircle}
               color="green"
+              subtitle={`${statistics.total > 0 ? Math.round((statistics.assessed / statistics.total) * 100) : 0}% ของทั้งหมด`}
+              onClick={() => handleFilterChange({ assessmentStatus: 'completed' })}
+              isClickable={true}
             />
             <StatCard
               title="กำลังประเมิน"
-              value={statistics.inProgress}
+              value={statistics.inProgress.toLocaleString()}
               icon={Clock}
               color="yellow"
-              trend={statistics.inProgress > 0 ? statistics.inProgress : undefined}
+              onClick={() => handleFilterChange({ assessmentStatus: 'in-progress' })}
+              isClickable={true}
             />
             <StatCard
-              title="เกินกำหนด"
-              value={statistics.overdue}
+              title="ต้องการประเมิน"
+              value={(statistics.overdue + statistics.dueSoon + statistics.notAssessed).toLocaleString()}
               icon={AlertTriangle}
               color="red"
-            />
-            <StatCard
-              title="ใกล้ครบกำหนด"
-              value={statistics.dueSoon}
-              icon={Clock}
-              color="yellow"
-            />
-            <StatCard
-              title="คะแนนเฉลี่ย"
-              value={`${statistics.avgScore.toFixed(1)}%`}
-              icon={BarChart3}
-              color="purple"
+              onClick={() => handleQuickFilter('dueSoon')}
+              isClickable={true}
             />
           </div>
 
-          {/* Search and Filters */}
-          <div className="flex flex-col gap-4 mb-6 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex-1 max-w-md">
-              <div className="relative">
-                <Search className="absolute w-4 h-4 text-gray-400 transform -translate-y-1/2 left-3 top-1/2" />
-                <input
-                  type="text"
-                  placeholder="ค้นหาผู้รับเหมา..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full py-2 pl-10 pr-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-            </div>
+          {/* Quick Filter Pills */}
+          <div className="flex flex-wrap gap-2 mb-4">
+            <button
+              onClick={() => handleQuickFilter('dueSoon')}
+              className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                filters.quickFilters.dueSoon
+                  ? 'bg-red-100 text-red-800 border border-red-200'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+            >
+              <AlertTriangle className="w-3 h-3 mr-1" />
+              ใกล้ครบกำหนด ({statistics.dueSoon + statistics.overdue})
+            </button>
+            
+            <button
+              onClick={() => handleQuickFilter('highRisk')}
+              className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                filters.quickFilters.highRisk
+                  ? 'bg-red-100 text-red-800 border border-red-200'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+            >
+              <AlertTriangle className="w-3 h-3 mr-1" />
+              ความเสี่ยงสูง ({statistics.highRisk})
+            </button>
+            
+            <button
+              onClick={() => handleQuickFilter('neverAssessed')}
+              className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                filters.quickFilters.neverAssessed
+                  ? 'bg-gray-200 text-gray-800 border border-gray-300'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+            >
+              <FileText className="w-3 h-3 mr-1" />
+              ยังไม่เคยประเมิน ({statistics.notAssessed})
+            </button>
+          </div>
+        </div>
+      </div>
 
-            <div className="flex items-center space-x-4">
+
+                {/* Pagination for Table View */}
+                <PaginationControls
+                  currentPage={currentPage}
+                  totalPages={totalPages}
+                  hasNextPage={hasNextPage}
+                  hasPrevPage={hasPrevPage}
+                  goToPage={goToPage}
+                  goToFirst={goToFirst}
+                  goToLast={goToLast}
+                  nextPage={nextPage}
+                  prevPage={prevPage}
+                  totalItems={totalItems}
+                  itemsPerPage={itemsPerPage}
+                  loading={isLoading}
+                  showPageJumper={totalPages > 10}
+                />                
+
+      {/* Main Content */}
+      <div className="p-4 mx-auto lg:p-6 max-w-7xl">
+        {/* Search and Controls */}
+        <div className="mb-6 space-y-4">
+          {/* Search Bar - Mobile Optimized */}
+          <div className="relative">
+            <Search className="absolute w-4 h-4 text-gray-400 transform -translate-y-1/2 lg:w-5 lg:h-5 left-3 top-1/2" />
+            <input
+              type="text"
+              placeholder="ค้นหาชื่อหรือรหัสผู้รับเหมา..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full py-2 pl-8 pr-4 text-sm border border-gray-300 rounded-lg lg:py-3 lg:pl-10 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+            {debouncedSearch && (
+              <button
+                onClick={() => setSearchTerm('')}
+                className="absolute text-gray-400 transform -translate-y-1/2 right-3 top-1/2 hover:text-gray-600"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+
+          {/* Filters and View Toggle */}
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex flex-wrap items-center gap-2 lg:gap-3">
               {/* Category Filter */}
               <select
                 value={filters.category}
-                onChange={(e) => setFilters(prev => ({ ...prev, category: e.target.value }))}
-                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                onChange={(e) => handleFilterChange({ category: e.target.value })}
+                className="px-2 py-1 text-xs border border-gray-300 rounded-lg lg:px-3 lg:py-2 lg:text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               >
-                <option value="all">ทุกประเภท</option>
-                {CSM_VENDOR_CATEGORIES.map(cat => (
-                  <option key={cat.code} value={cat.code}>{cat.name}</option>
+                <option value="all">หมวดหมู่ทั้งหมด</option>
+                {CSM_VENDOR_CATEGORIES.map(category => (
+                  <option key={category.code} value={category.code}>
+                    {category.name}
+                  </option>
                 ))}
               </select>
 
               {/* Status Filter */}
               <select
                 value={filters.assessmentStatus}
-                onChange={(e) => setFilters(prev => ({ ...prev, assessmentStatus: e.target.value }))}
-                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                onChange={(e) => handleFilterChange({ assessmentStatus: e.target.value })}
+                className="px-2 py-1 text-xs border border-gray-300 rounded-lg lg:px-3 lg:py-2 lg:text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               >
-                <option value="all">ทุกสถานะ</option>
+                <option value="all">สถานะทั้งหมด</option>
                 <option value="completed">ประเมินแล้ว</option>
                 <option value="in-progress">กำลังประเมิน</option>
-                <option value="due-soon">ใกล้กำหนด</option>
+                <option value="due-soon">ใกล้ครบกำหนด</option>
                 <option value="overdue">เกินกำหนด</option>
-                <option value="not-assessed">ยังไม่ประเมิน</option>
+                <option value="not-assessed">ยังไม่ได้ประเมิน</option>
               </select>
 
-{/* View Mode Toggle */}
-              <div className="flex items-center border border-gray-300 rounded-lg">
+              {/* Clear Filters */}
+              {(filters.category !== 'all' || filters.assessmentStatus !== 'all' || filters.riskLevel !== 'all' || 
+                Object.values(filters.quickFilters).some(Boolean) || debouncedSearch) && (
+                <button
+                  onClick={() => {
+                    setSearchTerm('');
+                    setFilters({
+                      category: 'all',
+                      assessmentStatus: 'all',
+                      riskLevel: 'all',
+                      needsAssessment: false,
+                      quickFilters: { dueSoon: false, highRisk: false, neverAssessed: false }
+                    });
+                  }}
+                  className="px-2 py-1 text-xs text-blue-600 rounded-lg lg:px-3 lg:py-2 lg:text-sm bg-blue-50 hover:bg-blue-100"
+                >
+                  ล้างตัวกรอง
+                </button>
+              )}
+            </div>
+
+
+            {/* View Mode Toggle */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-500 lg:text-sm">มุมมอง:</span>
+              <div className="flex border border-gray-300 rounded-lg">
                 <button
                   onClick={() => setViewMode('card')}
-                  className={`p-2 ${viewMode === 'card' ? 'bg-blue-100 text-blue-600' : 'text-gray-400'}`}
+                  className={`p-1 lg:p-2 ${viewMode === 'card' 
+                    ? 'bg-blue-600 text-white' 
+                    : 'bg-white text-gray-600 hover:bg-gray-50'
+                  } rounded-l-lg border-r border-gray-300`}
                 >
-                  <Grid className="w-4 h-4" />
+                  <Grid className="w-3 h-3 lg:w-4 lg:h-4" />
                 </button>
                 <button
                   onClick={() => setViewMode('table')}
-                  className={`p-2 ${viewMode === 'table' ? 'bg-blue-100 text-blue-600' : 'text-gray-400'}`}
+                  className={`p-1 lg:p-2 ${viewMode === 'table' 
+                    ? 'bg-blue-600 text-white' 
+                    : 'bg-white text-gray-600 hover:bg-gray-50'
+                  } border-r border-gray-300`}
                 >
-                  <List className="w-4 h-4" />
+                  <ListIcon className="w-3 h-3 lg:w-4 lg:h-4" />
+                </button>
+                <button
+                  onClick={() => setViewMode('virtual')}
+                  className={`p-1 lg:p-2 ${viewMode === 'virtual' 
+                    ? 'bg-blue-600 text-white' 
+                    : 'bg-white text-gray-600 hover:bg-gray-50'
+                  } rounded-r-lg`}
+                  title="Virtual Scrolling - สำหรับข้อมูลจำนวนมาก"
+                >
+                  <MoreHorizontal className="w-3 h-3 lg:w-4 lg:h-4" />
                 </button>
               </div>
             </div>
           </div>
 
-          {/* Active Filters Display */}
-          {(filters.category !== 'all' || filters.assessmentStatus !== 'all' || filters.riskLevel !== 'all' || filters.needsAssessment) && (
-            <div className="flex flex-wrap items-center gap-2 mb-4">
-              <span className="text-sm font-medium text-gray-700">กรองโดย:</span>
-              
-              {filters.category !== 'all' && (
-                <span className="inline-flex items-center px-3 py-1 text-xs font-medium text-blue-800 bg-blue-100 rounded-full">
-                  {CSM_VENDOR_CATEGORIES.find(cat => cat.code === filters.category)?.name}
-                  <button
-                    onClick={() => setFilters(prev => ({ ...prev, category: 'all' }))}
-                    className="ml-2 text-blue-600 hover:text-blue-800"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
+          {/* Results Count */}
+          <div className="flex items-center justify-between text-xs text-gray-600 lg:text-sm">
+            <span>
+              แสดง {displayVendors.length.toLocaleString()} จาก {totalItems.toLocaleString()} รายการ
+              {quickStats?.totalVendors && allVendors.length < quickStats.totalVendors && (
+                <span className="ml-2 text-blue-600">
+                  (โหลดแล้ว {Math.round((allVendors.length / quickStats.totalVendors) * 100)}%)
                 </span>
               )}
-              
-              {filters.assessmentStatus !== 'all' && (
-                <span className="inline-flex items-center px-3 py-1 text-xs font-medium text-green-800 bg-green-100 rounded-full">
-                  สถานะ: {filters.assessmentStatus}
-                  <button
-                    onClick={() => setFilters(prev => ({ ...prev, assessmentStatus: 'all' }))}
-                    className="ml-2 text-green-600 hover:text-green-800"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                </span>
-              )}
-              
-              {filters.needsAssessment && (
-                <span className="inline-flex items-center px-3 py-1 text-xs font-medium text-yellow-800 bg-yellow-100 rounded-full">
-                  ต้องการประเมิน
-                  <button
-                    onClick={() => setFilters(prev => ({ ...prev, needsAssessment: false }))}
-                    className="ml-2 text-yellow-600 hover:text-yellow-800"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                </span>
-              )}
-              
-              <button
-                onClick={() => setFilters({
-                  category: 'all',
-                  assessmentStatus: 'all',
-                  riskLevel: 'all',
-                  needsAssessment: false
-                })}
-                className="text-sm text-gray-500 hover:text-gray-700"
-              >
-                ล้างตัวกรองทั้งหมด
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Content */}
-      <div className="p-6 mx-auto max-w-7xl">
-        {/* Results Summary */}
-        <div className="flex items-center justify-between mb-6">
-          <div className="text-sm text-gray-600">
-            แสดง {filteredVendors.length} จาก {vendors.length} ผู้รับเหมา
+            </span>
+            
+            <span className="text-gray-500">
+              หน้า {currentPage} จาก {totalPages}
+            </span>
           </div>
-          
-          {isLoading && (
-            <div className="flex items-center text-sm text-gray-500">
-              <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-              กำลังโหลด...
-            </div>
-          )}
         </div>
 
-        {/* Loading State */}
-        {isLoading && (
-          <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
-            {[...Array(6)].map((_, i) => (
-              <div key={i} className="p-6 bg-white border rounded-lg shadow-sm animate-pulse">
-                <div className="w-3/4 h-4 mb-2 bg-gray-200 rounded"></div>
-                <div className="w-1/2 h-3 mb-4 bg-gray-200 rounded"></div>
-                <div className="w-1/4 h-3 bg-gray-200 rounded"></div>
-              </div>
-            ))}
+        {/* Content Area */}
+        {isLoading ? (
+          <div className="flex items-center justify-center h-64">
+            <div className="text-center">
+              <RefreshCw className="w-6 h-6 mx-auto mb-4 text-blue-600 lg:w-8 lg:h-8 animate-spin" />
+              <p className="text-sm text-gray-600 lg:text-base">กำลังโหลดข้อมูล...</p>
+              {quickStats && (
+                <p className="mt-2 text-xs text-gray-500">
+                  พบผู้รับเหมา {quickStats.totalVendors.toLocaleString()} ราย
+                </p>
+              )}
+            </div>
           </div>
-        )}
-
-        {/* Empty State */}
-        {!isLoading && filteredVendors.length === 0 && (
-          <div className="py-12 text-center">
-            <Building2 className="w-12 h-12 mx-auto mb-4 text-gray-400" />
-            <h3 className="mb-2 text-lg font-medium text-gray-900">ไม่พบผู้รับเหมา</h3>
-            <p className="mb-6 text-gray-500">
-              {searchTerm || filters.category !== 'all' || filters.assessmentStatus !== 'all' 
-                ? 'ไม่พบผู้รับเหมาที่ตรงกับเงื่อนไขการค้นหา'
-                : 'ยังไม่มีผู้รับเหมาในระบบ'
-              }
-            </p>
-            {!searchTerm && filters.category === 'all' && filters.assessmentStatus === 'all' && (
-              <button
-                onClick={() => navigate('/csm/vendors/add')}
-                className="inline-flex items-center px-4 py-2 font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700"
-              >
-                <Plus className="w-4 h-4 mr-2" />
-                เพิ่มผู้รับเหมาแรก
-              </button>
-            )}
+        ) : filteredVendors.length === 0 ? (
+          <div className="flex items-center justify-center h-64">
+            <div className="text-center">
+              <Building2 className="w-8 h-8 mx-auto mb-4 text-gray-400 lg:w-12 lg:h-12" />
+              <h3 className="mb-2 text-base font-medium text-gray-900 lg:text-lg">ไม่พบข้อมูล</h3>
+              <p className="mb-4 text-sm text-gray-500 lg:text-base">
+                {searchTerm || filters.category !== 'all' || filters.assessmentStatus !== 'all' || 
+                 Object.values(filters.quickFilters).some(Boolean)
+                  ? 'ไม่พบผู้รับเหมาที่ตรงกับเงื่อนไขที่เลือก'
+                  : 'ยังไม่มีข้อมูลผู้รับเหมาในระบบ'
+                }
+              </p>
+            </div>
           </div>
-        )}
-
-        {/* Card View */}
-        {!isLoading && viewMode === 'card' && filteredVendors.length > 0 && (
-          <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
-            {filteredVendors.map((vendor) => (
-              <VendorCard 
-                key={vendor.vdCode} 
-                vendor={vendor} 
-                onClick={handleVendorSelect} 
-              />
-            ))}
-          </div>
-        )}
-
-        {/* Table View */}
-        {!isLoading && viewMode === 'table' && filteredVendors.length > 0 && (
-          <div className="overflow-hidden bg-white border rounded-lg shadow-sm">
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">
-                      ผู้รับเหมา
-                    </th>
-                    <th className="px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">
-                      ประเภท
-                    </th>
-                    <th className="px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">
-                      สถานะ
-                    </th>
-                    <th className="px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">
-                      คะแนน
-                    </th>
-                    <th className="px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">
-                      ประเมินล่าสุด
-                    </th>
-                    <th className="px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">
-                      กำหนดเวลา
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {filteredVendors.map((vendor) => (
-                    <VendorTableRow 
-                      key={vendor.vdCode} 
-                      vendor={vendor} 
-                      onClick={handleVendorSelect} 
+        ) : (
+          <>
+            {/* Card View */}
+            {viewMode === 'card' && (
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 lg:gap-6">
+                  {displayVendors.map((vendor) => (
+                    <OptimizedVendorCard
+                      key={vendor.vdCode}
+                      vendor={vendor}
+                      onSelect={handleVendorSelect}
                     />
                   ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
+                </div>
+                
 
-        {/* Pagination */}
-        {filteredVendors.length > 50 && (
-          <div className="flex items-center justify-center mt-8">
-            <div className="px-4 py-2 text-sm text-gray-500 bg-white border rounded-lg">
-              แสดงครบทุกรายการแล้ว ({filteredVendors.length} รายการ)
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Quick Action Buttons - Floating */}
-      <div className="fixed z-10 flex flex-col space-y-3 bottom-6 right-6">
-        <button
-          onClick={() => navigate('/csm/reports')}
-          className="flex items-center justify-center w-12 h-12 text-white transition-all duration-200 bg-purple-600 rounded-full shadow-lg hover:bg-purple-700 hover:scale-110"
-          title="รายงาน CSM"
-        >
-          <FileText className="w-5 h-5" />
-        </button>
-        
-        <button
-          onClick={() => navigate('/csm/dashboard')}
-          className="flex items-center justify-center w-12 h-12 text-white transition-all duration-200 bg-blue-600 rounded-full shadow-lg hover:bg-blue-700 hover:scale-110"
-          title="แดชบอร์ด CSM"
-        >
-          <BarChart3 className="w-5 h-5" />
-        </button>
-        
-        <button
-          onClick={() => navigate('/csm/vendors/add')}
-          className="flex items-center justify-center w-12 h-12 text-white transition-all duration-200 bg-green-600 rounded-full shadow-lg hover:bg-green-700 hover:scale-110"
-          title="เพิ่มผู้รับเหมาใหม่"
-        >
-          <Plus className="w-5 h-5" />
-        </button>
-      </div>
-
-      {/* Debug Panel - Development Only */}
-      {process.env.NODE_ENV === 'development' && (
-        <div className="fixed z-10 max-w-xs p-4 text-xs text-white bg-black rounded-lg bottom-6 left-6 bg-opacity-90">
-          <div className="mb-2 font-bold text-yellow-400">🔧 CSM Debug Panel</div>
-          <div className="space-y-1">
-            <div>📊 Total Vendors: <span className="text-blue-300">{vendors.length}</span></div>
-            <div>📋 Summaries: <span className="text-green-300">{assessmentSummaries.length}</span></div>
-            <div>⏳ Current Assessments: <span className="text-yellow-300">{currentAssessments.length}</span></div>
-            <div>🔍 Filtered Results: <span className="text-purple-300">{filteredVendors.length}</span></div>
-            <div>🔄 Loading: <span className={isLoading ? 'text-red-300' : 'text-green-300'}>{isLoading ? 'Yes' : 'No'}</span></div>
-            <div>🎯 View Mode: <span className="text-cyan-300">{viewMode}</span></div>
-            {error && (
-              <div className="p-2 mt-2 text-red-300 bg-red-900 rounded bg-opacity-30">
-                ❌ Error: {error || 'Unknown error'}
               </div>
             )}
-            <div className="pt-2 mt-2 text-gray-400 border-t border-gray-600">
-              🔧 Use for debugging only
-            </div>
-          </div>
+
+            {/* Table View - Mobile Responsive */}
+            {viewMode === 'table' && (
+              <div className="space-y-6">
+                <div className="overflow-hidden bg-white border rounded-lg shadow-sm">
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-gray-200">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-3 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase lg:px-6">
+                            ผู้รับเหมา
+                          </th>
+                          <th className="hidden px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase lg:table-cell">
+                            หมวดหมู่
+                          </th>
+                          <th className="px-3 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase lg:px-6">
+                            สถานะ
+                          </th>
+                          <th className="hidden px-3 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase md:table-cell lg:px-6">
+                            คะแนน
+                          </th>
+                          <th className="hidden px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase lg:table-cell">
+                            ประเมินล่าสุด
+                          </th>
+                          <th className="hidden px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase xl:table-cell">
+                            กำหนดการ
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white divide-y divide-gray-200">
+                        {displayVendors.map((vendor) => {
+                          const categoryInfo = CSM_VENDOR_CATEGORIES.find(cat => cat.code === vendor.category);
+                          return (
+                            <tr 
+                              key={vendor.vdCode}
+                              onClick={() => handleVendorSelect(vendor)}
+                              className="transition-colors cursor-pointer hover:bg-gray-50"
+                            >
+                              <td className="px-3 py-4 text-sm lg:px-6 whitespace-nowrap">
+                                <div>
+                                  <div className="font-medium text-gray-900 truncate max-w-[150px] lg:max-w-none">
+                                    {vendor.vdName}
+                                  </div>
+                                  <div className="text-xs text-gray-500">
+                                    {vendor.vdCode}
+                                  </div>
+                                  <div className="mt-1 text-xs text-gray-500 lg:hidden">
+                                    {categoryInfo?.name || vendor.category}
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="hidden px-6 py-4 text-sm text-gray-900 lg:table-cell whitespace-nowrap">
+                                <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${
+                                  categoryInfo?.color || 'bg-gray-100 text-gray-800'
+                                }`}>
+                                  {categoryInfo?.name || vendor.category}
+                                </span>
+                              </td>
+                              <td className="px-3 py-4 text-sm lg:px-6 whitespace-nowrap">
+                                <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                                  vendor.assessmentStatus === 'completed' ? 'bg-green-100 text-green-800' :
+                                  vendor.assessmentStatus === 'in-progress' ? 'bg-blue-100 text-blue-800' :
+                                  vendor.assessmentStatus === 'due-soon' ? 'bg-yellow-100 text-yellow-800' :
+                                  vendor.assessmentStatus === 'overdue' ? 'bg-red-100 text-red-800' :
+                                  'bg-gray-100 text-gray-800'
+                                }`}>
+                                  {vendor.assessmentStatus === 'completed' && 'ประเมินแล้ว'}
+                                  {vendor.assessmentStatus === 'in-progress' && 'กำลังประเมิน'}
+                                  {vendor.assessmentStatus === 'due-soon' && 'ใกล้ครบ'}
+                                  {vendor.assessmentStatus === 'overdue' && 'เกิน'}
+                                  {vendor.assessmentStatus === 'not-assessed' && 'ยังไม่ประเมิน'}
+                                </span>
+                              </td>
+                              <td className="hidden px-3 py-4 text-sm text-gray-900 md:table-cell lg:px-6 whitespace-nowrap">
+                                {vendor.summary?.avgScore !== undefined ? (
+                                  <span className={`font-medium ${
+                                    vendor.summary.avgScore >= 80 ? 'text-green-600' :
+                                    vendor.summary.avgScore >= 60 ? 'text-yellow-600' : 'text-red-600'
+                                  }`}>
+                                    {vendor.summary.avgScore}%
+                                  </span>
+                                ) : (
+                                  <span className="text-gray-400">-</span>
+                                )}
+                              </td>
+                              <td className="hidden px-6 py-4 text-sm text-gray-900 lg:table-cell whitespace-nowrap">
+                                {vendor.lastAssessmentDate ? (
+                                  vendor.lastAssessmentDate.toLocaleDateString('th-TH')
+                                ) : (
+                                  <span className="text-gray-400">-</span>
+                                )}
+                              </td>
+                              <td className="hidden px-6 py-4 text-sm text-gray-900 xl:table-cell whitespace-nowrap">
+                                {vendor.daysUntilDue !== undefined ? (
+                                  <span className={vendor.daysUntilDue < 0 ? 'text-red-600' : 'text-gray-600'}>
+                                    {vendor.daysUntilDue > 0 
+                                      ? `${vendor.daysUntilDue} วัน`
+                                      : `เกิน ${Math.abs(vendor.daysUntilDue)} วัน`
+                                    }
+                                  </span>
+                                ) : (
+                                  <span className="text-gray-400">-</span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>              
+              </div>
+            )}
+
+            {/* Virtual Scrolling View - For Large Datasets */}
+            {viewMode === 'virtual' && (
+              <div className="bg-white border rounded-lg shadow-sm">
+                <div className="p-4 border-b">
+                  <h3 className="flex items-center text-sm font-medium text-gray-900">
+                    <MoreHorizontal className="w-4 h-4 mr-2" />
+                    Virtual Scrolling - แสดง {filteredVendors.length.toLocaleString()} รายการ
+                    <span className="ml-2 text-xs text-gray-500">(เหมาะสำหรับข้อมูลจำนวนมาก)</span>
+                  </h3>
+                </div>
+                <List
+                  ref={listRef}
+                  height={600}
+                  width="100%"
+                  itemCount={filteredVendors.length}
+                  itemSize={80}
+                  itemData={{
+                    vendors: filteredVendors,
+                    onSelect: handleVendorSelect
+                  }}
+                >
+                  {VirtualVendorItem}
+                </List>
+                
+                {/* Virtual Scroll Info */}
+                <div className="p-4 border-t bg-gray-50">
+                  <div className="flex items-center justify-between text-sm text-gray-600">
+                    <span>
+                      แสดงทั้งหมด {filteredVendors.length.toLocaleString()} รายการ (Virtual Scrolling)
+                    </span>
+                    <button
+                      onClick={() => setViewMode('table')}
+                      className="font-medium text-blue-600 hover:text-blue-800"
+                    >
+                      เปลี่ยนเป็นแบบแบ่งหน้า →
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Performance Monitor - Development Only */}
+      {process.env.NODE_ENV === 'development' && (
+        <div className="fixed z-50 max-w-xs p-3 text-xs text-white bg-black rounded-lg bottom-4 right-4">
+          <h4 className="mb-2 font-bold">🚀 Performance Monitor</h4>
+          <div>Total: {statistics.total.toLocaleString()}</div>
+          <div>Loaded: {allVendors.length.toLocaleString()}</div>
+          <div>Filtered: {totalItems.toLocaleString()}</div>
+          <div>Display: {displayVendors.length}</div>
+          <div>Page: {currentPage}/{totalPages}</div>
+          <div>View: {viewMode}</div>
+          <div>Page Size: {pageSize}</div>
+          <div>Cache: {CACHE_TIME / 1000}s</div>
+          {allVendors.length < (quickStats?.totalVendors || 0) && (
+            <div className="text-yellow-300">Loading from cache...</div>
+          )}
         </div>
       )}
-
-      {/* Toast Notifications Container */}
-      <div id="toast-container" className="fixed z-50 space-y-2 top-4 right-4">
-        {/* Toast messages will be rendered here by useToast hook */}
-      </div>
     </div>
   );
 };
