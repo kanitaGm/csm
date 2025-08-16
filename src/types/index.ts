@@ -3,7 +3,7 @@
 // API types
 export * from './api';
 export * from './file';
-export * from './form';
+export * from './forms';
 export * from './filters';
 export * from './props';
 

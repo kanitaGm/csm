@@ -1,73 +1,110 @@
-// 📁 src/components/hooks/useFormValidation.ts 
-import { useState, useEffect } from 'react';
+// src/hooks/useFormValidation.ts
+import { useState, useCallback } from 'react'
 
-// กำหนด type สำหรับ validation rules
 interface ValidationRule {
-  required?: boolean;
-  pattern?: RegExp;
-  minLength?: number;
-  enum?: unknown[]; // เปลี่ยนเป็น unknown[] เพื่อรองรับทุก type
-  message?: string;
+  required?: boolean
+  minLength?: number
+  maxLength?: number
+  pattern?: RegExp
+  custom?: (value: any) => string | null
 }
 
-// กำหนด type สำหรับ schema
-type ValidationSchema<T> = {
-  [K in keyof T]?: ValidationRule;
-};
+interface ValidationRules {
+  [key: string]: ValidationRule
+}
 
-export const useFormValidation = <T extends Record<string, unknown>>(
-  schema: ValidationSchema<T>, 
-  data: T
+interface ValidationErrors {
+  [key: string]: string
+}
+
+export const useFormValidation = <T extends Record<string, any>>(
+  initialValues: T,
+  rules: ValidationRules
 ) => {
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const [isValid, setIsValid] = useState(false);
-  
-  useEffect(() => {
-    const validationErrors: Record<string, string> = {};
+  const [values, setValues] = useState<T>(initialValues)
+  const [errors, setErrors] = useState<ValidationErrors>({})
+  const [touched, setTouched] = useState<Record<string, boolean>>({})
+
+  const validateField = useCallback((name: string, value: any): string | null => {
+    const rule = rules[name]
+    if (!rule) return null
+
+    if (rule.required && (!value || (typeof value === 'string' && !value.trim()))) {
+      return 'This field is required'
+    }
+
+    if (value && rule.minLength && value.length < rule.minLength) {
+      return `Minimum length is ${rule.minLength} characters`
+    }
+
+    if (value && rule.maxLength && value.length > rule.maxLength) {
+      return `Maximum length is ${rule.maxLength} characters`
+    }
+
+    if (value && rule.pattern && !rule.pattern.test(value)) {
+      return 'Invalid format'
+    }
+
+    if (rule.custom) {
+      return rule.custom(value)
+    }
+
+    return null
+  }, [rules])
+
+  const setValue = useCallback((name: string, value: any) => {
+    setValues(prev => ({ ...prev, [name]: value }))
     
-    // ใช้ Object.keys กับ schema ที่มี type ชัดเจนแล้ว
-    (Object.keys(schema) as Array<keyof T>).forEach(field => {
-      const rules = schema[field];
-      const value = data[field];
-      
-      // ตรวจสอบว่ามี rules หรือไม่
-      if (!rules) return;
-      
-      // ตรวจสอบ required
-      if (rules.required && (!value || String(value).trim() === '')) {
-        validationErrors[String(field)] = rules.message || `${String(field)} is required`;
-        return;
+    if (touched[name]) {
+      const error = validateField(name, value)
+      setErrors(prev => ({
+        ...prev,
+        [name]: error || ''
+      }))
+    }
+  }, [touched, validateField])
+
+  const setFieldTouched = useCallback((name: string) => {
+    setTouched(prev => ({ ...prev, [name]: true }))
+    const error = validateField(name, values[name])
+    setErrors(prev => ({
+      ...prev,
+      [name]: error || ''
+    }))
+  }, [validateField, values])
+
+  const validateAll = useCallback((): boolean => {
+    const newErrors: ValidationErrors = {}
+    let isValid = true
+
+    Object.keys(rules).forEach(name => {
+      const error = validateField(name, values[name])
+      if (error) {
+        newErrors[name] = error
+        isValid = false
       }
-      
-      // ตรวจสอบ pattern (เฉพาะ string)
-      if (value && rules.pattern && typeof value === 'string' && !rules.pattern.test(value)) {
-        validationErrors[String(field)] = rules.message || `${String(field)} format is invalid`;
-        return;
-      }
-      
-      // ตรวจสอบ minLength (เฉพาะ string หรือ array)
-      if (value && rules.minLength && 
-          (typeof value === 'string' || Array.isArray(value)) && 
-          value.length < rules.minLength) {
-        validationErrors[String(field)] = rules.message || `${String(field)} is too short`;
-        return;
-      }
-      
-      // ตรวจสอบ enum
-      if (value && rules.enum) {
-        const enumValues = rules.enum;
-        const isValidEnum = enumValues.some(enumValue => enumValue === value);
-        
-        if (!isValidEnum) {
-          validationErrors[String(field)] = rules.message || `${String(field)} value is invalid`;
-          return;
-        }
-      }
-    });
+    })
+
+    setErrors(newErrors)
+    setTouched(Object.keys(rules).reduce((acc, key) => ({ ...acc, [key]: true }), {}))
     
-    setErrors(validationErrors);
-    setIsValid(Object.keys(validationErrors).length === 0);
-  }, [schema, data]);
-  
-  return { errors, isValid };
-};
+    return isValid
+  }, [rules, validateField, values])
+
+  const reset = useCallback(() => {
+    setValues(initialValues)
+    setErrors({})
+    setTouched({})
+  }, [initialValues])
+
+  return {
+    values,
+    errors,
+    touched,
+    setValue,
+    setFieldTouched,
+    validateAll,
+    reset,
+    isValid: Object.keys(errors).length === 0
+  }
+}

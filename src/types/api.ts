@@ -1,6 +1,6 @@
 // src/types/api.ts  ** type for api only
 import { Timestamp } from 'firebase/firestore';
-import type { PaginationOptions } from './form';
+import type { PaginationOptions } from './forms';
 
 // Helper types สำหรับ Collections
 export interface Country {

@@ -27,7 +27,50 @@ import type {
   CSMAuditee,
   AssessmentStatus,
 } from '../../../types/csm';
-import type { ScoreOption, Score } from '../../../types/form';
+import type { ScoreOption, Score } from '../../../types/forms';
+
+/////////////
+interface FileAttachmentFixed {
+  readonly id: string
+  readonly name: string
+  readonly size: number
+  readonly type: string
+  readonly url: string | undefined // Fixed: explicit undefined
+  readonly base64?: string | undefined
+  readonly status: string
+  readonly compressionRatio: number
+}
+interface QuestionFileAttachmentFixed {
+  readonly id: string
+  readonly name: string
+  readonly size: number
+  readonly type: string
+  readonly url: string | undefined // Fixed: explicit undefined
+  readonly base64?: string | undefined
+  readonly compressionRatio?: number | undefined // Fixed: explicit undefined
+  readonly originalSize: number
+}
+// Fixed: File upload options
+interface UseFileUploadOptionsFixed {
+  readonly disabled?: boolean | undefined // Fixed: explicit undefined
+  readonly label?: string | undefined
+  readonly description?: string | undefined
+  readonly className?: string | undefined
+  readonly showPreview?: boolean | undefined
+  readonly showCompressionInfo?: boolean | undefined
+  readonly acceptedFileTypes?: string | undefined
+  readonly maxFiles?: number
+  readonly maxFileSize?: number
+  readonly allowedTypes?: readonly string[]
+  readonly imageOptions?: {
+    readonly maxSizeMB?: number
+    readonly maxWidthOrHeight?: number
+    readonly quality?: number
+    readonly fileType?: string
+  }
+  readonly pdfMinSize?: number
+  readonly imageMinSize?: number
+}
 
 // ========================================
 // CONSTANTS & TYPES
@@ -277,7 +320,6 @@ const FileAttachmentSummary: React.FC<{
     </div>
   );
 };
-
 
 
 // Question Confirm Button
@@ -981,6 +1023,116 @@ const handleFileChange = useCallback((index: number, files: QuestionFileAttachme
     }));
   }, []);
 
+   const fileUploadOptions: UseFileUploadOptionsFixed = {
+    disabled: undefined, // Fixed: explicit undefined instead of boolean | undefined
+    label: 'อัปโหลดไฟล์เอกสาร',
+    description: 'รองรับไฟล์ PDF, DOC, DOCX, JPG, PNG',
+    className: 'mb-4',
+    showPreview: true,
+    showCompressionInfo: true,
+    acceptedFileTypes: '.pdf,.doc,.docx,.jpg,.jpeg,.png',
+    maxFiles: 10,
+    maxFileSize: 10 * 1024 * 1024, // 10MB
+    allowedTypes: ['application/pdf', 'image/jpeg', 'image/png'],
+    imageOptions: {
+      maxSizeMB: 2,
+      maxWidthOrHeight: 1920,
+      quality: 0.8,
+      fileType: 'image/jpeg'
+    },
+    pdfMinSize: 100 * 1024, // 100KB
+    imageMinSize: 50 * 1024  // 50KB
+  }
+
+  // Fixed: Handle file upload results
+  const handleFileUpload = useCallback((uploadedFiles: readonly File[]): void => {
+    const newFiles: FileAttachmentFixed[] = uploadedFiles.map((file, index) => ({
+      id: `file-${Date.now()}-${index}`,
+      name: file.name,
+      size: file.size,
+      type: file.type,
+      url: URL.createObjectURL(file), // Fixed: provide actual URL
+      base64: undefined,
+      status: 'uploaded',
+      compressionRatio: 1
+    }))
+
+    setFiles(prev => [...prev, ...newFiles])
+  }, []);
+
+  // Fixed: Current question handling with null checks
+  const currentQuestion = questions[currentQuestionIndex]
+  
+  const renderQuestionContent = (): React.ReactNode => {
+    if (!currentQuestion) {
+      return (
+        <div className="text-center py-8">
+          <p className="text-gray-500">ไม่พบคำถาม</p>
+        </div>
+      )
+    }
+
+    return (
+      <div className="space-y-6">
+        {/* Fixed: Safe property access */}
+        <h2 className="text-xl font-semibold">{currentQuestion.text}</h2>
+        <p className="text-gray-600">{currentQuestion.description}</p>
+        
+        {/* Fixed: Safe property access for type */}
+        {currentQuestion.type === 'file_upload' && (
+          <div>
+            <UniversalFileUpload
+              options={fileUploadOptions}
+              onFilesSelected={handleFileUpload}
+            />
+          </div>
+        )}
+
+        {/* Fixed: Safe property access for attachments */}
+        {currentQuestion.attachments && currentQuestion.attachments.length > 0 && (
+          <div className="mt-4">
+            <h3 className="font-medium mb-2">ไฟล์แนบ:</h3>
+            {currentQuestion.attachments.map((attachment, index) => (
+              <div key={index} className="flex items-center gap-2 p-2 bg-gray-50 rounded">
+                <FileText className="w-4 h-4" />
+                <span className="text-sm">{attachment.name}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // Fixed: Return statement for render function
+  const getQuestionScore = (questionId: string): number => {
+    const answer = answers.find(a => a.questionId === questionId)
+    if (!answer) return 0
+    
+    switch (answer.type) {
+      case 'score':
+        return typeof answer.value === 'number' ? answer.value : 0
+      case 'boolean':
+        return answer.value === true ? 100 : 0
+      case 'multiple_choice':
+        // Logic for multiple choice scoring
+        return 75 // Example score
+      default:
+        return 0
+    }
+  }
+
+  return (
+    <div className="max-w-4xl mx-auto p-6">
+      <div className="bg-white rounded-lg shadow-sm border">
+        <div className="p-6">
+          {renderQuestionContent()}
+        </div>
+      </div>
+    </div>
+  )
+}  
+
   // ========================================
   // DATA LOADING EFFECTS
   // ========================================
@@ -1640,6 +1792,6 @@ useEffect(() => {
       )}
     </div>
   );
-};
+}; 
 
 export default CSMEvaluatePage;

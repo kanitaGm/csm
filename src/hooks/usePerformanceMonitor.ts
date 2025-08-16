@@ -7,7 +7,7 @@ interface PerformanceMetric {
   endTime?: number;
   duration?: number;
   metadata?: Record<string, unknown>;
-}
+} 
 
 interface PerformanceThresholds {
   warning: number; // milliseconds
@@ -19,6 +19,23 @@ interface MemoryInfo {
   usedJSHeapSize: number;
   totalJSHeapSize: number;
   jsHeapSizeLimit: number;
+}
+
+export interface PerformanceEntry {
+  readonly name: string
+  readonly startTime: number
+  readonly duration: number
+  readonly success: boolean
+  readonly error?: string | undefined // Fixed: explicit undefined
+  readonly timestamp: number
+  readonly metadata?: Record<string, unknown> | undefined // Fixed: explicit undefined
+}
+
+export interface TimingResult {
+  readonly duration: number
+  readonly success: boolean
+  readonly error?: string | undefined // Fixed: explicit undefined
+  readonly metadata?: Record<string, unknown> | undefined // Fixed: explicit undefined
 }
 
 const DEFAULT_THRESHOLDS: PerformanceThresholds = {
@@ -111,6 +128,99 @@ class SimplePerformanceTracker {
 
   cleanup(): void {
     this.metrics.clear();
+  }
+}
+
+export const endTiming = (
+  timingId: string, 
+  success: boolean = true, 
+  error?: string | undefined, // Fixed: explicit undefined
+  metadata?: Record<string, unknown> | undefined // Fixed: explicit undefined
+): TimingResult => {
+  const endTime = performance.now()
+  
+  try {
+    const startMarkName = `${timingId}-start`
+    const endMarkName = `${timingId}-end`
+    
+    performance.mark(endMarkName)
+    performance.measure(timingId, startMarkName, endMarkName)
+    
+    const measure = performance.getEntriesByName(timingId, 'measure')[0]
+    const duration = measure?.duration ?? 0
+    
+    // Fixed: Create performance entry with proper undefined handling
+    const entry: PerformanceEntry = {
+      name: extractNameFromTimingId(timingId),
+      startTime: measure?.startTime ?? endTime - duration,
+      duration,
+      success,
+      error: error ?? undefined,
+      timestamp: Date.now(),
+      metadata: metadata ?? undefined
+    }
+    
+    addEntry(entry)
+    cleanupTiming(timingId)
+    
+    return {
+      duration,
+      success,
+      error: error ?? undefined,
+      metadata: metadata ?? undefined
+    }
+  } catch (performanceError) {
+    const fallbackDuration = endTime - (getStartTime(timingId) ?? endTime)
+    const errorMessage = error ?? `Performance API error: ${performanceError instanceof Error ? performanceError.message : 'Unknown error'}`
+    
+    const entry: PerformanceEntry = {
+      name: extractNameFromTimingId(timingId),
+      startTime: endTime - fallbackDuration,
+      duration: fallbackDuration,
+      success,
+      error: errorMessage,
+      timestamp: Date.now(),
+      metadata: metadata ?? undefined
+    }
+    
+    addEntry(entry)
+    
+    return {
+      duration: fallbackDuration,
+      success,
+      error: errorMessage,
+      metadata: metadata ?? undefined
+    }
+  }
+}
+
+// Fixed: Page load measurement without deprecated navigationStart
+export const measurePageLoad = (): void => {
+  if (typeof window !== 'undefined' && 'performance' in window) {
+    window.addEventListener('load', () => {
+      setTimeout(() => {
+        const navigation = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined
+        
+        if (navigation) {
+          const metrics = {
+            dns: navigation.domainLookupEnd - navigation.domainLookupStart,
+            tcp: navigation.connectEnd - navigation.connectStart,
+            ssl: navigation.secureConnectionStart > 0 ? navigation.connectEnd - navigation.secureConnectionStart : 0,
+            ttfb: navigation.responseStart - navigation.requestStart,
+            download: navigation.responseEnd - navigation.responseStart,
+            dom: navigation.domContentLoadedEventEnd - navigation.domContentLoadedEventStart,
+            load: navigation.loadEventEnd - navigation.loadEventStart,
+            total: navigation.loadEventEnd - navigation.fetchStart // Fixed: use fetchStart instead of navigationStart
+          }
+
+          performanceMonitor.measureSync('page-load', () => metrics.total, {
+            ...metrics,
+            url: window.location.href,
+            userAgent: navigator.userAgent
+          })
+        }
+      }, 0)
+    })
   }
 }
 
